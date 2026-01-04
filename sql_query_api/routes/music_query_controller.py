@@ -52,17 +52,26 @@ class Query:
     async def execute_sql_statement(self, request: SqlStatementRequest) -> List[JSON]:
         sql = request.sql_statement.strip()
 
+        # Input validation: Check if SQL is empty
+        if not sql:
+            raise ValueError("SQL statement cannot be empty.")
+        
+        # Input validation: Limit query length to prevent DoS
+        if len(sql) > 10000:
+            raise ValueError("SQL statement is too long (max 10000 characters).")
+
         # Only allow SELECT queries
         if not sql.lower().startswith("select"):
             raise ValueError("Only SELECT statements are allowed.")
 
         try:
-            logger.info("Executing SQL: %s", sql)
+            logger.info("Executing SQL query (length=%d)", len(sql))
             result: List[Dict[str, Any]] = await _music_query_service.execute_sql_statement(sql)            
             return result
         except Exception as e:
             logger.exception("Error executing SQL")
-            raise Exception(f"Error executing SQL: {str(e)}")
+            # Don't expose internal error details to client
+            raise Exception("Failed to execute SQL statement. Please verify your query syntax.")
 
 
 # Create schema and router

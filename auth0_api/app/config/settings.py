@@ -43,12 +43,20 @@ class Settings:
     AI_RETRIES: int = 3
     AI_BACKOFF_BASE: float = 2.0
 
-    # CORS Configuration
-    ALLOWED_ORIGINS: List[str] = [
-        "http://localhost:5173",  # Vite dev server
-        "http://localhost:3000",  # Alternative port
-        "http://127.0.0.1:5173",
-    ]
+    # CORS Configuration - Restrict to configured origins
+    # Production: Set CORS_ORIGINS environment variable
+    def __init__(self):
+        cors_env = os.getenv("CORS_ORIGINS", "")
+        if cors_env:
+            # Production: Load from environment
+            self.ALLOWED_ORIGINS = [origin.strip() for origin in cors_env.split(",")]
+        else:
+            # Development: Default to localhost
+            self.ALLOWED_ORIGINS = [
+                "http://localhost:5173",  # Vite dev server
+                "http://localhost:3000",  # Alternative port
+                "http://127.0.0.1:5173",
+            ]
 
     # Feature Flags
     ENABLE_AI_GREETING: bool = True

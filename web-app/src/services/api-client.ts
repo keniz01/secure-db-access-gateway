@@ -1,17 +1,14 @@
 import axios from 'axios';
-import authService from '../services/auth-service';
 import { API_BASE_URL } from '../configs/url-config';
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true
+  withCredentials: true  // Automatically send httpOnly cookies
 });
 
+// Add security headers
 apiClient.interceptors.request.use((config) => {
-  const token = authService.getToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
+  config.headers['X-Requested-With'] = 'XMLHttpRequest';
   return config;
 });
 
