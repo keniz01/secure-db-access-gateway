@@ -1,0 +1,359 @@
+# Read-Only Database Explorer
+
+A secure, full-stack web application for safely exploring and querying databases with read-only access. Built with React, FastAPI, and Auth0 authentication.
+
+## 🌟 Features
+
+- **Read-Only SQL Queries** - Execute SELECT statements safely against your database
+- **Auth0 Authentication** - Secure user authentication and session management
+- **Security-First Design** - Built with OWASP Top 10 protections
+- **Modern UI** - Clean, responsive interface built with React and TypeScript
+- **Query Validation** - Automatic validation to prevent harmful operations
+- **CORS Protection** - Strict cross-origin resource sharing policies
+- **Input Sanitization** - Protection against SQL injection and DoS attacks
+
+## 🏗️ Architecture
+
+This project consists of three main components:
+
+### 1. **Web Application** (`web-app/`)
+- **Tech Stack**: React, TypeScript, Vite
+- **Purpose**: User interface for database exploration
+- **Features**: Query editor, authentication, results display
+
+### 2. **SQL Query API** (`sql_query_api/`)
+- **Tech Stack**: FastAPI, Python 3.11+
+- **Purpose**: Executes validated SQL queries against the database
+- **Security**: Query validation, length limits, type checking
+
+### 3. **Auth0 API** (`auth0_api/`)
+- **Tech Stack**: FastAPI, Auth0
+- **Purpose**: Handles user authentication and session management
+- **Security**: JWT tokens via httpOnly cookies, CSRF protection
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- **Python**: 3.11 or higher
+- **Node.js**: 18.x or higher
+- **PostgreSQL**: Database instance (or compatible SQL database)
+- **Auth0 Account**: For authentication setup
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/keniz01/read_only_database_explorer.git
+   cd read_only_database_explorer
+   ```
+
+2. **Set up the SQL Query API**
+   ```bash
+   cd sql_query_api
+   
+   # Create virtual environment
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   
+   # Install dependencies
+   pip install -r requirements.txt
+   
+   # Create .env file
+   cp .env.example .env
+   # Edit .env with your database credentials
+   ```
+
+3. **Set up the Auth0 API**
+   ```bash
+   cd ../auth0_api
+   
+   # Create virtual environment
+   python -m venv venv
+   source venv/bin/activate
+   
+   # Install dependencies
+   pip install -r requirements.txt
+   
+   # Create .env file
+   cp .env.example .env
+   # Edit .env with your Auth0 credentials
+   ```
+
+4. **Set up the Web Application**
+   ```bash
+   cd ../web-app
+   
+   # Install dependencies
+   npm install
+   
+   # Create .env file
+   cp .env.example .env
+   # Edit .env with API endpoints
+   ```
+
+### Configuration
+
+#### Auth0 API Configuration (`.env`)
+```env
+AUTH0_DOMAIN=your-domain.auth0.com
+AUTH0_CLIENT_ID=your_client_id
+AUTH0_CLIENT_SECRET=your_client_secret
+APP_SECRET_KEY=generate-strong-random-key-min-32-chars
+SESSION_SECRET_KEY=generate-strong-random-key-min-32-chars
+CORS_ORIGINS=http://localhost:5173
+```
+
+#### SQL Query API Configuration (`.env`)
+```env
+DATABASE_URL=postgresql://user:password@host:port/database
+CORS_ORIGINS=http://localhost:5173
+LOG_LEVEL=INFO
+```
+
+#### Web Application Configuration (`.env`)
+```env
+VITE_AUTH0_API_URL=http://localhost:8000
+VITE_SQL_QUERY_API_URL=http://localhost:8001
+```
+
+### Running the Application
+
+Start all three services in separate terminals:
+
+1. **Start SQL Query API**
+   ```bash
+   cd sql_query_api
+   source venv/bin/activate
+   uvicorn main:app --reload --port 8001
+   ```
+
+2. **Start Auth0 API**
+   ```bash
+   cd auth0_api
+   source venv/bin/activate
+   uvicorn app.main:app --reload --port 8000
+   ```
+
+3. **Start Web Application**
+   ```bash
+   cd web-app
+   npm run dev
+   ```
+
+Access the application at `http://localhost:5173`
+
+## 🔒 Security Features
+
+This application implements comprehensive security measures:
+
+### Authentication & Authorization
+- **Auth0 Integration** - Industry-standard authentication
+- **httpOnly Cookies** - Protects JWT tokens from XSS attacks
+- **CSRF Protection** - Custom headers for request validation
+- **Session Management** - Secure session handling
+
+### Input Validation
+- **Query Length Limits** - Maximum 10,000 characters
+- **Query Type Validation** - Only SELECT statements allowed
+- **SQL Safety Checks** - Prevents subqueries, CTEs, DDL, DML
+- **Empty Query Detection** - Validates non-empty input
+
+### Network Security
+- **Strict CORS** - Whitelisted origins only
+- **Security Headers** - X-Frame-Options, X-Content-Type-Options, etc.
+- **HTTPS Enforcement** - Strict-Transport-Security header
+- **Rate Limiting Ready** - Architecture supports rate limiting
+
+### Error Handling
+- **Generic Error Messages** - Prevents information disclosure
+- **Detailed Logging** - Server-side error tracking
+- **Try-Catch Protection** - Graceful error recovery
+
+For complete security details, see [SECURITY.md](SECURITY.md)
+
+## 📚 API Documentation
+
+### SQL Query API Endpoints
+
+#### Execute Query
+```http
+POST /api/v1/query/execute
+Content-Type: application/json
+
+{
+  "sql": "SELECT * FROM users LIMIT 10"
+}
+```
+
+**Response:**
+```json
+{
+  "columns": ["id", "name", "email"],
+  "rows": [
+    [1, "John Doe", "john@example.com"],
+    [2, "Jane Smith", "jane@example.com"]
+  ],
+  "row_count": 2
+}
+```
+
+### Auth0 API Endpoints
+
+#### Login
+```http
+POST /api/auth/login
+```
+
+#### Logout
+```http
+POST /api/auth/logout
+```
+
+#### Verify Session
+```http
+GET /api/auth/verify
+```
+
+## 🛠️ Development
+
+### Project Structure
+```
+read_only_database_explorer/
+├── auth0_api/              # Authentication service
+│   ├── app/
+│   │   ├── config/         # Configuration settings
+│   │   ├── middleware/     # CORS, security headers
+│   │   └── routes/         # Auth endpoints
+│   └── requirements.txt
+├── sql_query_api/          # Query execution service
+│   ├── routes/             # API endpoints
+│   ├── services/           # Business logic
+│   ├── models/             # Data models
+│   └── requirements.txt
+├── web-app/                # React frontend
+│   ├── src/
+│   │   ├── components/     # React components
+│   │   ├── services/       # API clients
+│   │   └── pages/          # Application pages
+│   └── package.json
+├── ARCHITECTURE.md         # Architecture documentation
+├── SECURITY.md            # Security implementation guide
+└── README.md              # This file
+```
+
+### Technology Stack
+
+**Frontend:**
+- React 18
+- TypeScript
+- Vite
+- Axios
+- React Router
+
+**Backend:**
+- FastAPI
+- Python 3.11+
+- PostgreSQL
+- Auth0
+- Pydantic
+
+### Running Tests
+
+```bash
+# Backend tests (when available)
+cd sql_query_api
+pytest
+
+cd ../auth0_api
+pytest
+
+# Frontend tests (when available)
+cd ../web-app
+npm test
+```
+
+### Code Quality
+
+```bash
+# Python linting
+cd sql_query_api
+flake8 .
+black .
+
+# TypeScript linting
+cd web-app
+npm run lint
+```
+
+## 📖 Documentation
+
+- [Architecture Overview](ARCHITECTURE.md) - System design and component interaction
+- [Security Guide](SECURITY.md) - Comprehensive security implementation details
+- API Documentation - Available at `/docs` endpoint when running the APIs
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these steps:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Contribution Guidelines
+
+- Follow existing code style and conventions
+- Add tests for new features
+- Update documentation as needed
+- Ensure all tests pass before submitting PR
+- Keep commits focused and write clear commit messages
+
+## 🐛 Reporting Security Issues
+
+**IMPORTANT**: Do NOT create public GitHub issues for security vulnerabilities.
+
+For security issues, please email: [Add your security contact email]
+
+Allow 30 days for response before public disclosure.
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Auth0 for authentication infrastructure
+- FastAPI for the excellent Python framework
+- React team for the frontend framework
+- The open-source community
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/keniz01/read_only_database_explorer/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/keniz01/read_only_database_explorer/discussions)
+- **Documentation**: See the `/docs` folder
+
+## 🗺️ Roadmap
+
+- [ ] Add query history tracking
+- [ ] Implement query result export (CSV, JSON)
+- [ ] Add database schema visualization
+- [ ] Support for multiple database connections
+- [ ] Query performance metrics
+- [ ] Saved queries functionality
+- [ ] Role-based access control
+- [ ] Audit logging
+- [ ] Rate limiting implementation
+- [ ] Docker containerization
+
+## 📊 Project Status
+
+**Current Version**: 1.1.0  
+**Status**: Development  
+**Last Updated**: January 2026
+
+---
+
+**Made with ❤️ for secure database exploration**
