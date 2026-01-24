@@ -28,8 +28,8 @@ const AuthCallback: React.FC = () => {
       }
 
       try {
-        // Call the /auth endpoint which handles the OAuth callback
-        const response = await fetch(`${API_BASE_URL}/auth${window.location.search}`, {
+        // Call the /api/auth endpoint which handles the OAuth callback
+        const response = await fetch(`${API_BASE_URL}/api/auth${window.location.search}`, {
           credentials: 'include',
         });
 
