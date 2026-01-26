@@ -1,10 +1,6 @@
-from ast import Dict
 import logging as logger
 import os
 from typing import Any, Callable, List, Optional, Dict
-import asyncio
-from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
-import json
 
 import strawberry
 from strawberry.fastapi import GraphQLRouter
@@ -12,16 +8,18 @@ from strawberry.fastapi import GraphQLRouter
 from dependencies.dependency_container import setup_container
 from services.music_query_service import IMusicQueryService
 
-client = AsyncOpenAI(
-    base_url="https://models.inference.ai.azure.com",
-    api_key=os.getenv("GITHUB_TOKEN"),
-    timeout=15.0,  # hard timeout per request
-)
+def read_secret_from_file(file_path: str) -> str:
+    """Read secret from file, fallback to empty string if file not found."""
+    try:
+        with open(file_path, 'r') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
 
-# Get the database URL from environment, raise error if not set
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Get the database URL from environment or file, raise error if not set
+DATABASE_URL = os.getenv("DATABASE_URL") or read_secret_from_file(os.getenv("DATABASE_URL_FILE", ""))
 if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable is not set")
+    raise RuntimeError("DATABASE_URL environment variable or DATABASE_URL_FILE is not set")
 
 # Dependency injection setup
 _container = setup_container(DATABASE_URL)

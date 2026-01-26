@@ -33,6 +33,30 @@ This project consists of three main components:
 
 ## 🚀 Quick Start
 
+### Option 1: Docker (Recommended)
+
+The easiest way to run the application stack is using Docker Compose:
+
+```bash
+# Ensure PostgreSQL is running locally on port 5432
+docker-compose up --build
+```
+
+This starts:
+- Auth0 API on port 8001  
+- SQL Query API on port 8002
+- Web App on port 5173
+
+**Note**: PostgreSQL should be running locally (not containerized).
+
+**Secrets**: Sensitive configuration is managed via Docker secrets in the `secrets/` directory.
+
+See [DOCKER_README.md](DOCKER_README.md) for detailed Docker instructions.
+
+### Option 2: Manual Setup
+
+For development without Docker:
+
 ### Prerequisites
 
 - **Python**: 3.11 or higher

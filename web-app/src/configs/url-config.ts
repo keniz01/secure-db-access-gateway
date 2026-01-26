@@ -1,2 +1,2 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8001';
-export const SQL_GRAPHQL_BASE_URL = 'http://localhost:8002/graphql';
+export const SQL_GRAPHQL_BASE_URL = import.meta.env.VITE_SQL_GRAPHQL_BASE_URL || 'http://localhost:8002/graphql';

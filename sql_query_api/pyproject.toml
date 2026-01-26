@@ -9,7 +9,6 @@ dependencies = [
     "fastapi>=0.121.1",
     "greenlet>=3.2.4",
     "loguru>=0.7.3",
-    "openai>=2.14.0",
     "punq>=0.7.0",
     "sqlalchemy>=2.0.44",
     "sqlparse>=0.5.3",

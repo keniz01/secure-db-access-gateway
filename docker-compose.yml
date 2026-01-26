@@ -1,0 +1,102 @@
+services:
+  # postgres:
+  #   image: postgres:15
+  #   environment:
+  #     POSTGRES_DB: music_db
+  #     POSTGRES_USER: music_user
+  #     POSTGRES_PASSWORD: music_pass
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   ports:
+  #     - "5432:5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U music_user -d music_db"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+  auth0_api:
+    build: ./auth0_api
+    secrets:
+      - secret_key
+      - session_secret_key
+      - google_client_id
+      - google_client_secret
+      - gemini_api_key
+      - openai_api_key
+      - github_token
+      - auth0_client_id
+      - auth0_client_secret
+      - auth0_domain
+      - frontend_url
+      - react_app_url
+    environment:
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      SESSION_SECRET_KEY_FILE: /run/secrets/session_secret_key
+      GOOGLE_CLIENT_ID_FILE: /run/secrets/google_client_id
+      GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      AUTH0_CLIENT_ID_FILE: /run/secrets/auth0_client_id
+      AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
+      AUTH0_DOMAIN_FILE: /run/secrets/auth0_domain
+      FRONTEND_URL_FILE: /run/secrets/frontend_url
+      REACT_APP_URL_FILE: /run/secrets/react_app_url
+      CORS_ORIGINS: http://localhost:5173,http://web-app:5173
+    ports:
+      - "8001:8001"
+
+  sql_query_api:
+    build: ./sql_query_api
+    secrets:
+      - database_url
+    environment:
+      DATABASE_URL_FILE: /run/secrets/database_url
+      CORS_ORIGINS: http://localhost:5173,http://web-app:5173
+    ports:
+      - "8002:8002"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web_app:
+    build: ./web-app
+    environment:
+      VITE_API_BASE_URL: http://localhost:8001
+      VITE_SQL_GRAPHQL_BASE_URL: http://localhost:8002/graphql
+    ports:
+      - "5173:5173"
+    depends_on:
+      - auth0_api
+      - sql_query_api
+
+# volumes:
+#   postgres_data:
+
+secrets:
+  secret_key:
+    file: ./secrets/secret_key.txt
+  session_secret_key:
+    file: ./secrets/session_secret_key.txt
+  google_client_id:
+    file: ./secrets/google_client_id.txt
+  google_client_secret:
+    file: ./secrets/google_client_secret.txt
+  gemini_api_key:
+    file: ./secrets/gemini_api_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  github_token:
+    file: ./secrets/github_token.txt
+  auth0_client_id:
+    file: ./secrets/auth0_client_id.txt
+  auth0_client_secret:
+    file: ./secrets/auth0_client_secret.txt
+  auth0_domain:
+    file: ./secrets/auth0_domain.txt
+  frontend_url:
+    file: ./secrets/frontend_url.txt
+  react_app_url:
+    file: ./secrets/react_app_url.txt
+  database_url:
+    file: ./secrets/database_url.txt
