@@ -3,11 +3,11 @@ import apiClient from './api-client';
 
 interface GraphQLRequest {
   query: string;
-  variables?: Record<string, any>;
+  variables?: Record<string, unknown>;
 }
 
 interface GraphQLResponse {
-  data?: any;
+  data?: unknown;
   errors?: Array<{ message: string }>;
 }
 
@@ -40,10 +40,10 @@ export const graphqlApi = {
       }
 
       return response.data;
-    } catch (error: any) {
+    } catch (error) {
       const message =
-        error.response?.data?.errors?.[0]?.message ||
-        error.message ||
+        (error as Error & { response?: { data?: { errors?: Array<{ message: string }> } } }).response?.data?.errors?.[0]?.message ||
+        (error as Error).message ||
         'Failed to execute SQL query';
       throw new Error(message);
     }

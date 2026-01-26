@@ -1,6 +1,15 @@
 import { useEffect, useState, useRef } from "react";
 import authService from "../services/auth-service";
 import { API_BASE_URL } from "../configs/url-config";
+import type { User } from "../models/user-profile";
+
+interface AuthResponse {
+  access_token?: string;
+  user?: User;
+  status_code?: number;
+  detail?: string;
+  message?: string;
+}
 
 const AuthCallback: React.FC = () => {
   const [status, setStatus] = useState<'loading' | 'error' | 'success'>('loading');
@@ -33,7 +42,7 @@ const AuthCallback: React.FC = () => {
           credentials: 'include',
         });
 
-        let data: any;
+        let data: AuthResponse;
         try {
           data = await response.json();
         } catch {
@@ -49,7 +58,7 @@ const AuthCallback: React.FC = () => {
         console.log('Auth response received:', { status: response.status, data });
 
         // Check if the response contains an error (e.g., {"status_code":401,"detail":"access_denied"})
-        if (!response.ok || data.status_code === 401 || data.status_code >= 400) {
+        if (!response.ok || (data.status_code && (data.status_code === 401 || data.status_code >= 400))) {
           const errorMessage = data.detail || data.message || response.statusText || 'Authentication failed';
           const statusCode = data.status_code || response.status;
           console.error('Authentication error:', { errorMessage, statusCode });

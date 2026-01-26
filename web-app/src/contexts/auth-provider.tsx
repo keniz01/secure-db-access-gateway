@@ -1,21 +1,12 @@
-import React, { useState, useEffect, type ReactNode } from 'react';
+import React, { useState, type ReactNode } from 'react';
 import { AuthContext } from './auth-context';
 import authService from '../services/auth-service';
 import type { User } from '../models/user-profile';
 import { useQueryClient } from '@tanstack/react-query';
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(() => authService.getUser());
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    const savedUser = authService.getUser();
-    if (savedUser) {
-      setUser(savedUser);
-    }
-    setIsLoading(false);
-  }, []);
 
   const logout = () => {
     authService.removeToken();
@@ -29,7 +20,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const value = {
     user,
     setUser,
-    isLoading,
+    isLoading: false,
     logout
   };
 

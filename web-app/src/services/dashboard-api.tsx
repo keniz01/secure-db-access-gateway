@@ -7,8 +7,9 @@ const DashboardApi = {
       const { data } = await apiClient.get<DashboardResponse>('/api/dashboard');
       console.log('Dashboard data fetched:', data);
       return data;
-    } catch (error: any) {
-      const message = error.response?.data?.detail || error.message || 'Failed to fetch dashboard data';
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { detail?: string } } };
+      const message = axiosError.response?.data?.detail || (error as Error).message || 'Failed to fetch dashboard data';
       throw new Error(message);
     }
   },

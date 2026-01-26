@@ -6,21 +6,16 @@ import authService from "./auth-service";
 
 const AuthApi = {
   login: () => {
-    try {
-      const origin = window.location.origin;
-      const redirectUrl = `${API_BASE_URL}/api/login?redirect_origin=${encodeURIComponent(origin)}`;
-      window.location.href = redirectUrl;
-    } catch (error) {
-      throw new Error('Failed to initiate login. Please check your connection.');
-    }
+    const origin = window.location.origin;
+    const redirectUrl = `${API_BASE_URL}/api/login?redirect_origin=${encodeURIComponent(origin)}`;
+    window.location.href = redirectUrl;
   },
   
   logout: (queryClient: QueryClient) => {
     authService.removeToken();
     authService.removeUser();
     queryClient.clear();
-    // Redirect to Auth0 logout endpoint if available, otherwise just redirect to login
-    window.location.href = `${API_BASE_URL}/api/logout` || '/login';
+    window.location.href = `${API_BASE_URL}/api/logout`;
   },
   
   fetchDashboard: async (): Promise<DashboardResponse> => {
@@ -28,8 +23,9 @@ const AuthApi = {
       const { data } = await apiClient.get<DashboardResponse>('/api/dashboard');
       console.log('Dashboard data fetched:', data);
       return data;
-    } catch (error: any) {
-      const message = error.response?.data?.detail || error.message || 'Failed to fetch dashboard data';
+    } catch (error) {
+      const axiosError = error as { response?: { data?: { detail?: string } } };
+      const message = axiosError.response?.data?.detail || (error as Error).message || 'Failed to fetch dashboard data';
       throw new Error(message);
     }
   },
