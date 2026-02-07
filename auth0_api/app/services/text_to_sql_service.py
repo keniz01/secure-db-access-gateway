@@ -125,6 +125,7 @@ class TextToSqlService:
     async def _generate_sql_with_llm(self, natural_language: str, schema: str) -> str:
         """
         Generate SQL query from natural language using LLM.
+        Uses a prompt format based on table-augmented generation best practices.
 
         Args:
             natural_language: Natural language query
@@ -133,31 +134,41 @@ class TextToSqlService:
         Returns:
             Generated SQL query string
         """
-        system_prompt = """You are a SQL expert. Your task is to convert natural language queries into valid PostgreSQL SELECT statements.
+        system_prompt = """You must use the context to generate a correct Postgres SQL statement to answer the question at the end.
+IMPORTANT: The SQL statement MUST start with the word SELECT (not ELECT or any other variation).
+Strictly only use table and column names defined in the context and you must use table and column aliases.
+If the question does not make sense or you dont know the answer just say "I dont know".
+You must only return valid SQL - do not explain, advice or assume. The SQL must begin with SELECT.
 
-Rules:
-1. Generate ONLY SELECT statements - no INSERT, UPDATE, DELETE, CREATE, ALTER, or DROP
-2. Use the provided schema information to determine correct table and column names
-3. Follow PostgreSQL syntax
-4. Include appropriate WHERE clauses based on the query
-5. Add LIMIT clauses when appropriate (default to LIMIT 100 if not specified)
-6. Return ONLY the SQL query, no explanations or markdown formatting
-7. Do not include any text before or after the SQL statement
-8. Use proper SQL escaping for string values
+Examples:
 
-Example:
-User: "Show me all albums released in 2000"
-Schema: albums: album_id, title, release_date, artist_id
-SQL: SELECT * FROM albums WHERE EXTRACT(YEAR FROM release_date) = 2000 LIMIT 100
-"""
+Question: Count albums distributed by record label 'Greenesleeves'
+Context: album: album_id, title, release_date, label_id
+record_label: label_id, label_name
+SQL: SELECT COUNT(a.*) AS album_count 
+FROM album a 
+INNER JOIN record_label rl ON rl.label_id = a.label_id 
+WHERE rl.label_name ILIKE 'Greensleeves Records';
 
-        user_prompt = f"""Schema Information:
-{schema}
+Question: How many albums does the recording artist 'Gregory Isaacs' have?
+Context: album: album_id, title, release_date, artist_id
+artist: artist_id, artist_name
+SQL: SELECT COUNT(al.*) AS album_count
+FROM album al
+INNER JOIN artist ar ON ar.artist_id = al.artist_id
+WHERE ar.artist_name ILIKE 'Gregory Isaacs';
 
-Natural Language Query:
-{natural_language}
+Question: Show all tracks on the album 'Soca Xplosion 2007'
+Context: track: track_id, title, duration, position, album_id
+album: album_id, title
+SQL: SELECT tr.track_id, tr.title, tr.duration, tr.position 
+FROM track tr
+INNER JOIN album al ON al.album_id = tr.album_id 
+WHERE al.title ILIKE 'Soca Xplosion 2007';"""
 
-Generate a PostgreSQL SELECT query for the above natural language query using the schema information provided."""
+        user_prompt = f"""Context: {schema}
+
+Question: {natural_language}"""
 
         try:
             sql = await self.ai_service.get_greeting(
@@ -169,6 +180,9 @@ Generate a PostgreSQL SELECT query for the above natural language query using th
             if not sql:
                 raise AIServiceError("LLM returned empty SQL query")
 
+            # Log raw response for debugging
+            logger.debug("Raw SQL response: %s", sql[:200])
+
             # Clean up the SQL - remove markdown code blocks if present
             sql = sql.strip()
             if sql.startswith("```"):
@@ -178,7 +192,40 @@ Generate a PostgreSQL SELECT query for the above natural language query using th
                 sql = "\n".join(lines).strip()
 
             # Remove SQL keyword prefix if present (some models add "SQL:" or similar)
-            sql = sql.lstrip("SQL:").strip()
+            # Use startswith instead of lstrip to avoid removing characters from SELECT
+            sql = sql.strip()
+            if sql.upper().startswith("SQL:"):
+                sql = sql[4:].strip()  # Remove "SQL:" prefix
+            elif sql.upper().startswith("SQL "):
+                sql = sql[4:].strip()  # Remove "SQL " prefix
+
+            # Fix common truncation issues: ELECT -> SELECT
+            if sql.upper().startswith("ELECT"):
+                logger.warning("Detected 'ELECT' instead of 'SELECT', fixing...")
+                sql = "S" + sql
+
+            # Ensure SQL starts with SELECT (case-insensitive check)
+            sql_upper = sql.upper().strip()
+            if not sql_upper.startswith("SELECT"):
+                # Try to find SELECT in the first few words
+                words = sql.split()
+                if len(words) > 0 and words[0].upper() == "ELECT":
+                    sql = "SELECT " + " ".join(words[1:])
+                    logger.warning("Fixed 'ELECT' to 'SELECT'")
+                elif not sql_upper.startswith("SELECT"):
+                    # If it doesn't start with SELECT at all, prepend it
+                    logger.warning("SQL does not start with SELECT, attempting to fix...")
+                    if sql_upper.startswith("ELECT"):
+                        sql = "S" + sql
+                    else:
+                        # Last resort: prepend SELECT if it looks like SQL
+                        if any(keyword in sql_upper for keyword in ["FROM", "WHERE", "JOIN"]):
+                            sql = "SELECT * " + sql
+                            logger.warning("Prepended 'SELECT *' to SQL query")
+
+            # Final validation: ensure it starts with SELECT
+            if not sql.upper().strip().startswith("SELECT"):
+                raise AIServiceError(f"Generated SQL does not start with SELECT: {sql[:100]}")
 
             logger.info("Generated SQL query: %s", sql[:200])
             return sql
