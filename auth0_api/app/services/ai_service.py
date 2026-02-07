@@ -3,7 +3,7 @@ AI service for interacting with LLM models via Azure OpenAI.
 """
 
 import asyncio
-from typing import Optional
+from typing import List, Optional
 from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
 from app.config.settings import settings
 from app.config.logging import get_logger
@@ -89,6 +89,70 @@ class AIService:
 
         logger.warning("AI service unavailable after %d retries", retries)
         return None
+
+    async def generate_embeddings(
+        self,
+        text: str,
+        model: str = settings.EMBEDDING_MODEL,
+        dimensions: int = settings.EMBEDDING_DIMENSIONS,
+        retries: int = settings.AI_RETRIES,
+        backoff_base: float = settings.AI_BACKOFF_BASE,
+    ) -> List[float]:
+        """
+        Generate embeddings for text using Azure OpenAI embeddings API.
+
+        Args:
+            text: Text to generate embeddings for
+            model: Embedding model identifier (default from settings)
+            dimensions: Number of dimensions for embeddings (default 384)
+            retries: Number of retry attempts for transient failures
+            backoff_base: Exponential backoff base multiplier
+
+        Returns:
+            List of float values representing the embedding vector
+
+        Raises:
+            AIServiceError: For non-retryable errors
+        """
+        for attempt in range(1, retries + 1):
+            try:
+                response = await self.client.embeddings.create(
+                    model=model,
+                    input=text.strip(),
+                    dimensions=dimensions,
+                )
+
+                embedding = response.data[0].embedding
+                if not embedding or len(embedding) != dimensions:
+                    raise AIServiceError(
+                        f"Invalid embedding response: expected {dimensions} dimensions, got {len(embedding) if embedding else 0}"
+                    )
+
+                logger.debug("Embeddings generated successfully (dimensions=%d)", len(embedding))
+                return embedding
+
+            except RateLimitError:
+                wait = backoff_base ** attempt
+                logger.warning(
+                    "Embedding API rate limit hit (attempt %d/%d). Retrying in %fs",
+                    attempt,
+                    retries,
+                    wait,
+                )
+                if attempt < retries:
+                    await asyncio.sleep(wait)
+
+            except (APITimeoutError, APIError) as e:
+                logger.error("Embedding API error: %s", e)
+                # Do not retry server-side failures
+                raise AIServiceError(f"Embedding service error: {str(e)}") from e
+
+            except Exception as e:
+                logger.exception("Unexpected embedding failure: %s", e)
+                raise AIServiceError(f"Unexpected embedding error: {str(e)}") from e
+
+        logger.warning("Embedding service unavailable after %d retries", retries)
+        raise AIServiceError("Failed to generate embeddings after retries")
 
 
 # Singleton instance

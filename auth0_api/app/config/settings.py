@@ -52,6 +52,13 @@ class Settings:
     AI_RETRIES: int = 3
     AI_BACKOFF_BASE: float = 2.0
 
+    # Embedding Configuration
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "384"))
+
+    # SQL Query API Configuration
+    SQL_QUERY_API_URL: str = os.getenv("SQL_QUERY_API_URL") or read_secret_from_file(os.getenv("SQL_QUERY_API_URL_FILE", "")) or "http://localhost:8002/graphql"
+
     # CORS Configuration - Restrict to configured origins
     # Production: Set CORS_ORIGINS environment variable
     def __init__(self):

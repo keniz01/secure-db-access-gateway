@@ -43,9 +43,12 @@ services:
       AUTH0_DOMAIN_FILE: /run/secrets/auth0_domain
       FRONTEND_URL_FILE: /run/secrets/frontend_url
       REACT_APP_URL_FILE: /run/secrets/react_app_url
+      SQL_QUERY_API_URL: http://sql_query_api:8002/graphql
       CORS_ORIGINS: http://localhost:5173,http://web-app:5173
     ports:
       - "8001:8001"
+    depends_on:
+      - sql_query_api
 
   sql_query_api:
     build: ./sql_query_api

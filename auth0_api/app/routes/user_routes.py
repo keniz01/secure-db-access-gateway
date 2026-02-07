@@ -4,8 +4,10 @@ User and dashboard routes.
 
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from app.config.logging import get_logger
 from app.services.ai_service import get_ai_service
+from app.services.text_to_sql_service import TextToSqlService
 from app.schemas.responses import UserResponse, DashboardResponse, ErrorResponse
 
 logger = get_logger(__name__)
@@ -94,3 +96,85 @@ async def get_dashboard(request: Request):
             message=final_message,
         ).dict()
     )
+
+
+class TextToSqlRequest(BaseModel):
+    """Request model for text-to-SQL conversion."""
+    query: str
+    execute: bool = False
+
+
+@router.post("/text-to-sql")
+async def text_to_sql(request: Request, body: TextToSqlRequest):
+    """
+    Convert natural language query to SQL and optionally execute it.
+
+    Args:
+        request: HTTP request with session
+        body: Request body containing natural language query
+
+    Returns:
+        Generated SQL and optionally query results, or 401 if not authenticated
+    """
+    user = request.session.get('user')
+
+    if not user:
+        logger.info("Unauthenticated text-to-sql access attempt")
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content=ErrorResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated"
+            ).dict()
+        )
+
+    # Validate input
+    if not body.query or not body.query.strip():
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Query cannot be empty"
+            ).dict()
+        )
+
+    logger.info("Text-to-SQL request from user: %s", user.get('email'))
+
+    try:
+        # Initialize services
+        ai_service = get_ai_service()
+        text_to_sql_service = TextToSqlService(ai_service)
+
+        # Generate SQL from natural language
+        result = await text_to_sql_service.generate_sql_from_text(
+            query=body.query.strip(),
+            execute=body.execute
+        )
+
+        if "error" in result:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={
+                    "error": result["error"],
+                    "sql": result.get("sql"),
+                }
+            )
+
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "sql": result.get("sql"),
+                "results": result.get("results") if body.execute else None,
+                "schema": result.get("schema"),
+            }
+        )
+
+    except Exception as e:
+        logger.exception("Error in text-to-sql endpoint: %s", e)
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=ErrorResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to process text-to-SQL request: {str(e)}"
+            ).dict()
+        )
