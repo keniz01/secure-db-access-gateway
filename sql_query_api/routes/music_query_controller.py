@@ -7,6 +7,7 @@ from strawberry.fastapi import GraphQLRouter
 
 from dependencies.dependency_container import setup_container
 from services.music_query_service import IMusicQueryService
+from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 
 def read_secret_from_file(file_path: str) -> str:
     """Read secret from file, fallback to empty string if file not found."""
@@ -24,6 +25,7 @@ if not DATABASE_URL:
 # Dependency injection setup
 _container = setup_container(DATABASE_URL)
 _music_query_service = _container.resolve(IMusicQueryService)
+_sql_safety_checker = DefaultSqlSafetyChecker()
 
 
 # Strawberry input type for the query
@@ -64,14 +66,16 @@ class Query:
         if len(sql) > 10000:
             raise ValueError("SQL statement is too long (max 10000 characters).")
 
-        # Only allow SELECT queries
-        if not sql.lower().startswith("select"):
-            raise ValueError("Only SELECT statements are allowed.")
-
         try:
-            logger.info("Executing SQL query (length=%d)", len(sql))
-            result: List[Dict[str, Any]] = await _music_query_service.execute_sql_statement(sql)            
+            # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
+            cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
+            logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
+            result: List[Dict[str, Any]] = await _music_query_service.execute_sql_statement(cleaned_sql)            
             return result
+        except ValueError as e:
+            # ValueError from cleaning/validation - provide clear error message
+            logger.warning("SQL validation failed: %s", str(e))
+            raise ValueError(str(e))
         except Exception as e:
             logger.exception("Error executing SQL")
             # Don't expose internal error details to client

@@ -14,6 +14,7 @@ from repositories.sql_validators.rules.sql_rules import (
     SingleStatementRule,
     SqlSafetyRule,
 )
+from repositories.sql_validators.sql_cleaner import clean_sql
 
 
 # ----------------------
@@ -81,3 +82,31 @@ class DefaultSqlSafetyChecker:
 
         stmt = parsed[0]
         return all(rule.check(stmt, query) for rule in self.rules)
+
+    def clean_and_validate_sql(self, sql: str) -> str:
+        """
+        Clean and validate SQL query from LLM output.
+
+        This method combines SQL cleaning (for LLM artifacts) with safety validation.
+        It first cleans the SQL to remove markdown, prefixes, and fix common issues,
+        then validates it using the configured safety rules.
+
+        Args:
+            sql: Raw SQL query string (potentially from LLM)
+
+        Returns:
+            Cleaned and validated SQL query string
+
+        Raises:
+            ValueError: If SQL cannot be cleaned or fails validation
+        """
+        # Step 1: Clean the SQL (remove LLM artifacts)
+        cleaned_sql = clean_sql(sql)
+
+        # Step 2: Validate the cleaned SQL
+        if not self.is_safe_select_query(cleaned_sql):
+            raise ValueError(
+                "SQL query failed safety validation. Only simple SELECT statements are allowed."
+            )
+
+        return cleaned_sql

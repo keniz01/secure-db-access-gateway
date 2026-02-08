@@ -72,6 +72,10 @@ class TextToSqlService:
         except AIServiceError as e:
             logger.error("AI service error in text-to-SQL: %s", e)
             return {"error": f"Failed to generate SQL: {str(e)}", "sql": None}
+        except ValueError as e:
+            # Handle validation errors from sql_query_api
+            logger.warning("SQL validation error: %s", e)
+            return {"error": str(e), "sql": result.get("sql") if "result" in locals() else None}
         except Exception as e:
             logger.exception("Unexpected error in text-to-SQL: %s", e)
             return {"error": f"Unexpected error: {str(e)}", "sql": None}
@@ -181,53 +185,10 @@ Question: {natural_language}"""
                 raise AIServiceError("LLM returned empty SQL query")
 
             # Log raw response for debugging
-            logger.debug("Raw SQL response: %s", sql[:200])
+            logger.debug("Raw SQL response from LLM: %s", sql[:200])
 
-            # Clean up the SQL - remove markdown code blocks if present
-            sql = sql.strip()
-            if sql.startswith("```"):
-                # Remove markdown code blocks
-                lines = sql.split("\n")
-                lines = [line for line in lines if not line.strip().startswith("```")]
-                sql = "\n".join(lines).strip()
-
-            # Remove SQL keyword prefix if present (some models add "SQL:" or similar)
-            # Use startswith instead of lstrip to avoid removing characters from SELECT
-            sql = sql.strip()
-            if sql.upper().startswith("SQL:"):
-                sql = sql[4:].strip()  # Remove "SQL:" prefix
-            elif sql.upper().startswith("SQL "):
-                sql = sql[4:].strip()  # Remove "SQL " prefix
-
-            # Fix common truncation issues: ELECT -> SELECT
-            if sql.upper().startswith("ELECT"):
-                logger.warning("Detected 'ELECT' instead of 'SELECT', fixing...")
-                sql = "S" + sql
-
-            # Ensure SQL starts with SELECT (case-insensitive check)
-            sql_upper = sql.upper().strip()
-            if not sql_upper.startswith("SELECT"):
-                # Try to find SELECT in the first few words
-                words = sql.split()
-                if len(words) > 0 and words[0].upper() == "ELECT":
-                    sql = "SELECT " + " ".join(words[1:])
-                    logger.warning("Fixed 'ELECT' to 'SELECT'")
-                elif not sql_upper.startswith("SELECT"):
-                    # If it doesn't start with SELECT at all, prepend it
-                    logger.warning("SQL does not start with SELECT, attempting to fix...")
-                    if sql_upper.startswith("ELECT"):
-                        sql = "S" + sql
-                    else:
-                        # Last resort: prepend SELECT if it looks like SQL
-                        if any(keyword in sql_upper for keyword in ["FROM", "WHERE", "JOIN"]):
-                            sql = "SELECT * " + sql
-                            logger.warning("Prepended 'SELECT *' to SQL query")
-
-            # Final validation: ensure it starts with SELECT
-            if not sql.upper().strip().startswith("SELECT"):
-                raise AIServiceError(f"Generated SQL does not start with SELECT: {sql[:100]}")
-
-            logger.info("Generated SQL query: %s", sql[:200])
+            # Return raw SQL - cleaning and validation will be handled by sql_query_api
+            logger.info("Generated SQL query (raw): %s", sql[:200])
             return sql
 
         except Exception as e:
@@ -265,7 +226,9 @@ Question: {natural_language}"""
                 if "errors" in data:
                     error_msg = data["errors"][0].get("message", "Unknown GraphQL error")
                     logger.error("GraphQL error executing SQL: %s", error_msg)
-                    raise Exception(f"Failed to execute SQL: {error_msg}")
+                    # Preserve validation error messages from sql_query_api
+                    # These may include cleaning/validation failures
+                    raise ValueError(f"SQL validation or execution failed: {error_msg}")
 
                 results = data.get("data", {}).get("executeSqlStatement", [])
                 return results
@@ -273,7 +236,11 @@ Question: {natural_language}"""
         except httpx.HTTPError as e:
             logger.error("HTTP error executing SQL: %s", e)
             raise Exception(f"Failed to connect to SQL Query API: {str(e)}")
+        except ValueError as e:
+            # Re-raise ValueError (validation errors) as-is to preserve error messages
+            logger.warning("SQL validation error: %s", str(e))
+            raise
         except Exception as e:
             logger.error("Error executing SQL: %s", e)
-            raise
+            raise Exception(f"Failed to execute SQL: {str(e)}")
 

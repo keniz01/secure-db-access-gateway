@@ -152,10 +152,15 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
         )
 
         if "error" in result:
+            # Check if it's a validation error (400) or server error (500)
+            error_msg = result["error"]
+            is_validation_error = "validation" in error_msg.lower() or "SQL validation" in error_msg
+            status_code = status.HTTP_400_BAD_REQUEST if is_validation_error else status.HTTP_500_INTERNAL_SERVER_ERROR
+            
             return JSONResponse(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status_code,
                 content={
-                    "error": result["error"],
+                    "error": error_msg,
                     "sql": result.get("sql"),
                 }
             )
@@ -169,6 +174,16 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             }
         )
 
+    except ValueError as e:
+        # Handle validation errors from sql_query_api
+        logger.warning("SQL validation error in text-to-sql endpoint: %s", e)
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=ErrorResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e)
+            ).dict()
+        )
     except Exception as e:
         logger.exception("Error in text-to-sql endpoint: %s", e)
         return JSONResponse(
