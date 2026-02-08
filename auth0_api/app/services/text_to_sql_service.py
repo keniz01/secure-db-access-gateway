@@ -141,10 +141,44 @@ class TextToSqlService:
         system_prompt = """You must use the context to generate a correct Postgres SQL statement to answer the question at the end.
 IMPORTANT: The SQL statement MUST start with the word SELECT (not ELECT or any other variation).
 Strictly only use table and column names defined in the context and you must use table and column aliases.
-If the question does not make sense or you dont know the answer just say "I dont know".
 You must only return valid SQL - do not explain, advice or assume. The SQL must begin with SELECT.
 
+IMPORTANT GUIDELINES:
+- Use simple queries when appropriate - single-table queries do NOT require JOINs
+- For questions asking about "unique", "distinct", or "different" values, use COUNT(DISTINCT column_name)
+- NEVER use subqueries (EXISTS, IN with subquery, etc.) - they are not allowed
+- For existence checks ("is there", "does exist"), use: SELECT 1 FROM table WHERE condition LIMIT 1; or SELECT COUNT(*) > 0 AS exists FROM table WHERE condition;
+- For text searches (matching names, titles, etc.), use name/title columns (e.g., label_name, artist_name, title), NOT ID columns (e.g., label_id, artist_id)
+- Columns ending in "_id" are identifiers/foreign keys - use them for JOINs, not for text matching
+- Use columns ending in "_name", "name", "title", or similar descriptive text fields for matching text values
+- Only say "I dont know" if the required tables or columns are completely missing from the context schema
+- Always attempt to generate SQL using the available schema information
+
 Examples:
+
+Question: How many unique labels are in the label table?
+Context: label: label_id, label_name, founded_year
+SQL: SELECT COUNT(DISTINCT l.label_id) AS unique_label_count
+FROM label l;
+
+Question: Is there a label called "VP Records"?
+Context: label: label_id, label_name, founded_year
+SQL: SELECT 1 AS label_exists
+FROM label l
+WHERE l.label_name ILIKE 'VP Records'
+LIMIT 1;
+
+Question: Is there a label called "VP"?
+Context: label: label_id, label_name, founded_year
+SQL: SELECT 1 AS label_exists
+FROM label l
+WHERE l.label_name ILIKE 'VP'
+LIMIT 1;
+
+Question: Count the total number of albums
+Context: album: album_id, title, release_date, label_id
+SQL: SELECT COUNT(a.album_id) AS total_albums
+FROM album a;
 
 Question: Count albums distributed by record label 'Greenesleeves'
 Context: album: album_id, title, release_date, label_id
