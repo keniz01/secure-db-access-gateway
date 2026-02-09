@@ -1,0 +1,4 @@
+_type: prompt
+name: text_to_sql_system
+input_variables: ["schema", "question"]
+template_path: system.txt

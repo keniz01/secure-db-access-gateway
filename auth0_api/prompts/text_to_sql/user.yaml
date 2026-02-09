@@ -1,0 +1,4 @@
+_type: prompt
+name: text_to_sql_user
+input_variables: ["schema", "natural_language"]
+template: "Context: {schema}\n\nQuestion: {natural_language}"
