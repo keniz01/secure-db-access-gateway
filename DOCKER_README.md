@@ -31,13 +31,20 @@ This project now supports running the entire application stack using Docker Comp
    ```
 
 This will start:
-- Auth0 API on port 8001
+- **Nginx** (reverse proxy) on port 8080 – proxies Auth0 API requests
+- Auth0 API on port 8001 (also reachable via nginx at http://localhost:8080/api)
 - SQL Query API on port 8002
 - Web App on port 5173
 
 **Note**: PostgreSQL runs on your local machine, not in a container.
 
 ## Services
+
+### Nginx (Reverse Proxy)
+- **Image**: nginx:alpine
+- **Port**: 8080
+- **Role**: Proxies `/api` requests from the web app to the Auth0 API service
+- **Config**: `./nginx/nginx.conf`
 
 ### Auth0 API
 - **Build**: ./auth0_api
@@ -114,8 +121,15 @@ docker-compose up --build
 
 The Docker setup creates a complete development environment with:
 
+- **Nginx reverse proxy** – Web app calls `http://localhost:8080/api` for auth; nginx forwards to auth0_api
 - Isolated PostgreSQL database
 - Backend APIs with proper networking
 - Frontend served with hot reload
 - Secure secrets management
 - Health checks for database readiness
+
+### Request flow (Auth API)
+
+```
+Browser (localhost:5173) → nginx (localhost:8080/api) → auth0_api (internal:8001)
+```

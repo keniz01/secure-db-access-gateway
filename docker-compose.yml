@@ -1,4 +1,14 @@
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth0_api
+    restart: unless-stopped
+
   auth0_api:
     build: ./auth0_api
     secrets:
@@ -28,7 +38,7 @@ services:
       FRONTEND_URL_FILE: /run/secrets/frontend_url
       REACT_APP_URL_FILE: /run/secrets/react_app_url
       SQL_QUERY_API_URL: http://sql_query_api:8002/graphql
-      CORS_ORIGINS: http://localhost:5173,http://web-app:5173
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8080,http://web-app:5173
     ports:
       - "8001:8001"
     depends_on:
@@ -49,11 +59,12 @@ services:
   web_app:
     build: ./web-app
     environment:
-      VITE_API_BASE_URL: http://localhost:8001
+      VITE_API_BASE_URL: http://localhost:8080
       VITE_SQL_GRAPHQL_BASE_URL: http://localhost:8002/graphql
     ports:
       - "5173:5173"
     depends_on:
+      - nginx
       - auth0_api
       - sql_query_api
 
