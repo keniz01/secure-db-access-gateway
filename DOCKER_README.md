@@ -6,10 +6,6 @@ This project now supports running the entire application stack using Docker Comp
 
 - Docker and Docker Compose installed
 - Docker Desktop running (on macOS)
-- **PostgreSQL running locally** on port 5432 with:
-  - Database: `music_db`
-  - User: `music_user`
-  - Password: `music_pass`
 
 ## Quick Start
 
@@ -42,13 +38,6 @@ This will start:
 **Note**: PostgreSQL runs on your local machine, not in a container.
 
 ## Services
-
-### PostgreSQL
-- **Image**: postgres:15
-- **Database**: music_db
-- **User**: music_user
-- **Password**: music_pass
-- **Port**: 5432
 
 ### Auth0 API
 - **Build**: ./auth0_api
