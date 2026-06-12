@@ -35,7 +35,7 @@ async def get_user(request: Request):
             content=ErrorResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
-            ).dict()
+            ).model_dump()
         )
 
     logger.debug("User info retrieved for: %s", user.get('email'))
@@ -65,7 +65,7 @@ async def get_dashboard(request: Request):
             content=ErrorResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
-            ).dict()
+            ).model_dump()
         )
 
     logger.info("Dashboard request for user: %s", user.get('email'))
@@ -94,7 +94,7 @@ async def get_dashboard(request: Request):
             email=user.get("email"),
             name=user.get("name"),
             message=final_message,
-        ).dict()
+        ).model_dump()
     )
 
 
@@ -125,7 +125,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             content=ErrorResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
-            ).dict()
+            ).model_dump()
         )
 
     # Validate input
@@ -135,7 +135,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             content=ErrorResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Query cannot be empty"
-            ).dict()
+            ).model_dump()
         )
 
     logger.info("Text-to-SQL request from user: %s", user.get('email'))
@@ -182,7 +182,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             content=ErrorResponse(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e)
-            ).dict()
+            ).model_dump()
         )
     except Exception as e:
         logger.exception("Error in text-to-sql endpoint: %s", e)
@@ -191,5 +191,5 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             content=ErrorResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to process text-to-SQL request: {str(e)}"
-            ).dict()
+            ).model_dump()
         )

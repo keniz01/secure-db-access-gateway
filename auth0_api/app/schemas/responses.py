@@ -2,7 +2,7 @@
 Response schemas for API endpoints.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Any
 
 
@@ -24,14 +24,11 @@ class ErrorResponse(BaseModel):
 class UserResponse(BaseModel):
     """User information response."""
 
+    model_config = ConfigDict(extra="allow")
+
     id: str = Field(..., description="User ID")
     email: str = Field(..., description="User email")
     name: str = Field(..., description="User name")
-
-    class Config:
-        """Pydantic configuration."""
-
-        extra = "allow"
 
 
 class AuthTokenResponse(BaseModel):

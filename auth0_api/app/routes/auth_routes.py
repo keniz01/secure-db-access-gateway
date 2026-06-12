@@ -95,7 +95,7 @@ async def login(request: Request):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to initiate login",
                 error=str(e)
-            ).dict()
+            ).model_dump()
         )
 
 
@@ -131,7 +131,7 @@ async def auth_callback(request: Request):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=error.error or "access_denied",
                 error_description=error.description or "Authentication failed"
-            ).dict()
+            ).model_dump()
         )
     except Exception as e:
         logger.exception("Unexpected error during token exchange: %s", e)
@@ -141,7 +141,7 @@ async def auth_callback(request: Request):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="access_denied",
                 error=str(e)
-            ).dict()
+            ).model_dump()
         )
 
     user_info = token.get('userinfo')
@@ -154,7 +154,7 @@ async def auth_callback(request: Request):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="access_denied",
                 error="Could not retrieve user information"
-            ).dict()
+            ).model_dump()
         )
 
     # Store user and token in session
@@ -177,7 +177,7 @@ async def auth_callback(request: Request):
                 email=user_info.get('email'),
                 name=user_info.get('name'),
             )
-        ).dict()
+        ).model_dump()
     )
 
 
