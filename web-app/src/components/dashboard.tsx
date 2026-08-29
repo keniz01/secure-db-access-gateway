@@ -9,7 +9,8 @@ import {
   UserInfoCard,
   QueryInput,
   NaturalLanguageInput,
-  QueryResults
+  QueryResults,
+  SchemaBrowser
 } from './dashboard/index';
 
 interface GraphQLResponse {
@@ -41,6 +42,17 @@ export const Dashboard = () => {
   const { data: dashboardUser, isLoading } = useQuery({
     queryKey: ['dashboard'],
     queryFn: dashboardApi.fetchDashboard,
+    retry: 1,
+    staleTime: 1000 * 60 * 5,
+  });
+
+  const {
+    data: schemaTables = [],
+    isLoading: isSchemaLoading,
+    error: schemaError,
+  } = useQuery({
+    queryKey: ['schema-browser'],
+    queryFn: graphqlApi.fetchSchema,
     retry: 1,
     staleTime: 1000 * 60 * 5,
   });
@@ -159,6 +171,12 @@ export const Dashboard = () => {
         <UserInfoCard
           user={user}
           dashboardMessage={dashboardUser?.message}
+        />
+
+        <SchemaBrowser
+          tables={schemaTables}
+          isLoading={isSchemaLoading}
+          error={schemaError ? (schemaError as Error).message : null}
         />
 
         {/* Tab Navigation */}
