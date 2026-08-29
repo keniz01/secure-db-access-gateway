@@ -36,3 +36,13 @@ class SqlQueryService(ISqlQueryService):
         except Exception as e:
             logging.error(f"Service: Error fetching schema: {e}")
             raise
+
+    async def introspect_schema(self) -> Dict[str, Any]:
+        try:
+            schema = await self.repository.introspect_schema()
+            logging.info("Service: Introspected database schema successfully.")
+            return schema
+        except Exception as e:
+            logging.error(f"Service: Error introspecting schema: {e}")
+            raise
+

@@ -42,10 +42,40 @@ class JSON:
     parse_value: Callable[[Any], Any] = staticmethod(lambda value: value)
 
 
-# Schema Info type for getTableSchema response
+# Schema Info type for getTableSchema (vector-embedding-based) response
 @strawberry.type
 class SchemaInfo:
     schema: str
+
+
+# Types for dynamic schema introspection
+@strawberry.type
+class ColumnInfo:
+    name: str
+    type: str
+    nullable: bool
+    is_primary: bool
+
+
+@strawberry.type
+class ForeignKeyInfo:
+    column: str
+    foreign_schema: str
+    foreign_table: str
+    foreign_column: str
+
+
+@strawberry.type
+class TableInfo:
+    name: str
+    schema_name: str
+    columns: List[ColumnInfo]
+    foreign_keys: List[ForeignKeyInfo]
+
+
+@strawberry.type
+class DatabaseSchemaInfo:
+    tables: List[TableInfo]
 
 
 # GraphQL Query type
@@ -62,7 +92,7 @@ class Query:
         # Input validation: Check if SQL is empty
         if not sql:
             raise ValueError("SQL statement cannot be empty.")
-        
+
         # Input validation: Limit query length to prevent DoS
         if len(sql) > 10000:
             raise ValueError("SQL statement is too long (max 10000 characters).")
@@ -71,7 +101,7 @@ class Query:
             # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
             logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
-            result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)            
+            result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)
             return result
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message
@@ -110,6 +140,52 @@ class Query:
             logger.exception("Error fetching table schema")
             # Don't expose internal error details to client
             raise Exception("Failed to fetch table schema. Please verify your embeddings.")
+
+    @strawberry.field(description="Dynamically introspect the connected database schema")
+    async def introspect_schema(self) -> DatabaseSchemaInfo:
+        """
+        Reads the live database schema (tables, columns, PKs, FKs) directly from
+        information_schema (PostgreSQL) or sqlite_master/PRAGMA (SQLite).
+        No hard-coded table names are assumed.
+        """
+        try:
+            logger.info("Introspecting database schema")
+            result: Dict[str, Any] = await _sql_query_service.introspect_schema()
+            raw_tables: List[Dict[str, Any]] = result.get("tables", [])
+
+            tables: List[TableInfo] = []
+            for t in raw_tables:
+                columns = [
+                    ColumnInfo(
+                        name=c["name"],
+                        type=c["type"],
+                        nullable=c["nullable"],
+                        is_primary=c["is_primary"],
+                    )
+                    for c in t.get("columns", [])
+                ]
+                fks = [
+                    ForeignKeyInfo(
+                        column=fk["column"],
+                        foreign_schema=fk["foreign_schema"],
+                        foreign_table=fk["foreign_table"],
+                        foreign_column=fk["foreign_column"],
+                    )
+                    for fk in t.get("foreign_keys", [])
+                ]
+                tables.append(
+                    TableInfo(
+                        name=t["name"],
+                        schema_name=t["schema_name"],
+                        columns=columns,
+                        foreign_keys=fks,
+                    )
+                )
+
+            return DatabaseSchemaInfo(tables=tables)
+        except Exception as e:
+            logger.exception("Error introspecting database schema")
+            raise Exception("Failed to introspect database schema.")
 
 
 # Create schema and router

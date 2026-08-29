@@ -180,6 +180,64 @@ class TestGraphQLGetTableSchema:
         assert "Embeddings must be exactly 384 dimensions, got 3" in res["errors"][0]["message"]
 
 
+
+class TestGraphQLIntrospectSchema:
+    def test_introspect_schema_returns_tables(self, client: TestClient) -> None:
+        gql_query = """
+        query {
+            introspectSchema {
+                tables {
+                    name
+                    schemaName
+                    columns {
+                        name
+                        type
+                        nullable
+                        isPrimary
+                    }
+                    foreignKeys {
+                        column
+                        foreignTable
+                        foreignColumn
+                    }
+                }
+            }
+        }
+        """
+        response = client.post("/graphql", json={"query": gql_query})
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        tables = res["data"]["introspectSchema"]["tables"]
+        assert isinstance(tables, list)
+        assert len(tables) >= 2
+        table_names = [t["name"] for t in tables]
+        assert "artist" in table_names
+        assert "track" in table_names
+
+    def test_introspect_schema_artist_columns(self, client: TestClient) -> None:
+        gql_query = """
+        query {
+            introspectSchema {
+                tables {
+                    name
+                    columns { name type nullable isPrimary }
+                }
+            }
+        }
+        """
+        response = client.post("/graphql", json={"query": gql_query})
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        tables = {t["name"]: t for t in res["data"]["introspectSchema"]["tables"]}
+        artist = tables["artist"]
+        col_names = [c["name"] for c in artist["columns"]]
+        assert "id" in col_names
+        assert "name" in col_names
+        assert "genre" in col_names
+
+
 class TestSecurityHeadersMiddleware:
     def test_security_headers_present(self, client: TestClient) -> None:
         response = client.post("/graphql", json={"query": "query { ping }"})
@@ -187,3 +245,4 @@ class TestSecurityHeadersMiddleware:
         assert response.headers.get("X-Frame-Options") == "DENY"
         assert response.headers.get("X-XSS-Protection") == "1; mode=block"
         assert "max-age=" in response.headers.get("Strict-Transport-Security", "")
+

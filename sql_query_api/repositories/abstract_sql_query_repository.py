@@ -14,3 +14,9 @@ class ISqlQueryRepository(ABC):
     async def get_table_schema(self, embeddings: List[float]) -> Dict[str, Any]:
         """Get table schema information using vector embeddings"""
         raise NotImplementedError("This method should be overridden by subclasses.")
+
+    @abstractmethod
+    async def introspect_schema(self) -> Dict[str, Any]:
+        """Dynamically introspect database schema information"""
+        raise NotImplementedError("This method should be overridden by subclasses.")
+
