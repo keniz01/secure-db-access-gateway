@@ -89,6 +89,16 @@ jobs:
           cd web-app
           npm test
 
+      - name: Install Playwright browsers
+        run: |
+          cd web-app
+          npx playwright install --with-deps chromium
+
+      - name: Run E2E Playwright tests
+        run: |
+          cd web-app
+          npm run test:e2e
+
       - name: Build web-app
         run: |
           cd web-app
