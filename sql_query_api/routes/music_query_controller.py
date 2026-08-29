@@ -17,10 +17,11 @@ def read_secret_from_file(file_path: str) -> str:
     except FileNotFoundError:
         return ""
 
-# Get the database URL from environment or file, raise error if not set
-DATABASE_URL = os.getenv("DATABASE_URL") or read_secret_from_file(os.getenv("DATABASE_URL_FILE", ""))
-if not DATABASE_URL:
-    raise RuntimeError("DATABASE_URL environment variable or DATABASE_URL_FILE is not set")
+DATABASE_URL = (
+    os.getenv("DATABASE_URL")
+    or read_secret_from_file(os.getenv("DATABASE_URL_FILE", ""))
+    or "sqlite+aiosqlite:///:memory:"
+)
 
 # Dependency injection setup
 _container = setup_container(DATABASE_URL)

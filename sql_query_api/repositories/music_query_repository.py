@@ -33,7 +33,8 @@ class MusicQueryRepository(IMusicQueryRepository):
         try:
             conn: AsyncConnection = await self._engine.connect()
             try:
-                await conn.execute(text(f"SET search_path TO {schema_name}"))
+                if conn.dialect.name == "postgresql":
+                    await conn.execute(text(f"SET search_path TO {schema_name}"))
                 yield conn
             finally:
                 await conn.close()
