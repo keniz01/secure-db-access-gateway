@@ -7,7 +7,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from sqlalchemy.ext.asyncio.result import AsyncResult
 
-from repositories.abstract_music_query_repository import IMusicQueryRepository
+from repositories.abstract_sql_query_repository import ISqlQueryRepository
 from exceptions.forbidden_sql_statement_exception import ForbiddenSqlStatementException
 from exceptions.sql_statement_execution_exception import SqlStatementExecutionException
 
@@ -15,9 +15,9 @@ from exceptions.exception_handlers import raise_sql_execution_exception
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker, SqlSafetyChecker
 
 
-class MusicQueryRepository(IMusicQueryRepository):
+class SqlQueryRepository(ISqlQueryRepository):
     """
-    Repository class for music queries.
+    Repository class for SQL queries.
     """
 
     def __init__(

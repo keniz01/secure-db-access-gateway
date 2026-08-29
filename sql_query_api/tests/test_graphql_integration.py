@@ -5,9 +5,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
 
 from app_factory import create_app
-from routes import music_query_controller
-from repositories.music_query_repository import MusicQueryRepository
-from services.music_query_service import MusicQueryService
+from routes import sql_query_controller
+from repositories.sql_query_repository import SqlQueryRepository
+from services.sql_query_service import SqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 
 
@@ -34,12 +34,12 @@ async def test_engine() -> AsyncGenerator[AsyncEngine, None]:
 
 
 @pytest.fixture(autouse=True)
-def override_music_service(test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Override the music query service instance in music_query_controller with test database engine."""
+def override_sql_service(test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Override the SQL query service instance in sql_query_controller with test database engine."""
     safety_checker = DefaultSqlSafetyChecker()
-    test_repo = MusicQueryRepository(engine=test_engine, sql_safety_checker=safety_checker)
-    test_service = MusicQueryService(repository=test_repo)
-    monkeypatch.setattr(music_query_controller, "_music_query_service", test_service)
+    test_repo = SqlQueryRepository(engine=test_engine, sql_safety_checker=safety_checker)
+    test_service = SqlQueryService(repository=test_repo)
+    monkeypatch.setattr(sql_query_controller, "_sql_query_service", test_service)
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ class TestGraphQLHealthCheck:
         assert response.status_code == 200
         json_data = response.json()
         assert "errors" not in json_data
-        assert json_data["data"]["ping"] == "GraphQL Music Query API is running!"
+        assert json_data["data"]["ping"] == "GraphQL SQL Query API is running!"
 
 
 class TestGraphQLExecuteSqlStatement:

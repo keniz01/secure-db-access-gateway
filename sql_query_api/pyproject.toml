@@ -1,7 +1,7 @@
 [project]
-name = "music-findr"
+name = "sql-query-api"
 version = "0.1.0"
-description = "Add your description here"
+description = "SQL Query API service for Read-Only Database Explorer"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

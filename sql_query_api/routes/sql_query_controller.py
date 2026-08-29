@@ -6,7 +6,7 @@ import strawberry
 from strawberry.fastapi import GraphQLRouter
 
 from dependencies.dependency_container import setup_container
-from services.music_query_service import IMusicQueryService
+from services.abstract_sql_query_service import ISqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 
 def read_secret_from_file(file_path: str) -> str:
@@ -25,7 +25,7 @@ DATABASE_URL = (
 
 # Dependency injection setup
 _container = setup_container(DATABASE_URL)
-_music_query_service = _container.resolve(IMusicQueryService)
+_sql_query_service = _container.resolve(ISqlQueryService)
 _sql_safety_checker = DefaultSqlSafetyChecker()
 
 
@@ -53,7 +53,7 @@ class SchemaInfo:
 class Query:
     @strawberry.field(description="Health check")
     def ping(self) -> str:
-        return "GraphQL Music Query API is running!"
+        return "GraphQL SQL Query API is running!"
 
     @strawberry.field(description="Executes a SQL SELECT statement")
     async def execute_sql_statement(self, request: SqlStatementRequest) -> List[JSON]:
@@ -71,7 +71,7 @@ class Query:
             # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
             logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
-            result: List[Dict[str, Any]] = await _music_query_service.execute_sql_statement(cleaned_sql)            
+            result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)            
             return result
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message
@@ -103,7 +103,7 @@ class Query:
 
         try:
             logger.info("Fetching table schema with embeddings (dimensions=%d)", len(embeddings))
-            result: Dict[str, Any] = await _music_query_service.get_table_schema(embeddings)
+            result: Dict[str, Any] = await _sql_query_service.get_table_schema(embeddings)
             schema_text = result.get("schema", "")
             return SchemaInfo(schema=schema_text)
         except Exception as e:
