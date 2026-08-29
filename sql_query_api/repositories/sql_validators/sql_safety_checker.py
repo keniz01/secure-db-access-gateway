@@ -40,8 +40,9 @@ class SqlSafetyChecker(Protocol):
 class DefaultSqlSafetyChecker:
     """Validator for "safe" SELECT SQL queries using a pluggable rule system."""
 
-    def __init__(self):
+    def __init__(self, max_query_length: int = 10000):
         """Initialize the DefaultSqlSafetyChecker with a set of validation rules."""
+        self.max_query_length = max_query_length
         self.rules: list[SqlSafetyRule] = [
             # Fundamental
             SingleStatementRule(),
@@ -76,6 +77,12 @@ class DefaultSqlSafetyChecker:
             True if the query is a safe SELECT statement, False otherwise.
 
         """
+        if not query or not query.strip():
+            return False
+
+        if len(query) > self.max_query_length:
+            return False
+
         parsed = sqlparse.parse(query)
         if not parsed:
             return False
