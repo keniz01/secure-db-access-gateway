@@ -16,7 +16,7 @@ The Auth0 API provides secure authentication and user management for the SQL Que
 ## 📋 Quick Links
 
 - **Getting Started?** → [QUICK_START.md](QUICK_START.md)
-- **Need Architecture Overview?** → [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Need Architecture Overview?** → [ARCHITECTURE.md](../ARCHITECTURE.md)
 - **Setting Up Development?** → [DEVELOPMENT.md](DEVELOPMENT.md)
 - **Documentation Index?** → [INDEX.md](INDEX.md)
 
@@ -112,7 +112,7 @@ This project includes comprehensive documentation:
 |----------|---------|-----------|
 | [INDEX.md](INDEX.md) | Navigation guide for all docs | 5 min |
 | [QUICK_START.md](QUICK_START.md) | Getting started quickly | 5 min |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Design and architecture | 15 min |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | Design and architecture | 15 min |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Development guide and patterns | 20 min |
 | [MIGRATION.md](MIGRATION.md) | How code was refactored | 15 min |
 | [STRUCTURE.md](STRUCTURE.md) | File organization reference | 10 min |
@@ -257,11 +257,11 @@ For more help, see [DEVELOPMENT.md](DEVELOPMENT.md#troubleshooting).
 
 ## 📞 Support
 
-- **Architecture questions**: See [ARCHITECTURE.md](ARCHITECTURE.md)
+- **Architecture questions**: See [ARCHITECTURE.md](../ARCHITECTURE.md)
 - **Setup issues**: See [DEVELOPMENT.md](DEVELOPMENT.md)
 - **Finding files**: See [STRUCTURE.md](STRUCTURE.md)
 - **General info**: See [INDEX.md](INDEX.md) for navigation
 
 ---
 
-**Start here**: Read [QUICK_START.md](QUICK_START.md) for a quick orientation, then dive into [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
+**Start here**: Read [QUICK_START.md](QUICK_START.md) for a quick orientation, then dive into [ARCHITECTURE.md](../ARCHITECTURE.md) for the full picture.

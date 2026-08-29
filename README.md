@@ -338,7 +338,7 @@ Contributions are welcome! Please follow these steps:
 
 **IMPORTANT**: Do NOT create public GitHub issues for security vulnerabilities.
 
-For security issues, please email: [Add your security contact email]
+For security issues, please email: kenneth.kiiza@googlemail.com
 
 Allow 30 days for response before public disclosure.
 
@@ -361,6 +361,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🗺️ Roadmap
 
+### Completed Features
+- [x] Docker containerization (Docker Compose & Nginx gateway)
+
+### Planned Enhancements
 - [ ] Add query history tracking
 - [ ] Implement query result export (CSV, JSON)
 - [ ] Add database schema visualization
@@ -370,13 +374,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [ ] Role-based access control
 - [ ] Audit logging
 - [ ] Rate limiting implementation
-- [ ] Docker containerization
 
 ## 📊 Project Status
 
 **Current Version**: 1.1.0  
 **Status**: Development  
-**Last Updated**: January 2026
+**Last Updated**: August 2026
 
 ---
 
