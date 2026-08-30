@@ -1,7 +1,13 @@
 import logging
 import time
 import uuid
+
 from fastapi import Request, Response
+
+try:
+    from opentelemetry import trace
+except ImportError:  # pragma: no cover
+    trace = None
 
 
 async def correlation_id_middleware(request: Request, call_next) -> Response:
@@ -14,6 +20,11 @@ async def correlation_id_middleware(request: Request, call_next) -> Response:
     # Get correlation ID from request or create a new one
     correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
     request.state.correlation_id = correlation_id  # store for later use
+
+    if trace is not None:
+        current_span = trace.get_current_span()
+        if current_span and current_span.is_recording():
+            current_span.set_attribute("app.correlation_id", correlation_id)
 
     # Process request
     try:

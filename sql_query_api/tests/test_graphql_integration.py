@@ -1,5 +1,7 @@
-import pytest
+import json
 from typing import AsyncGenerator
+
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncEngine
 from sqlalchemy import text
@@ -79,6 +81,21 @@ class TestGraphQLExecuteSqlStatement:
         assert rows[0] == {"id": 1, "name": "The Beatles", "genre": "Rock"}
         assert rows[1] == {"id": 2, "name": "Miles Davis", "genre": "Jazz"}
 
+    def test_graphql_rate_limit_exceeded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("RATE_LIMIT_MAX_REQUESTS", "1")
+        monkeypatch.setenv("RATE_LIMIT_WINDOW_SECONDS", "60")
+        app = create_app()
+        client = TestClient(app)
+        payload = {"query": "query { ping }"}
+
+        first = client.post("/graphql", json=payload)
+        second = client.post("/graphql", json=payload)
+
+        assert first.status_code == 200
+        assert second.status_code == 429
+        assert second.json()["detail"] == "Rate limit exceeded. Please try again later."
+        assert second.headers["Retry-After"] == "60"
+
     def test_execute_sql_automatic_limit(self, client: TestClient) -> None:
         gql_query = """
         query ExecuteSql($req: SqlStatementRequest!) {
@@ -93,6 +110,47 @@ class TestGraphQLExecuteSqlStatement:
         rows = res["data"]["executeSqlStatement"]
         # Default LIMIT 100 should be applied automatically
         assert len(rows) == 100
+
+    def test_graphql_requires_known_role(self, client: TestClient) -> None:
+        gql_query = """
+        query ExecuteSql($req: SqlStatementRequest!) {
+            executeSqlStatement(request: $req)
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT id, name FROM artist ORDER BY id ASC"}}
+        response = client.post(
+            "/graphql",
+            json={"query": gql_query, "variables": variables},
+            headers={"X-User-Role": "guest"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Forbidden: user role is not authorized to access this API."
+
+    def test_execute_sql_emits_audit_json(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        gql_query = """
+        query ExecuteSql($req: SqlStatementRequest!) {
+            executeSqlStatement(request: $req)
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT id, name FROM artist ORDER BY id ASC"}}
+        headers = {"X-User-Email": "alice@example.com", "X-Org-Id": "org-42"}
+
+        captured = {}
+
+        def fake_log(event_type: str, **payload):
+            captured["event"] = event_type
+            captured.update(payload)
+
+        monkeypatch.setattr("routes.sql_query_controller.log_audit_event", fake_log)
+
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=headers)
+        assert response.status_code == 200
+        assert captured["event"] == "sql_query"
+        assert captured["user"] == "alice@example.com"
+        assert captured["org_id"] == "org-42"
+        assert captured["tables_touched"] == ["artist"]
 
     def test_execute_sql_empty_statement(self, client: TestClient) -> None:
         gql_query = """

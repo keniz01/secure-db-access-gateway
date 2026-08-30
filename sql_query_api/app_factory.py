@@ -7,13 +7,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from middlewares.logging_middleware import LoggingMiddleware
 from middlewares.correlation_middleware import correlation_id_middleware
+from middlewares.rate_limit_middleware import RateLimitMiddleware
+from middlewares.rbac_middleware import RBACMiddleware
 from exceptions.exception_handlers import (
     http_exception_handler,
     validation_exception_handler,
 )
 from graphql_schema.schema import schema
 from strawberry.fastapi import GraphQLRouter
-from config.app_logger import logger
+from config.app_logger import logger, configure_telemetry
 import os
 from typing import List
 
@@ -75,6 +77,8 @@ def setup_custom_middlewares(app: FastAPI):
     """
     app.add_middleware(LoggingMiddleware)
     app.middleware("http")(correlation_id_middleware)
+    app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(RBACMiddleware)
 
 
 def setup_exception_handlers(app: FastAPI):
@@ -133,6 +137,7 @@ def create_app() -> FastAPI:
 
     # Setup routes
     setup_routes(app)
+    configure_telemetry()
 
     logger.info("Application configured and ready")
 

@@ -1,7 +1,9 @@
+import asyncio
 import logging
+import os
 import re
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, Dict, List, Optional, Iterable
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Iterable
 from sqlalchemy import TextClause, text
 from sqlalchemy.engine import Row
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -24,9 +26,75 @@ class SqlQueryRepository(ISqlQueryRepository):
         self,
         engine: AsyncEngine,
         sql_safety_checker: SqlSafetyChecker,
+        query_timeout_seconds: Optional[float] = None,
+        sensitive_columns: Optional[set[str]] = None,
+        row_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
     ) -> None:
         self._engine: AsyncEngine = engine
         self._sql_safety_checker: SqlSafetyChecker = sql_safety_checker
+        self._sensitive_columns = {column.lower() for column in (sensitive_columns or set())}
+        self._row_filter = row_filter
+        configured_timeout = query_timeout_seconds
+        if configured_timeout is None:
+            configured_timeout = float(os.getenv("SQL_QUERY_TIMEOUT_SECONDS", "30"))
+        self._query_timeout_seconds = float(configured_timeout)
+        if self._query_timeout_seconds <= 0:
+            raise ValueError("SQL_QUERY_TIMEOUT_SECONDS must be greater than zero.")
+
+    def estimate_query_cost(self, sql: str) -> Dict[str, Any]:
+        """Estimate a query's relative execution cost from a few static heuristics."""
+        normalized = sql.strip()
+        if not normalized:
+            return {"score": 0, "level": "low", "reason": "Empty query"}
+
+        upper_sql = normalized.upper()
+        score = 1
+        reasons: list[str] = []
+
+        if "SELECT" in upper_sql:
+            score += 1
+        if "JOIN" in upper_sql:
+            score += 4
+            reasons.append("joins")
+        if "GROUP BY" in upper_sql or "HAVING" in upper_sql:
+            score += 3
+            reasons.append("aggregations")
+        if "ORDER BY" in upper_sql:
+            score += 2
+            reasons.append("sorting")
+        if "LIMIT" in upper_sql:
+            score += 1
+        if "*" in normalized:
+            score += 2
+            reasons.append("wide scan")
+        if "UNION" in upper_sql or "INTERSECT" in upper_sql or "EXCEPT" in upper_sql:
+            score += 4
+            reasons.append("set operations")
+        if "WITH " in upper_sql:
+            score += 3
+            reasons.append("CTE")
+
+        number_of_tables = max(1, len(re.findall(r"\bFROM\b|\bJOIN\b", upper_sql)))
+        score += number_of_tables - 1
+
+        if "SELECT COUNT" in upper_sql:
+            score += 2
+            reasons.append("count aggregation")
+
+        if score <= 4:
+            level = "low"
+        elif score <= 8:
+            level = "medium"
+        elif score <= 12:
+            level = "high"
+        else:
+            level = "critical"
+
+        return {
+            "score": score,
+            "level": level,
+            "reason": ", ".join(reasons) if reasons else "basic select",
+        }
 
     @asynccontextmanager
     async def get_conn(self, schema_name: Optional[str] = None) -> AsyncGenerator[AsyncConnection, None]:
@@ -35,16 +103,45 @@ class SqlQueryRepository(ISqlQueryRepository):
             try:
                 if conn.dialect.name == "postgresql":
                     await conn.execute(text("SET TRANSACTION READ ONLY;"))
+                    await conn.execute(
+                        text(f"SET LOCAL statement_timeout = '{int(self._query_timeout_seconds * 1000)}';")
+                    )
                     if schema_name:
                         await conn.execute(text(f"SET search_path TO {schema_name}"))
                 yield conn
             finally:
                 await conn.close()
         except Exception as e:
+            if isinstance(e, SqlStatementExecutionException):
+                raise
             logging.error(f"Error connecting to database: {e}")
             raise_sql_execution_exception(
                 "Error connecting to database", e, include_traceback=True
             )
+
+    def _apply_sensitive_column_masking(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self._sensitive_columns:
+            return rows
+
+        masked_rows: List[Dict[str, Any]] = []
+        for row in rows:
+            masked_row: Dict[str, Any] = {}
+            for key, value in row.items():
+                normalized_key = str(key).lower()
+                if (
+                    normalized_key in self._sensitive_columns
+                    or normalized_key.split(".")[-1] in self._sensitive_columns
+                ):
+                    masked_row[key] = "[MASKED]"
+                else:
+                    masked_row[key] = value
+            masked_rows.append(masked_row)
+        return masked_rows
+
+    def _apply_row_filter(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not self._row_filter:
+            return rows
+        return [row for row in rows if self._row_filter(row)]
 
     async def execute_sql_statement(
         self,
@@ -62,25 +159,44 @@ class SqlQueryRepository(ISqlQueryRepository):
 
         async with self.get_conn() as conn:
             try:
-                result: AsyncResult = await conn.execute(
-                    text(sql),
-                    parameters=params or {},
-                )
-
-                if result.returns_rows:
-                    rows: Iterable[Row[Any]] = result.fetchall()
-                    result_dicts: List[Dict[str, Any]] = [
-                        dict(row._mapping) for row in rows
-                    ]
-
-                    logging.info(
-                        f"SQL executed successfully, returned {len(result_dicts)} rows."
+                async def _execute_query() -> List[Dict[str, Any]]:
+                    result: AsyncResult = await conn.execute(
+                        text(sql),
+                        parameters=params or {},
                     )
-                    return result_dicts
 
-                return []
+                    if result.returns_rows:
+                        rows: Iterable[Row[Any]] = result.fetchall()
+                        result_dicts: List[Dict[str, Any]] = [
+                            dict(row._mapping) for row in rows
+                        ]
+
+                        logging.info(
+                            f"SQL executed successfully, returned {len(result_dicts)} rows."
+                        )
+                        filtered_rows = self._apply_row_filter(result_dicts)
+                        return self._apply_sensitive_column_masking(filtered_rows)
+
+                    return []
+
+                try:
+                    return await asyncio.wait_for(
+                        _execute_query(),
+                        timeout=self._query_timeout_seconds,
+                    )
+                except asyncio.TimeoutError as e:
+                    logging.warning(
+                        "SQL query timed out after %.2f seconds: %s",
+                        self._query_timeout_seconds,
+                        sql,
+                    )
+                    raise SqlStatementExecutionException(
+                        f"SQL query timed out after {self._query_timeout_seconds} seconds."
+                    ) from e
 
             except Exception as e:
+                if isinstance(e, SqlStatementExecutionException):
+                    raise
                 logging.error(f"Error executing SQL statement: {e}")
                 raise_sql_execution_exception(
                     "Error executing SQL statement", e, include_traceback=True

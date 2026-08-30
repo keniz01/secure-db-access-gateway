@@ -1,10 +1,12 @@
 import logging as logger
 import os
+import re
 from typing import Any, Callable, List, Optional, Dict
 
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 
+from config.app_logger import log_audit_event
 from dependencies.dependency_container import setup_container
 from services.abstract_sql_query_service import ISqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
@@ -27,6 +29,16 @@ DATABASE_URL = (
 _container = setup_container(DATABASE_URL)
 _sql_query_service = _container.resolve(ISqlQueryService)
 _sql_safety_checker = DefaultSqlSafetyChecker()
+
+
+def _extract_tables_touched(sql: str) -> List[str]:
+    targets = re.findall(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_\.]*)", sql, flags=re.IGNORECASE)
+    unique_tables: List[str] = []
+    for table in targets:
+        table_name = table.split(".")[-1]
+        if table_name and table_name not in unique_tables:
+            unique_tables.append(table_name)
+    return unique_tables
 
 
 # Strawberry input type for the query
@@ -78,6 +90,13 @@ class DatabaseSchemaInfo:
     tables: List[TableInfo]
 
 
+@strawberry.type
+class QueryCostEstimate:
+    score: int
+    level: str
+    reason: str
+
+
 # GraphQL Query type
 @strawberry.type
 class Query:
@@ -85,9 +104,29 @@ class Query:
     def ping(self) -> str:
         return "GraphQL SQL Query API is running!"
 
+    @strawberry.field(description="Estimate the relative computational cost of a SELECT query")
+    async def estimate_query_cost(self, sql_statement: str) -> QueryCostEstimate:
+        sql = sql_statement.strip()
+        if not sql:
+            raise ValueError("SQL statement cannot be empty.")
+
+        cost = _sql_query_service.repository.estimate_query_cost(sql)
+        return QueryCostEstimate(
+            score=cost.get("score", 0),
+            level=cost.get("level", "low"),
+            reason=cost.get("reason", "basic select"),
+        )
+
     @strawberry.field(description="Executes a SQL SELECT statement")
-    async def execute_sql_statement(self, request: SqlStatementRequest) -> List[JSON]:
+    async def execute_sql_statement(self, info: strawberry.Info, request: SqlStatementRequest) -> List[JSON]:
         sql = request.sql_statement.strip()
+        request_obj = getattr(info, "context", {}).get("request") if getattr(info, "context", None) else None
+        user = "unknown"
+        org_id = "unknown"
+        if request_obj is not None:
+            headers = getattr(request_obj, "headers", {})
+            user = headers.get("x-user-email") or headers.get("x-user-id") or "unknown"
+            org_id = headers.get("x-org-id") or headers.get("x-tenant-id") or "unknown"
 
         # Input validation: Check if SQL is empty
         if not sql:
@@ -101,6 +140,13 @@ class Query:
             # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
             logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
+            log_audit_event(
+                "sql_query",
+                user=user,
+                org_id=org_id,
+                query=cleaned_sql,
+                tables_touched=_extract_tables_touched(cleaned_sql),
+            )
             result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)
             return result
         except ValueError as e:

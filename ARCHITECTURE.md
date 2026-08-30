@@ -134,7 +134,34 @@ localhost:5173      → Web App (Vite)
 localhost:8080      → Nginx Gateway / Reverse Proxy
 localhost:8001      → Auth0 API
 localhost:8002      → SQL Query API
+localhost:3000      → Grafana UI (otel-lgtm telemetry stack)
+localhost:4318      → OTLP HTTP receiver for traces/logs/metrics
 localhost:5432      → PostgreSQL (Docker Container)
 ```
 
 Containerized deployment is defined in `docker-compose.yml` and documented in `DOCKER_README.md`.
+
+### Observability & APM
+
+The project uses a self-hosted Grafana `otel-lgtm` stack instead of a paid SaaS telemetry provider. All application services emit OTLP traces and structured logs, and the request correlation IDs are attached to spans so slow/failed queries can be traced end-to-end in Grafana.
+
+Operational settings are intentionally environment-driven:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318`
+- `OTEL_SERVICE_NAME=<service-name>`
+- `X-Correlation-ID` propagates through middleware and is attached to spans/logs
+
+This keeps the stack vendor-neutral while still giving Grafana/Loki/Tempo visibility into errors, latency, and query failures.
+
+### Async PostgreSQL Pooling & Backpressure
+
+The SQL Query API configures the async SQLAlchemy engine with explicit pool limits so the app degrades predictably under concurrent load instead of opening an unbounded number of database connections.
+
+Recommended defaults:
+
+- `DB_POOL_SIZE=5`
+- `DB_MAX_OVERFLOW=10`
+- `DB_POOL_TIMEOUT_SECONDS=30`
+- `DB_POOL_RECYCLE_SECONDS=1800`
+
+These values keep the database connection footprint bounded while allowing short bursts of load as the pool backs up. The code sets `pool_pre_ping=True` to detect stale connections, and the application-level `SQL_QUERY_TIMEOUT_SECONDS` still acts as a safety valve if the database becomes slow or overloaded.

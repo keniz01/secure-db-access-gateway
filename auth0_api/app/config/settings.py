@@ -75,7 +75,7 @@ class Settings:
             ]
 
     # Feature Flags
-    ENABLE_AI_GREETING: bool = True
+    ENABLE_AI_GREETING: bool = os.getenv("ENABLE_AI_GREETING", "true").strip().lower() not in {"0", "false", "no", "off"}
 
 
 # Create a singleton instance

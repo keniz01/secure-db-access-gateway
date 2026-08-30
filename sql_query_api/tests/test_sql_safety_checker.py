@@ -1,4 +1,10 @@
+import asyncio
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
+
+from exceptions.sql_statement_execution_exception import SqlStatementExecutionException
+from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 
 
@@ -115,3 +121,105 @@ class TestSqlSafetyCheckerCleanAndValidate:
         unsafe_raw_sql = "DELETE FROM artist WHERE id = 1"
         with pytest.raises(ValueError, match="SQL query failed safety validation"):
             checker.clean_and_validate_sql(unsafe_raw_sql)
+
+    def test_rejects_table_not_in_allowlist(self) -> None:
+        checker = DefaultSqlSafetyChecker(table_allowlist={"artist"})
+        assert checker.is_safe_select_query("SELECT * FROM artist") is True
+        assert checker.is_safe_select_query("SELECT * FROM album") is False
+
+    def test_rejects_disallowed_column(self) -> None:
+        checker = DefaultSqlSafetyChecker(column_allowlist={"artist": {"name"}})
+        assert checker.is_safe_select_query("SELECT name FROM artist") is True
+        assert checker.is_safe_select_query("SELECT id, name FROM artist") is False
+
+    @pytest.mark.asyncio
+    async def test_masks_sensitive_columns_in_results(self) -> None:
+        engine = MagicMock()
+        conn = AsyncMock()
+        conn.dialect.name = "sqlite"
+
+        mock_result = MagicMock()
+        mock_result.returns_rows = True
+        mock_result.fetchall.return_value = [
+            MagicMock(_mapping={"email": "alice@example.com", "name": "Alice"}),
+        ]
+        conn.execute = AsyncMock(return_value=mock_result)
+        engine.connect = AsyncMock(return_value=conn)
+
+        repo = SqlQueryRepository(
+            engine=engine,
+            sql_safety_checker=DefaultSqlSafetyChecker(),
+            sensitive_columns={"email"},
+        )
+
+        rows = await repo.execute_sql_statement("SELECT email, name FROM users")
+        assert rows[0]["email"] == "[MASKED]"
+        assert rows[0]["name"] == "Alice"
+
+    def test_estimate_cost_low_and_high_queries(self) -> None:
+        repo = SqlQueryRepository(engine=MagicMock(), sql_safety_checker=DefaultSqlSafetyChecker())
+        assert repo.estimate_query_cost("SELECT id FROM artist LIMIT 10")["level"] == "low"
+        high_cost = repo.estimate_query_cost("SELECT * FROM artist a JOIN album b ON a.id = b.artist_id WHERE a.id IN (SELECT artist_id FROM album)")
+        assert high_cost["level"] in {"high", "critical"}
+
+    @pytest.mark.asyncio
+    async def test_row_filter_reduces_results(self) -> None:
+        engine = MagicMock()
+        conn = AsyncMock()
+        conn.dialect.name = "sqlite"
+
+        mock_result = MagicMock()
+        mock_result.returns_rows = True
+        mock_result.fetchall.return_value = [
+            MagicMock(_mapping={"tenant_id": 1, "name": "Alice"}),
+            MagicMock(_mapping={"tenant_id": 2, "name": "Bob"}),
+        ]
+        conn.execute = AsyncMock(return_value=mock_result)
+        engine.connect = AsyncMock(return_value=conn)
+
+        repo = SqlQueryRepository(
+            engine=engine,
+            sql_safety_checker=DefaultSqlSafetyChecker(),
+            row_filter=lambda row: row.get("tenant_id") == 1,
+        )
+
+        rows = await repo.execute_sql_statement("SELECT tenant_id, name FROM users")
+        assert len(rows) == 1
+        assert rows[0]["tenant_id"] == 1
+
+
+class TestSqlQueryTimeout:
+    """Test suite for query timeout enforcement."""
+
+    @pytest.mark.asyncio
+    async def test_repository_uses_configured_timeout(self, checker: DefaultSqlSafetyChecker) -> None:
+        repo = SqlQueryRepository(
+            engine=MagicMock(),
+            sql_safety_checker=checker,
+            query_timeout_seconds=12.5,
+        )
+        assert repo._query_timeout_seconds == 12.5
+
+    @pytest.mark.asyncio
+    async def test_execute_sql_statement_raises_on_timeout(
+        self, checker: DefaultSqlSafetyChecker
+    ) -> None:
+        engine = MagicMock()
+        conn = AsyncMock()
+        conn.dialect.name = "sqlite"
+
+        async def timeout_execute(*args, **kwargs):
+            await asyncio.sleep(0.05)
+            raise asyncio.TimeoutError()
+
+        conn.execute.side_effect = timeout_execute
+        engine.connect = AsyncMock(return_value=conn)
+
+        repo = SqlQueryRepository(
+            engine=engine,
+            sql_safety_checker=checker,
+            query_timeout_seconds=0.01,
+        )
+
+        with pytest.raises(SqlStatementExecutionException, match="timed out"):
+            await repo.execute_sql_statement("SELECT 1")

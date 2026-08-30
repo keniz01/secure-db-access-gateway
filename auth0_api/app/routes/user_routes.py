@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app.config.logging import get_logger
+from app.config.settings import settings
 from app.services.ai_service import get_ai_service
 from app.services.text_to_sql_service import TextToSqlService
 from app.schemas.responses import UserResponse, DashboardResponse, ErrorResponse
@@ -70,18 +71,18 @@ async def get_dashboard(request: Request):
 
     logger.info("Dashboard request for user: %s", user.get('email'))
 
-    # Get AI-generated greeting
+    # Get AI-generated greeting when enabled, falling back gracefully when the feature is disabled or unavailable.
     message = None
-    try:
-        ai_service = get_ai_service()
-        message = await ai_service.get_greeting(
-            system="You are a helpful assistant.",
-            user=f"In 1 line, generate a thoughtful informal quote of the day for {user.get('name')}."
-        )
-    except Exception as e:
-        logger.warning("Failed to generate AI greeting: %s", e)
+    if settings.ENABLE_AI_GREETING:
+        try:
+            ai_service = get_ai_service()
+            message = await ai_service.get_greeting(
+                system="You are a helpful assistant.",
+                user=f"In 1 line, generate a thoughtful informal quote of the day for {user.get('name')}."
+            )
+        except Exception as e:
+            logger.warning("Failed to generate AI greeting: %s", e)
 
-    # Use AI message or fallback
     final_message = (
         message.strip()
         if isinstance(message, str) and message.strip()

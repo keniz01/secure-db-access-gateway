@@ -39,6 +39,14 @@ async def test_get_dashboard_ai_failure(client, authenticated_session, mock_ai_s
     assert data["message"] == "You are successfully authenticated."
 
 @pytest.mark.asyncio
+async def test_get_dashboard_ai_greeting_disabled(client, authenticated_session):
+    """Test dashboard endpoint when AI greeting is feature-flagged off."""
+    with patch("app.routes.user_routes.settings.ENABLE_AI_GREETING", False):
+        response = await client.get("/api/dashboard")
+        assert response.status_code == 200
+        assert response.json()["message"] == "You are successfully authenticated."
+
+@pytest.mark.asyncio
 async def test_text_to_sql_authenticated(client, authenticated_session, mock_ai_service):
     """Test text-to-sql endpoint when authenticated."""
     # Mock TextToSqlService.generate_sql_from_text indirectly via dependencies
