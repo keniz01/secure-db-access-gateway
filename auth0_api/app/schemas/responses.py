@@ -29,6 +29,7 @@ class UserResponse(BaseModel):
     id: str = Field(..., description="User ID")
     email: str = Field(..., description="User email")
     name: str = Field(..., description="User name")
+    org_id: Optional[str] = Field(None, description="Organization identifier for multi-tenant scoping")
 
 
 class AuthTokenResponse(BaseModel):
@@ -44,4 +45,5 @@ class DashboardResponse(BaseModel):
 
     email: str = Field(..., description="User email")
     name: str = Field(..., description="User name")
+    org_id: Optional[str] = Field(None, description="Current organization identifier")
     message: str = Field(..., description="Daily greeting/message")

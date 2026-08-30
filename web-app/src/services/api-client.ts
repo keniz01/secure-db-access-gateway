@@ -15,6 +15,9 @@ apiClient.interceptors.request.use((config) => {
   if (user) {
     config.headers['X-User-Role'] = user.role || 'viewer';
     config.headers['X-User-Email'] = user.email;
+    if (user.org_id) {
+      config.headers['X-Org-Id'] = user.org_id;
+    }
   }
 
   return config;

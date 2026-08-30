@@ -1,12 +1,14 @@
 import logging as logger
 import os
 import re
+import time
 from typing import Any, Callable, List, Optional, Dict
 
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 
 from config.app_logger import log_audit_event
+from metrics import observe_query
 from dependencies.dependency_container import setup_container
 from services.abstract_sql_query_service import ISqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
@@ -140,6 +142,7 @@ class Query:
             # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
             logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
+            started_at = time.perf_counter()
             log_audit_event(
                 "sql_query",
                 user=user,
@@ -148,6 +151,8 @@ class Query:
                 tables_touched=_extract_tables_touched(cleaned_sql),
             )
             result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)
+            elapsed = time.perf_counter() - started_at
+            observe_query(org_id=org_id, row_count=len(result), duration_seconds=elapsed)
             return result
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message

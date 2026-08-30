@@ -5,6 +5,7 @@ Application factory for creating and configuring the FastAPI application.
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from middlewares.logging_middleware import LoggingMiddleware
 from middlewares.correlation_middleware import correlation_id_middleware
 from middlewares.rate_limit_middleware import RateLimitMiddleware
@@ -16,6 +17,7 @@ from exceptions.exception_handlers import (
 from graphql_schema.schema import schema
 from strawberry.fastapi import GraphQLRouter
 from config.app_logger import logger, configure_telemetry
+from metrics import get_metrics_payload
 import os
 from typing import List
 
@@ -99,6 +101,10 @@ def setup_routes(app: FastAPI):
     Args:
         app: FastAPI application instance
     """
+    @app.get("/metrics")
+    async def metrics_endpoint() -> Response:
+        return Response(content=get_metrics_payload(), media_type="text/plain; version=0.7.0; charset=utf-8")
+
     # GraphQL
     graphql_router = GraphQLRouter(schema)
     app.include_router(graphql_router, prefix="/graphql")
