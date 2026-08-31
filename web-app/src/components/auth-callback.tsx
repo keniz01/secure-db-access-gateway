@@ -4,7 +4,6 @@ import { API_BASE_URL } from "../configs/url-config";
 import type { User } from "../models/user-profile";
 
 interface AuthResponse {
-  access_token?: string;
   user?: User;
   status_code?: number;
   detail?: string;
@@ -69,8 +68,8 @@ const AuthCallback: React.FC = () => {
         }
 
         // Validate that we have the required fields
-        if (!data.access_token || !data.user) {
-          console.error('Missing required fields in response:', { hasToken: !!data.access_token, hasUser: !!data.user });
+        if (!data.user) {
+          console.error('Missing required fields in response:', { hasUser: !!data.user });
           setError('Invalid authentication response');
           setErrorDetails('Server did not return required authentication data');
           setStatus('error');
@@ -79,7 +78,7 @@ const AuthCallback: React.FC = () => {
 
         // Store the token and user info
         console.log('Storing token and user:', { email: data.user.email, name: data.user.name });
-        authService.setToken(data.access_token);
+        authService.setToken('session');
         authService.setUser(data.user);
         console.log('Token and user stored successfully');
         

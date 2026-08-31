@@ -1,4 +1,5 @@
 import os
+from dataclasses import dataclass
 from typing import Any
 
 import jwt
@@ -23,6 +24,21 @@ AUTH0_AUDIENCE = (
 AUTH0_ISSUER = os.getenv("AUTH0_ISSUER") or (f"https://{AUTH0_DOMAIN}/" if AUTH0_DOMAIN else "")
 
 
+@dataclass(frozen=True, slots=True)
+class Principal:
+    """Trusted authorization context derived from a validated access token."""
+
+    user_id: str
+    email: str
+    org_id: str
+    roles: frozenset[str]
+
+    @property
+    def role(self) -> str:
+        """Return the highest role understood by this application."""
+        return "admin" if "admin" in self.roles else "viewer"
+
+
 def extract_bearer_token(request) -> str | None:
     """Extract a bearer token from the Authorization header."""
     header = request.headers.get("authorization")
@@ -34,7 +50,7 @@ def extract_bearer_token(request) -> str | None:
     return token
 
 
-def build_principal_from_claims(claims: dict[str, Any] | None) -> dict[str, Any] | None:
+def build_principal_from_claims(claims: dict[str, Any] | None) -> Principal | None:
     """Map validated Auth0 claims to the internal principal contract."""
     if not claims:
         return None
@@ -43,10 +59,9 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> dict[str, Any]
     if isinstance(roles, str):
         roles = [roles]
 
-    normalized_roles = {str(role).lower() for role in roles}
-    role = "admin" if "admin" in normalized_roles else "viewer"
+    normalized_roles = frozenset(str(role).lower() for role in roles if str(role).strip())
 
-    email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+    email = claims.get("email") or claims.get("preferred_username")
     org_id = (
         claims.get("org_id")
         or claims.get("organization")
@@ -54,13 +69,16 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> dict[str, Any]
         or claims.get("https://example.com/org_id")
     )
 
-    return {
-        "id": claims.get("sub"),
-        "email": email,
-        "org_id": org_id,
-        "role": role,
-        "claims": claims,
-    }
+    user_id = claims.get("sub")
+    if not all(isinstance(value, str) and value.strip() for value in (user_id, email, org_id)):
+        return None
+
+    return Principal(
+        user_id=user_id,
+        email=email,
+        org_id=org_id,
+        roles=normalized_roles,
+    )
 
 
 def validate_access_token(token: str | None) -> dict[str, Any] | None:

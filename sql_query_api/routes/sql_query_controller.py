@@ -123,12 +123,11 @@ class Query:
     async def execute_sql_statement(self, info: strawberry.Info, request: SqlStatementRequest) -> List[JSON]:
         sql = request.sql_statement.strip()
         request_obj = getattr(info, "context", {}).get("request") if getattr(info, "context", None) else None
-        user = "unknown"
-        org_id = "unknown"
+        principal = None
         if request_obj is not None:
-            state = getattr(request_obj, "state", None)
-            user = getattr(state, "user_email", None) or "unknown"
-            org_id = getattr(state, "user_org_id", None) or "unknown"
+            principal = getattr(getattr(request_obj, "state", None), "principal", None)
+        if principal is None:
+            raise PermissionError("Authenticated principal is required.")
 
         # Input validation: Check if SQL is empty
         if not sql:
@@ -145,14 +144,14 @@ class Query:
             started_at = time.perf_counter()
             log_audit_event(
                 "sql_query",
-                user=user,
-                org_id=org_id,
+                user=principal.email,
+                org_id=principal.org_id,
                 query=cleaned_sql,
                 tables_touched=_extract_tables_touched(cleaned_sql),
             )
             result: List[Dict[str, Any]] = await _sql_query_service.execute_sql_statement(cleaned_sql)
             elapsed = time.perf_counter() - started_at
-            observe_query(org_id=org_id, row_count=len(result), duration_seconds=elapsed)
+            observe_query(org_id=principal.org_id, row_count=len(result), duration_seconds=elapsed)
             return result
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message

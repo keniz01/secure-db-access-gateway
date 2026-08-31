@@ -96,11 +96,10 @@ class TestCallbackFlow:
             response = await client.get("/api/auth?code=valid-code")
             assert response.status_code == 200
             data = response.json()
-            assert data["access_token"] == "valid-access-token-xyz"
+            assert "access_token" not in data
             assert data["user"]["email"] == "jane.doe@example.com"
             assert data["user"]["id"] == "auth0|123456"
-            assert mock_session["access_token"] == "valid-access-token-xyz"
-            assert mock_session["user"]["email"] == "jane.doe@example.com"
+            assert set(mock_session) == {"session_id"}
 
     async def test_callback_missing_userinfo(self, client):
         mock_oauth = MagicMock()

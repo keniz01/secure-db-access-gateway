@@ -7,12 +7,22 @@ This document outlines the security measures implemented in the Secure DB Access
 
 ### 1. Authentication & Token Management ✅
 
+#### Trusted Principal Boundary
+- The SQL Query API creates one immutable `Principal` only after Auth0 JWT signature,
+  issuer, and audience validation succeeds.
+- A principal contains the Auth0 subject, email, organisation claim, and normalized roles.
+  Requests without a usable subject, email, or organisation claim are rejected.
+- Authorization-sensitive handlers consume `request.state.principal` exclusively; request
+  headers and query parameters cannot replace any principal attribute.
+- The principal is also the sole source for SQL audit user and organisation metadata.
+
 #### JWT Token Protection
-- **Issue**: Storing JWT tokens directly in `localStorage` exposes them to XSS attacks.
-- **Solution**: Implement `httpOnly` cookie approach
-  - Backend sets tokens in `httpOnly`, `Secure`, `SameSite` cookies (inaccessible via JavaScript).
-  - Frontend stores only a boolean flag (`app_jwt_exists`) in `localStorage` indicating token existence.
-  - Automatic cookie transmission on API requests using `withCredentials: true`.
+- **Issue**: Returning or storing JWT tokens in browser JavaScript exposes them to XSS.
+- **Solution**: The Auth0 callback returns user information only. It stores the access token
+  server-side under an opaque session identifier, while the browser receives a signed,
+  `HttpOnly`, `SameSite=Lax` session cookie. Production defaults this cookie to `Secure`.
+- GraphQL requests go through `/api/graphql`; the backend-for-frontend reads the server-side
+  token and forwards it internally. The browser never receives the token.
 
 **Files Modified:**
 - `web-app/src/services/auth-service.tsx`

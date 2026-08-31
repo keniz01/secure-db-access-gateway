@@ -10,7 +10,8 @@ from app.config.settings import settings
 from app.config.logging import get_logger
 from app.auth.oauth import get_oauth_instance
 from app.utils.helpers import derive_frontend_origin, normalize_origin, is_allowed_origin
-from app.schemas.responses import AuthTokenResponse, ErrorResponse, UserResponse
+from app.schemas.responses import ErrorResponse, UserResponse
+from app.auth.session_store import create_session, revoke_session
 
 logger = get_logger(__name__)
 
@@ -165,29 +166,34 @@ async def auth_callback(request: Request):
         or user_info.get("https://app.read-only-database-explorer.org/org_id")
     )
 
-    # Store user and token in session
-    request.session['user'] = {
+    user = {
         "id": user_info.get('sub'),
         "email": user_info.get('email'),
         "name": user_info.get('name'),
         "org_id": org_id,
         "roles": user_info.get('roles') or user_info.get('https://example.com/roles') or [],
     }
-    request.session['access_token'] = token.get('access_token')
+    access_token = token.get("access_token")
+    if not isinstance(access_token, str) or not access_token:
+        return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=ErrorResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="access_denied", error="Missing access token"
+        ).model_dump())
+
+    # The signed browser cookie carries only this opaque identifier; tokens remain server-side.
+    request.session.clear()
+    request.session["session_id"] = create_session(user, access_token, settings.SESSION_MAX_AGE)
 
     logger.info("User authenticated: %s (org=%s)", user_info.get('email'), org_id or "none")
 
     return JSONResponse(
         status_code=status.HTTP_200_OK,
-        content=AuthTokenResponse(
-            access_token=token.get('access_token'),
-            token_type="Bearer",
-            user=UserResponse(
+        content={
+            "user": UserResponse(
                 id=user_info.get('sub'),
                 email=user_info.get('email'),
                 name=user_info.get('name'),
-            )
-        ).model_dump()
+            ).model_dump()
+        }
     )
 
 
@@ -202,6 +208,7 @@ async def logout(request: Request):
     Returns:
         Redirect to Auth0 logout URL
     """
+    revoke_session(request.session.get("session_id"))
     request.session.clear()
     logger.info("Session cleared for user logout")
 

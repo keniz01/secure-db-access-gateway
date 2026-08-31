@@ -33,6 +33,10 @@ class Settings:
     SECRET_KEY: str = os.getenv("SECRET_KEY") or read_secret_from_file(os.getenv("SECRET_KEY_FILE", ""))
     SESSION_SECRET_KEY: str = os.getenv("SESSION_SECRET_KEY") or read_secret_from_file(os.getenv("SESSION_SECRET_KEY_FILE", ""))
     APP_SECRET_KEY: str = os.getenv("APP_SECRET_KEY") or read_secret_from_file(os.getenv("SECRET_KEY_FILE", ""))
+    SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", "3600"))
+    SESSION_COOKIE_SECURE: bool = os.getenv(
+        "SESSION_COOKIE_SECURE", "true" if os.getenv("ENVIRONMENT", "development").lower() == "production" else "false"
+    ).strip().lower() in {"1", "true", "yes"}
 
     # Auth0 Configuration
     AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN") or read_secret_from_file(os.getenv("AUTH0_DOMAIN_FILE", ""))
