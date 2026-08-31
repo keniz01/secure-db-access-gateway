@@ -7,7 +7,8 @@ const apiClient = axios.create({
   withCredentials: true  // Automatically send httpOnly cookies
 });
 
-// Add security headers
+// Add security headers. Identity and authorization are derived server-side from
+// validated Auth0 claims; caller-supplied X-User-* headers are never trusted.
 apiClient.interceptors.request.use((config) => {
   config.headers['X-Requested-With'] = 'XMLHttpRequest';
   return config;

@@ -20,13 +20,14 @@ def derive_frontend_origin(
         default: Default URL if no other options are available
 
     Returns:
-        Normalized origin URL (scheme://netloc)
+        Normalized origin URL (scheme://host[:port])
     """
     url = react_url or frontend_url or default
     parsed = urlparse(url)
 
-    if parsed.scheme and parsed.netloc:
-        return f"{parsed.scheme}://{parsed.netloc}"
+    if parsed.scheme and parsed.hostname:
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.scheme}://{parsed.hostname}{port}"
 
     return url
 
@@ -39,12 +40,13 @@ def normalize_origin(url: str) -> Optional[str]:
         url: URL to normalize
 
     Returns:
-        Normalized origin (scheme://netloc) or None if invalid
+        Normalized origin (scheme://host[:port]) or None if invalid
     """
     try:
         parsed = urlparse(url)
-        if parsed.scheme and parsed.netloc:
-            return f"{parsed.scheme}://{parsed.netloc}"
+        if parsed.scheme and parsed.hostname:
+            port = f":{parsed.port}" if parsed.port else ""
+            return f"{parsed.scheme}://{parsed.hostname}{port}"
     except Exception:
         pass
     return None

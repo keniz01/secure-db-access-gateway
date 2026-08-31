@@ -8,11 +8,11 @@ This document outlines the security measures implemented in the Read-Only Databa
 ### 1. Authentication & Token Management ✅
 
 #### JWT Token Protection
-- **Issue**: Storing JWT tokens in localStorage exposes them to XSS attacks
-- **Solution**: Implement httpOnly cookie approach
-  - Backend sets tokens in httpOnly, Secure cookies (not accessible via JavaScript)
-  - Frontend stores only a flag in localStorage indicating token existence
-  - Automatic cookie transmission with `withCredentials: true`
+- **Issue**: Storing JWT tokens directly in `localStorage` exposes them to XSS attacks.
+- **Solution**: Implement `httpOnly` cookie approach
+  - Backend sets tokens in `httpOnly`, `Secure`, `SameSite` cookies (inaccessible via JavaScript).
+  - Frontend stores only a boolean flag (`app_jwt_exists`) in `localStorage` indicating token existence.
+  - Automatic cookie transmission on API requests using `withCredentials: true`.
 
 **Files Modified:**
 - `web-app/src/services/auth-service.tsx`
@@ -29,7 +29,7 @@ localStorage.setItem('app_jwt_exists', token ? 'true' : '');
 ```
 
 #### Input Validation
-- **Issue**: Invalid data in localStorage could cause errors
+- **Issue**: Invalid data in localStorage could cause errors.
 - **Solution**: Add try-catch error handling with automatic recovery
   - JSON parsing wrapped in try-catch
   - Corrupted data automatically removed
@@ -38,13 +38,13 @@ localStorage.setItem('app_jwt_exists', token ? 'true' : '');
 ### 2. CORS (Cross-Origin Resource Sharing) ✅
 
 #### Strict CORS Configuration
-- **Issue**: Wildcard CORS allows any origin to access APIs
-- **Solution**: Implement restrictive CORS with environment configuration
+- **Issue**: Wildcard CORS allows any origin to access APIs.
+- **Solution**: Implement restrictive CORS with environment configuration.
 
 **Features:**
 - Allow only specific HTTP methods: `GET`, `POST`, `OPTIONS`
 - Whitelist only necessary headers: `Content-Type`, `Authorization`, `X-Requested-With`
-- Cache preflight requests for 1 hour (max_age=3600) to reduce overhead
+- Cache preflight requests for 1 hour (`max_age=3600`) to reduce overhead
 - Environment-based origin configuration for multi-environment support
 
 **Environment Variables:**
@@ -84,13 +84,13 @@ async def add_security_headers(request, call_next):
 ### 4. Input Validation & DoS Prevention ✅
 
 #### SQL Query Validation
-- **Issue**: Unvalidated input can cause DoS and injection attacks
-- **Solution**: Implement strict input validation
+- **Issue**: Unvalidated input can cause DoS and injection attacks.
+- **Solution**: Implement strict input validation.
 
 **Measures:**
 - Empty query check: `if not sql`
 - Length limit: 10,000 characters max (prevents memory exhaustion)
-- Query type validation: Only SELECT statements allowed
+- Query type validation: Only `SELECT` statements allowed
 - Existing SQL safety checker: Prevents subqueries, CTEs, DDL, DML
 
 **Files Modified:**
@@ -112,8 +112,8 @@ if not sql.lower().startswith("select"):
 ### 5. Error Handling ✅
 
 #### Sensitive Information Protection
-- **Issue**: Detailed error messages expose internal implementation details
-- **Solution**: Hide technical details from client responses
+- **Issue**: Detailed error messages expose internal implementation details.
+- **Solution**: Hide technical details from client responses.
 
 **Before (Vulnerable):**
 ```python
@@ -235,23 +235,15 @@ curl -I http://localhost:8001/api/health
 9. **Penetration Testing** - Regular security audits
 10. **Security Monitoring** - Real-time threat detection
 
-## References
-
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
-- [OWASP Secure Coding Practices](https://owasp.org/www-project-secure-coding-practices-quick-reference-guide/)
-- [CWE/SANS Top 25](https://cwe.mitre.org/top25/)
-- [FastAPI Security](https://fastapi.tiangolo.com/tutorial/security/)
-- [React Security Best Practices](https://reactjs.org/docs/dom-elements.html#dangerouslysetinnerhtml)
-
 ## Security Contact
 
 For security issues, please report responsibly:
 1. Do NOT create public GitHub issues for security vulnerabilities
-2. Email security concerns to: [Add contact email]
+2. Email security concerns to: kenneth.kiiza@googlemail.com
 3. Allow 30 days for response before public disclosure
 
 ---
 
-**Last Updated:** January 4, 2026
-**Security Patch Version:** 1.1.0
-**Status:** Production Ready
+**Last Updated:** August 2026  
+**Security Patch Version:** 1.1.0  
+**Status:** Development

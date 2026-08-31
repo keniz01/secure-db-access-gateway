@@ -3,8 +3,9 @@ Configuration settings for the Auth0 API application.
 Loads environment variables and provides configuration objects.
 """
 
+import json
 import os
-from typing import List
+from typing import Any, Dict, List
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -37,7 +38,8 @@ class Settings:
     AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN") or read_secret_from_file(os.getenv("AUTH0_DOMAIN_FILE", ""))
     AUTH0_CLIENT_ID: str = os.getenv("AUTH0_CLIENT_ID") or read_secret_from_file(os.getenv("AUTH0_CLIENT_ID_FILE", ""))
     AUTH0_CLIENT_SECRET: str = os.getenv("AUTH0_CLIENT_SECRET") or read_secret_from_file(os.getenv("AUTH0_CLIENT_SECRET_FILE", ""))
-    AUTH0_SCOPE: str = "openid profile email"
+    AUTH0_SCOPE: str = "openid profile email organizations"
+    AUTH0_ORG_ID_CLAIM: str = os.getenv("AUTH0_ORG_ID_CLAIM", "org_id")
 
     # Frontend Configuration
     FRONTEND_URL: str = os.getenv("FRONTEND_URL") or read_secret_from_file(os.getenv("FRONTEND_URL_FILE", ""))
@@ -59,23 +61,38 @@ class Settings:
     # SQL Query API Configuration
     SQL_QUERY_API_URL: str = os.getenv("SQL_QUERY_API_URL") or read_secret_from_file(os.getenv("SQL_QUERY_API_URL_FILE", "")) or "http://localhost:8002/graphql"
 
+    # Multi-tenancy / org metadata
+    ORG_DB_CONNECTIONS: Dict[str, str] = {}
+    GRAFANA_PROMETHEUS_URL: str = os.getenv("GRAFANA_PROMETHEUS_URL", "http://localhost:9090")
+
+    # Feature Flags
+    ENABLE_AI_GREETING: bool = os.getenv("ENABLE_AI_GREETING", "true").strip().lower() not in {"0", "false", "no", "off"}
+
     # CORS Configuration - Restrict to configured origins
     # Production: Set CORS_ORIGINS environment variable
     def __init__(self):
         cors_env = os.getenv("CORS_ORIGINS", "")
         if cors_env:
-            # Production: Load from environment
             self.ALLOWED_ORIGINS = [origin.strip() for origin in cors_env.split(",")]
         else:
-            # Development: Default to localhost
             self.ALLOWED_ORIGINS = [
-                "http://localhost:5173",  # Vite dev server
-                "http://localhost:3000",  # Alternative port
+                "http://localhost:5173",
+                "http://localhost:3000",
                 "http://127.0.0.1:5173",
             ]
 
-    # Feature Flags
-    ENABLE_AI_GREETING: bool = True
+        raw_org_mapping = os.getenv("ORG_DB_CONNECTIONS", "")
+        if raw_org_mapping.strip():
+            try:
+                parsed_org_mapping = json.loads(raw_org_mapping)
+                if isinstance(parsed_org_mapping, dict):
+                    self.ORG_DB_CONNECTIONS = {str(k): str(v) for k, v in parsed_org_mapping.items()}
+                else:
+                    self.ORG_DB_CONNECTIONS = {}
+            except json.JSONDecodeError:
+                self.ORG_DB_CONNECTIONS = {}
+        else:
+            self.ORG_DB_CONNECTIONS = {}
 
 
 # Create a singleton instance

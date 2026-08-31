@@ -3,20 +3,17 @@ User session and authentication context management.
 """
 
 from typing import Optional, Dict, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class UserInfo(BaseModel):
     """User information model."""
 
+    model_config = ConfigDict(extra="allow")
+
     id: str
     email: str
     name: str
-
-    class Config:
-        """Pydantic configuration."""
-
-        extra = "allow"
 
 
 class SessionData:
@@ -29,7 +26,7 @@ class SessionData:
     def to_dict(self) -> Dict[str, Any]:
         """Convert session data to dictionary."""
         return {
-            "user": self.user.dict() if self.user else None,
+            "user": self.user.model_dump() if self.user else None,
             "access_token": self.access_token,
         }
 

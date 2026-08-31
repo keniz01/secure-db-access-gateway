@@ -1,19 +1,19 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from repositories.abstract_music_query_repository import IMusicQueryRepository
-from services.abstract_music_query_service import IMusicQueryService
+from repositories.abstract_sql_query_repository import ISqlQueryRepository
+from services.abstract_sql_query_service import ISqlQueryService
 
 
-class MusicQueryService(IMusicQueryService):
+class SqlQueryService(ISqlQueryService):
     """
-    Service class for music queries.
-    This class implements the methods to interact with the music query repository.
+    Service class for SQL queries.
+    This class implements the methods to interact with the SQL query repository.
     """
 
-    def __init__(self, repository: IMusicQueryRepository) -> None:
+    def __init__(self, repository: ISqlQueryRepository) -> None:
         """
-        Initialize the MusicQueryService with a repository (dependency injection).
+        Initialize the SqlQueryService with a repository (dependency injection).
         """
         self.repository = repository
 
@@ -36,3 +36,13 @@ class MusicQueryService(IMusicQueryService):
         except Exception as e:
             logging.error(f"Service: Error fetching schema: {e}")
             raise
+
+    async def introspect_schema(self) -> Dict[str, Any]:
+        try:
+            schema = await self.repository.introspect_schema()
+            logging.info("Service: Introspected database schema successfully.")
+            return schema
+        except Exception as e:
+            logging.error(f"Service: Error introspecting schema: {e}")
+            raise
+
