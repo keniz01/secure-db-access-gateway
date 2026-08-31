@@ -44,16 +44,44 @@ def override_sql_service(test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(sql_query_controller, "_sql_query_service", test_service)
 
 
+@pytest.fixture(autouse=True)
+def mock_valid_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a valid Auth0 principal for requests that include a bearer token."""
+    def fake_validate(token: str | None):
+        if token != "test-valid-token":
+            return None
+        return {
+            "sub": "auth0|user-123",
+            "email": "alice@example.com",
+            "org_id": "org-42",
+            "roles": ["admin"],
+        }
+
+    monkeypatch.setattr("middlewares.rbac_middleware.validate_access_token", fake_validate)
+
+
 @pytest.fixture
 def client() -> TestClient:
     app = create_app()
     return TestClient(app)
 
 
+def auth_headers(**extra):
+    headers = {"Authorization": "Bearer test-valid-token"}
+    headers.update(extra)
+    return headers
+
+
 class TestGraphQLHealthCheck:
-    def test_graphql_ping(self, client: TestClient) -> None:
+    def test_graphql_requires_valid_bearer_token(self, client: TestClient) -> None:
         payload = {"query": "query { ping }"}
         response = client.post("/graphql", json=payload)
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Authentication required."
+
+    def test_graphql_ping(self, client: TestClient) -> None:
+        payload = {"query": "query { ping }"}
+        response = client.post("/graphql", json=payload, headers=auth_headers())
         assert response.status_code == 200
         json_data = response.json()
         assert "errors" not in json_data
@@ -72,7 +100,7 @@ class TestGraphQLExecuteSqlStatement:
                 "sqlStatement": "SELECT id, name, genre FROM artist ORDER BY id ASC"
             }
         }
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" not in res
@@ -88,8 +116,8 @@ class TestGraphQLExecuteSqlStatement:
         client = TestClient(app)
         payload = {"query": "query { ping }"}
 
-        first = client.post("/graphql", json=payload)
-        second = client.post("/graphql", json=payload)
+        first = client.post("/graphql", json=payload, headers=auth_headers())
+        second = client.post("/graphql", json=payload, headers=auth_headers())
 
         assert first.status_code == 200
         assert second.status_code == 429
@@ -103,7 +131,7 @@ class TestGraphQLExecuteSqlStatement:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT id, title FROM track"}}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" not in res
@@ -111,7 +139,7 @@ class TestGraphQLExecuteSqlStatement:
         # Default LIMIT 100 should be applied automatically
         assert len(rows) == 100
 
-    def test_graphql_requires_known_role(self, client: TestClient) -> None:
+    def test_graphql_forged_role_header_is_ignored(self, client: TestClient) -> None:
         gql_query = """
         query ExecuteSql($req: SqlStatementRequest!) {
             executeSqlStatement(request: $req)
@@ -121,10 +149,10 @@ class TestGraphQLExecuteSqlStatement:
         response = client.post(
             "/graphql",
             json={"query": gql_query, "variables": variables},
-            headers={"X-User-Role": "guest"},
+            headers=auth_headers(**{"X-User-Role": "guest"}),
         )
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Forbidden: user role is not authorized to access this API."
+        assert response.status_code == 200
+        assert response.json()["data"]["executeSqlStatement"][0]["name"] == "The Beatles"
 
     def test_execute_sql_emits_audit_json(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
@@ -135,7 +163,7 @@ class TestGraphQLExecuteSqlStatement:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT id, name FROM artist ORDER BY id ASC"}}
-        headers = {"X-User-Email": "alice@example.com", "X-Org-Id": "org-42"}
+        headers = auth_headers(**{"X-User-Email": "evil@example.com", "X-Org-Id": "evil-org"})
 
         captured = {}
 
@@ -159,7 +187,7 @@ class TestGraphQLExecuteSqlStatement:
         }
         """
         variables = {"req": {"sqlStatement": "   "}}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -173,7 +201,7 @@ class TestGraphQLExecuteSqlStatement:
         """
         long_sql = "SELECT * FROM artist WHERE name = '" + "A" * 10005 + "'"
         variables = {"req": {"sqlStatement": long_sql}}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -186,7 +214,7 @@ class TestGraphQLExecuteSqlStatement:
         }
         """
         variables = {"req": {"sqlStatement": "INSERT INTO artist (id, name) VALUES (3, 'Hacker')"}}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -199,7 +227,7 @@ class TestGraphQLExecuteSqlStatement:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT FROM non_existent_table"}}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -216,7 +244,7 @@ class TestGraphQLGetTableSchema:
         }
         """
         variables = {"emb": []}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -231,7 +259,7 @@ class TestGraphQLGetTableSchema:
         }
         """
         variables = {"emb": [0.1, 0.2, 0.3]}
-        response = client.post("/graphql", json={"query": gql_query, "variables": variables})
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
@@ -262,7 +290,7 @@ class TestGraphQLIntrospectSchema:
             }
         }
         """
-        response = client.post("/graphql", json={"query": gql_query})
+        response = client.post("/graphql", json={"query": gql_query}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" not in res
@@ -284,7 +312,7 @@ class TestGraphQLIntrospectSchema:
             }
         }
         """
-        response = client.post("/graphql", json={"query": gql_query})
+        response = client.post("/graphql", json={"query": gql_query}, headers=auth_headers())
         assert response.status_code == 200
         res = response.json()
         assert "errors" not in res
@@ -298,7 +326,7 @@ class TestGraphQLIntrospectSchema:
 
 class TestSecurityHeadersMiddleware:
     def test_security_headers_present(self, client: TestClient) -> None:
-        response = client.post("/graphql", json={"query": "query { ping }"})
+        response = client.post("/graphql", json={"query": "query { ping }"}, headers=auth_headers())
         assert response.headers.get("X-Content-Type-Options") == "nosniff"
         assert response.headers.get("X-Frame-Options") == "DENY"
         assert response.headers.get("X-XSS-Protection") == "1; mode=block"

@@ -84,9 +84,31 @@ def override_service_with_products_db(
     monkeypatch.setattr(sql_query_controller, "_sql_query_service", service)
 
 
+@pytest.fixture(autouse=True)
+def mock_valid_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Provide a valid Auth0 principal for GraphQL requests during tests."""
+    def fake_validate(token: str | None):
+        if token != "test-valid-token":
+            return None
+        return {
+            "sub": "auth0|user-123",
+            "email": "alice@example.com",
+            "org_id": "org-42",
+            "roles": ["admin"],
+        }
+
+    monkeypatch.setattr("middlewares.rbac_middleware.validate_access_token", fake_validate)
+
+
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(create_app())
+
+
+def auth_headers(**extra):
+    headers = {"Authorization": "Bearer test-valid-token"}
+    headers.update(extra)
+    return headers
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +124,7 @@ class TestArbitraryTableQueries:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT customer_id, full_name, email FROM customers ORDER BY customer_id"}}
-        res = client.post("/graphql", json={"query": gql, "variables": variables}).json()
+        res = client.post("/graphql", json={"query": gql, "variables": variables}, headers=auth_headers()).json()
         assert "errors" not in res
         rows = res["data"]["executeSqlStatement"]
         assert len(rows) == 2
@@ -116,7 +138,7 @@ class TestArbitraryTableQueries:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT sku, price FROM products WHERE price > 10.0"}}
-        res = client.post("/graphql", json={"query": gql, "variables": variables}).json()
+        res = client.post("/graphql", json={"query": gql, "variables": variables}, headers=auth_headers()).json()
         assert "errors" not in res
         rows = res["data"]["executeSqlStatement"]
         assert len(rows) == 1
@@ -135,7 +157,7 @@ class TestArbitraryTableQueries:
             "ORDER BY o.order_id"
         )
         variables = {"req": {"sqlStatement": sql}}
-        res = client.post("/graphql", json={"query": gql, "variables": variables}).json()
+        res = client.post("/graphql", json={"query": gql, "variables": variables}, headers=auth_headers()).json()
         assert "errors" not in res
         rows = res["data"]["executeSqlStatement"]
         assert len(rows) == 3
@@ -149,7 +171,7 @@ class TestArbitraryTableQueries:
         }
         """
         variables = {"req": {"sqlStatement": "SELECT customer_id, SUM(quantity) FROM orders GROUP BY customer_id ORDER BY customer_id"}}
-        res = client.post("/graphql", json={"query": gql, "variables": variables}).json()
+        res = client.post("/graphql", json={"query": gql, "variables": variables}, headers=auth_headers()).json()
         assert "errors" not in res
         rows = res["data"]["executeSqlStatement"]
         assert len(rows) == 2
@@ -170,7 +192,7 @@ class TestArbitrarySchemaIntrospection:
             }
         }
         """
-        res = client.post("/graphql", json={"query": gql}).json()
+        res = client.post("/graphql", json={"query": gql}, headers=auth_headers()).json()
         assert "errors" not in res
         tables = {t["name"]: t for t in res["data"]["introspectSchema"]["tables"]}
         assert "customers" in tables
@@ -185,7 +207,7 @@ class TestArbitrarySchemaIntrospection:
             }
         }
         """
-        res = client.post("/graphql", json={"query": gql}).json()
+        res = client.post("/graphql", json={"query": gql}, headers=auth_headers()).json()
         assert "errors" not in res
         tables = {t["name"]: t for t in res["data"]["introspectSchema"]["tables"]}
         orders = tables["orders"]

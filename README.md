@@ -4,54 +4,55 @@ A secure, full-stack web application for safely exploring and querying databases
 
 ## 🌟 Features
 
-- **Read-Only SQL Queries** - Execute SELECT statements safely against your database
-- **Auth0 Authentication** - Secure user authentication and session management
-- **Security-First Design** - Built with OWASP Top 10 protections
-- **Modern UI** - Clean, responsive interface built with React and TypeScript
-- **Query Validation** - Automatic validation to prevent harmful operations
-- **CORS Protection** - Strict cross-origin resource sharing policies
-- **Input Sanitization** - Protection against SQL injection and DoS attacks
+- **Read-only SQL execution** with SELECT-only validation, automatic LIMITs, and query timeout enforcement
+- **Schema browser** and dynamic schema introspection for table/column discovery
+- **Auth0-based auth** with session cookies and viewer/admin role enforcement
+- **Operational controls**: rate limiting, audit logging, correlation IDs, and optional OTEL/Grafana metrics
+- **Multi-tenant scoping** via `org_id`, tenant-aware rate limiting, and per-org usage metrics
+- **Admin overview** for org usage and DB metadata visibility without local credential storage
+- **Sensitive-column masking** and row-level filtering hooks for authorization boundaries
+
+## ✅ Completed milestone status
+
+All major project milestones are complete:
+
+- schema decoupling
+- authorization and row filtering
+- operational readiness
+- multi-tenancy
 
 ## 🏗️ Architecture
 
 This project consists of three main components:
 
 ### 1. **Web Application** (`web-app/`)
-- **Tech Stack**: React, TypeScript, Vite
-- **Purpose**: User interface for database exploration
-- **Features**: Query editor, authentication, results display
+- **Tech Stack**: React 19, TypeScript, Vite, Tailwind
+- **Purpose**: UI for query execution, schema browsing, and auth flow
 
 ### 2. **SQL Query API** (`sql_query_api/`)
-- **Tech Stack**: FastAPI, Python 3.11+
-- **Purpose**: Executes validated SQL queries against the database
-- **Security**: Query validation, length limits, type checking
+- **Tech Stack**: FastAPI, Strawberry GraphQL, SQLAlchemy, asyncpg
+- **Purpose**: Executes validated read-only queries and exposes schema/usage metadata
+- **Security**: query validation, allowlists, masking, row filtering, RBAC, rate limiting
 
 ### 3. **Auth0 API** (`auth0_api/`)
-- **Tech Stack**: FastAPI, Auth0
-- **Purpose**: Handles user authentication and session management
-- **Security**: JWT tokens via httpOnly cookies, CSRF protection
+- **Tech Stack**: FastAPI, Auth0, Azure OpenAI optional greeting
+- **Purpose**: auth flow, session management, org-aware user data, admin overview
 
 ## 🚀 Quick Start
 
 ### Option 1: Docker (Recommended)
 
-The easiest way to run the application stack is using Docker Compose:
-
 ```bash
-# Ensure PostgreSQL is running locally on port 5432
 docker-compose up --build
 ```
 
 This starts:
-- Auth0 API on port 8001  
-- SQL Query API on port 8002
-- Web App on port 5173
+- Auth0 API on `http://localhost:8001`
+- SQL Query API on `http://localhost:8002`
+- Web app on `http://localhost:5173`
+- Grafana/OTel stack on `http://localhost:3000`
 
-**Note**: PostgreSQL should be running locally (not containerized).
-
-**Secrets**: Sensitive configuration is managed via Docker secrets in the `secrets/` directory.
-
-See [DOCKER_README.md](DOCKER_README.md) for detailed Docker instructions.
+Secrets are read from `secrets/` and environment variables/files as needed.
 
 ### Option 2: Manual Setup
 
@@ -126,19 +127,27 @@ AUTH0_CLIENT_SECRET=your_client_secret
 APP_SECRET_KEY=generate-strong-random-key-min-32-chars
 SESSION_SECRET_KEY=generate-strong-random-key-min-32-chars
 CORS_ORIGINS=http://localhost:5173
+ENABLE_AI_GREETING=true
+AUTH0_ORG_ID_CLAIM=org_id
+GRAFANA_PROMETHEUS_URL=http://localhost:9090
 ```
 
 #### SQL Query API Configuration (`.env`)
 ```env
-DATABASE_URL=postgresql://user:password@host:port/database
+DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db
 CORS_ORIGINS=http://localhost:5173
 LOG_LEVEL=INFO
+DB_POOL_SIZE=5
+DB_MAX_OVERFLOW=10
+DB_POOL_TIMEOUT_SECONDS=30
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
 ```
 
 #### Web Application Configuration (`.env`)
 ```env
-VITE_AUTH0_API_URL=http://localhost:8000
-VITE_SQL_QUERY_API_URL=http://localhost:8001
+VITE_API_BASE_URL=http://localhost:8080
+VITE_SQL_GRAPHQL_BASE_URL=http://localhost:8002/graphql
+VITE_ADMIN_EMAILS=admin@example.com
 ```
 
 ### Running the Application

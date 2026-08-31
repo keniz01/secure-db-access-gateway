@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 export interface SchemaColumn {
   name: string;
@@ -27,18 +27,7 @@ interface SchemaBrowserProps {
 }
 
 export const SchemaBrowser = ({ tables, isLoading, error }: SchemaBrowserProps) => {
-  const [selectedTableName, setSelectedTableName] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!tables.length) {
-      setSelectedTableName(null);
-      return;
-    }
-
-    if (!selectedTableName || !tables.some((table) => table.name === selectedTableName)) {
-      setSelectedTableName(tables[0].name);
-    }
-  }, [selectedTableName, tables]);
+  const [selectedTableName, setSelectedTableName] = useState<string | null>(tables[0]?.name ?? null);
 
   if (isLoading) {
     return (

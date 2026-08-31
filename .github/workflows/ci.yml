@@ -25,8 +25,8 @@ jobs:
         run: |
           cd sql_query_api
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-mock httpx aiosqlite
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio pytest-mock httpx aiosqlite
 
       - name: Run pytest
         run: |
@@ -51,8 +51,8 @@ jobs:
         run: |
           cd auth0_api
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio pytest-mock pytest-cov httpx
+          python -m pip install -e .
+          python -m pip install pytest pytest-asyncio pytest-mock pytest-cov httpx
 
       - name: Run pytest
         run: |

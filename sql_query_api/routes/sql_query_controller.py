@@ -126,9 +126,9 @@ class Query:
         user = "unknown"
         org_id = "unknown"
         if request_obj is not None:
-            headers = getattr(request_obj, "headers", {})
-            user = headers.get("x-user-email") or headers.get("x-user-id") or "unknown"
-            org_id = headers.get("x-org-id") or headers.get("x-tenant-id") or "unknown"
+            state = getattr(request_obj, "state", None)
+            user = getattr(state, "user_email", None) or "unknown"
+            org_id = getattr(state, "user_org_id", None) or "unknown"
 
         # Input validation: Check if SQL is empty
         if not sql:
