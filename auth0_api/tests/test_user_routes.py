@@ -52,18 +52,48 @@ async def test_get_dashboard_ai_greeting_disabled(client, authenticated_session)
 
 @pytest.mark.asyncio
 async def test_get_admin_overview(client, authenticated_session):
-    """Test the minimal admin overview endpoint exposes org usage metadata."""
+    """Test the admin overview derives its organisation from the authenticated session."""
     authenticated_session["user"]["org_id"] = "org-admin"
-    with patch("app.routes.user_routes.httpx.get") as mock_get:
+    authenticated_session["user"]["roles"] = ["admin"]
+    with patch("app.routes.user_routes.httpx.get") as mock_get, patch(
+        "app.routes.user_routes.settings.ORG_DB_CONNECTIONS",
+        {"org-admin": "postgres://admin", "org-other": "postgres://other"},
+    ):
         mock_get.side_effect = [
             MagicMock(status_code=200, json=lambda: {"data": {"result": [{"value": [0, "7"]}]}}),
             MagicMock(status_code=200, json=lambda: {"data": {"result": [{"value": [0, "23"]}]}}),
         ]
-        response = await client.get("/api/admin/overview")
+        response = await client.get("/api/admin/overview?org_id=org-other")
         assert response.status_code == 200
         body = response.json()
         assert body["org_id"] == "org-admin"
+        assert body["organizations"] == ["org-admin"]
+        assert "db_connections" not in body
         assert body["usage"]["queries_total"] == 7
+        assert all("org-admin" in call.args[0] for call in mock_get.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_get_admin_overview_rejects_missing_org_claim(client, authenticated_session):
+    """An admin session without an organisation cannot access tenant data."""
+    authenticated_session["user"]["roles"] = ["admin"]
+
+    response = await client.get("/api/admin/overview?org_id=org-other")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Organisation claim required"
+
+
+@pytest.mark.asyncio
+async def test_get_admin_overview_rejects_non_admin(client, authenticated_session):
+    """Only an authenticated admin may access the admin overview."""
+    authenticated_session["user"]["org_id"] = "org-admin"
+    authenticated_session["user"]["roles"] = ["viewer"]
+
+    response = await client.get("/api/admin/overview")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Administrator role required"
 
 @pytest.mark.asyncio
 async def test_text_to_sql_authenticated(client, authenticated_session, mock_ai_service):

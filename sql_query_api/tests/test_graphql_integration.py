@@ -79,6 +79,19 @@ class TestGraphQLHealthCheck:
         assert response.status_code == 401
         assert response.json()["detail"] == "Authentication required."
 
+    def test_graphql_rejects_token_without_an_organisation_claim(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "middlewares.rbac_middleware.validate_access_token",
+            lambda _: {"sub": "auth0|user-123", "email": "alice@example.com", "roles": ["viewer"]},
+        )
+
+        response = client.post("/graphql", json={"query": "query { ping }"}, headers=auth_headers())
+
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Authentication required."
+
     def test_graphql_ping(self, client: TestClient) -> None:
         payload = {"query": "query { ping }"}
         response = client.post("/graphql", json=payload, headers=auth_headers())
@@ -331,4 +344,3 @@ class TestSecurityHeadersMiddleware:
         assert response.headers.get("X-Frame-Options") == "DENY"
         assert response.headers.get("X-XSS-Protection") == "1; mode=block"
         assert "max-age=" in response.headers.get("Strict-Transport-Security", "")
-

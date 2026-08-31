@@ -1,5 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
+from app.auth.session_store import get_session
 
 @pytest.mark.asyncio
 async def test_health_check(client):
@@ -60,10 +61,10 @@ async def test_auth_callback_success(client, mocker):
         response = await client.get("/api/auth?code=test-code")
         assert response.status_code == 200
         data = response.json()
-        assert data["access_token"] == "test-token"
+        assert "access_token" not in data
         assert data["user"]["email"] == "test@example.com"
-        assert mock_session["user"]["email"] == "test@example.com"
-        assert mock_session["access_token"] == "test-token"
+        assert set(mock_session) == {"session_id"}
+        assert get_session(mock_session["session_id"])["access_token"] == "test-token"
 
 @pytest.mark.asyncio
 async def test_auth_callback_error(client, mocker):
@@ -81,3 +82,21 @@ async def test_auth_callback_error(client, mocker):
         data = response.json()
         assert data["detail"] == "access_denied"
         assert data["error_description"] == "User denied"
+
+
+@pytest.mark.asyncio
+async def test_graphql_proxy_rejects_missing_session(client):
+    """The browser cannot access the SQL API without an authenticated server session."""
+    response = await client.post("/api/graphql", json={"query": "query { ping }"}, headers={"X-Requested-With": "XMLHttpRequest"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_graphql_proxy_rejects_requests_without_csrf_header(client):
+    """Cookie-authenticated GraphQL requests require the browser-client marker."""
+    response = await client.post("/api/graphql", json={"query": "query { ping }"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CSRF protection failed"

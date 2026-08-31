@@ -13,10 +13,34 @@ from app.config.settings import settings
 from app.services.ai_service import get_ai_service
 from app.services.text_to_sql_service import TextToSqlService
 from app.schemas.responses import UserResponse, DashboardResponse, ErrorResponse
+from app.auth.session_store import get_session
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api", tags=["user"])
+
+
+def get_authenticated_session(request: Request) -> dict | None:
+    """Load the server-side session referenced by the opaque cookie identifier."""
+    session = get_session(request.session.get("session_id"))
+    if session:
+        return session
+    # Compatibility for signed sessions created before this release; no new login writes this form.
+    user = request.session.get("user")
+    return {"user": user} if user else None
+
+
+def get_authenticated_user(request: Request) -> dict | None:
+    session = get_authenticated_session(request)
+    return session.get("user") if session else None
+
+
+def is_admin(user: dict) -> bool:
+    """Return whether the authenticated session carries the admin role."""
+    roles = user.get("roles", [])
+    if isinstance(roles, str):
+        roles = [roles]
+    return "admin" in {str(role).lower() for role in roles}
 
 
 async def fetch_usage_summary(org_id: str | None) -> dict:
@@ -59,7 +83,7 @@ async def get_user(request: Request):
     Returns:
         User information or 401 if not authenticated
     """
-    user = request.session.get('user')
+    user = get_authenticated_user(request)
 
     if not user:
         logger.info("Unauthenticated /user access attempt")
@@ -81,7 +105,7 @@ async def get_user(request: Request):
 @router.get("/admin/overview")
 async def get_admin_overview(request: Request):
     """Return a minimal admin overview for this org, backed by Prometheus/Grafana usage data."""
-    user = request.session.get('user')
+    user = get_authenticated_user(request)
     if not user:
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -91,16 +115,32 @@ async def get_admin_overview(request: Request):
             ).model_dump()
         )
 
-    org_id = user.get('org_id') or request.query_params.get('org_id')
+    if not is_admin(user):
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=ErrorResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrator role required"
+            ).model_dump()
+        )
+
+    org_id = user.get('org_id')
+    if not isinstance(org_id, str) or not org_id.strip():
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=ErrorResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organisation claim required"
+            ).model_dump()
+        )
+
     usage = await fetch_usage_summary(org_id)
-    orgs = list(settings.ORG_DB_CONNECTIONS.keys()) or ([org_id] if org_id else [])
     return JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
             "org_id": org_id,
-            "organizations": orgs,
+            "organizations": [org_id],
             "usage": usage,
-            "db_connections": list(settings.ORG_DB_CONNECTIONS.keys()),
             "source": "prometheus" if usage.get("source") == "prometheus" else "config",
         },
     )
@@ -117,7 +157,7 @@ async def get_dashboard(request: Request):
     Returns:
         Dashboard data with greeting message or 401 if not authenticated
     """
-    user = request.session.get('user')
+    user = get_authenticated_user(request)
 
     if not user:
         logger.info("Unauthenticated dashboard access attempt")
@@ -178,7 +218,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
     Returns:
         Generated SQL and optionally query results, or 401 if not authenticated
     """
-    user = request.session.get('user')
+    user = get_authenticated_user(request)
 
     if not user:
         logger.info("Unauthenticated text-to-sql access attempt")
