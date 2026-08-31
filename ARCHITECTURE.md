@@ -1,10 +1,10 @@
 # Solution Architecture
 
-This document provides a detailed overview of the system architecture, component interactions, and data flow for the Read-Only Database Explorer application.
+This document provides a detailed overview of the system architecture, component interactions, and data flow for the Secure DB Access Gateway application.
 
 ## Overview
 
-The Read-Only Database Explorer is designed with a microservices-inspired architecture that separates concern across distinct service layers:
+The Secure DB Access Gateway is designed with a microservices-inspired architecture that separates concern across distinct service layers:
 - **Frontend (Web Application):** React 19 + TypeScript single-page application.
 - **Auth0 API:** FastAPI authentication service handling OAuth2 authentication, user sessions, and AI greetings.
 - **SQL Query API:** FastAPI service running Strawberry GraphQL, SQLAlchemy, and async pg for read-only database query execution.

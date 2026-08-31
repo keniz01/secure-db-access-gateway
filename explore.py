@@ -646,7 +646,7 @@ async def main():
 
     if not has_cli_action:
         # If no CLI actions specified, prompt user and show simple usage instructions
-        print("--- Read-Only Database Explorer CLI ---")
+        print("--- Secure DB Access Gateway CLI ---")
         print("Usage:")
         print("  Query a table:  python explore.py --db secrets/database_url.txt --table artist --format json --limit 10")
         print("  Run custom SQL: python explore.py --db secrets/database_url.txt --sql \"SELECT * FROM album\" --format csv")
