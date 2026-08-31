@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sql-query-api"
 version = "0.1.0"
-description = "SQL Query API service for Read-Only Database Explorer"
+description = "SQL Query API service for Secure DB Access Gateway"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

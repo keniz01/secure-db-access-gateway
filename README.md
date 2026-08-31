@@ -1,395 +1,211 @@
-# Read-Only Database Explorer
+# Secure DB Access Gateway
 
-A secure, full-stack web application for safely exploring and querying databases with read-only access. Built with React, FastAPI, and Auth0 authentication.
+Secure DB Access Gateway is a read-only database exploration platform that lets users safely inspect schemas and execute SELECT-only queries behind Auth0-based identity and organization-aware authorization.
 
-## 🌟 Features
+The project is structured as a three-part system:
+- `web-app/` — React + TypeScript UI for schema browsing, queries, and authentication
+- `sql_query_api/` — FastAPI + Strawberry GraphQL API for validated read-only SQL execution
+- `auth0_api/` — Auth0 session and user orchestration layer with org-aware claims and optional AI greeting support
 
-- **Read-only SQL execution** with SELECT-only validation, automatic LIMITs, and query timeout enforcement
-- **Schema browser** and dynamic schema introspection for table/column discovery
-- **Auth0-based auth** with session cookies and viewer/admin role enforcement
-- **Operational controls**: rate limiting, audit logging, correlation IDs, and optional OTEL/Grafana metrics
-- **Multi-tenant scoping** via `org_id`, tenant-aware rate limiting, and per-org usage metrics
-- **Admin overview** for org usage and DB metadata visibility without local credential storage
-- **Sensitive-column masking** and row-level filtering hooks for authorization boundaries
+## What’s included
 
-## ✅ Completed milestone status
+- SELECT-only SQL validation with blocking of DML/DDL and unsafe patterns
+- Automatic query limits and audit logging for every SQL execution
+- Dynamic schema introspection for arbitrary database tables and foreign keys
+- Auth0 JWT validation with `viewer` / `admin` role checks
+- Org-aware principal mapping using `org_id` claims and enforcement at the middleware layer
+- Schema browser and admin-safe UI for browsing connected database metadata
+- Docker Compose setup for the web app, APIs, Nginx gateway, and OTEL/LGTM observability stack
+- CI pipeline for backend and frontend validation
 
-All major project milestones are complete:
+## Current architecture
 
-- schema decoupling
-- authorization and row filtering
-- operational readiness
-- multi-tenancy
+### Web application
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS
+- TanStack Query
+- Browser-based schema inspection and GraphQL calls to the SQL API
 
-## 🏗️ Architecture
+### SQL Query API
+- FastAPI
+- Strawberry GraphQL
+- SQLAlchemy async engine
+- SQLite/PostgreSQL-compatible schema introspection
+- Read-only validation enforced before execution
+- Middleware-based Auth0 and RBAC enforcement
 
-This project consists of three main components:
+### Auth0 API
+- FastAPI service for auth flows and session management
+- Auth0 OAuth integration and JWT identity validation
+- Optional AI greeting support via Azure/OpenAI-compatible services
+- Org-aware user metadata handling
 
-### 1. **Web Application** (`web-app/`)
-- **Tech Stack**: React 19, TypeScript, Vite, Tailwind
-- **Purpose**: UI for query execution, schema browsing, and auth flow
+## Repository layout
 
-### 2. **SQL Query API** (`sql_query_api/`)
-- **Tech Stack**: FastAPI, Strawberry GraphQL, SQLAlchemy, asyncpg
-- **Purpose**: Executes validated read-only queries and exposes schema/usage metadata
-- **Security**: query validation, allowlists, masking, row filtering, RBAC, rate limiting
+```text
+secure-db-access-gateway/
+├── .github/workflows/ci.yml
+├── auth0_api/
+│   ├── app/
+│   ├── prompts/
+│   ├── tests/
+│   ├── main.py
+│   ├── pyproject.toml
+│   └── README.md
+├── sql_query_api/
+│   ├── config/
+│   ├── dependencies/
+│   ├── graphql_schema/
+│   ├── middlewares/
+│   ├── repositories/
+│   ├── routes/
+│   ├── services/
+│   ├── tests/
+│   ├── app_factory.py
+│   ├── auth.py
+│   ├── main.py
+│   ├── pyproject.toml
+│   └── README.md
+├── web-app/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── vite.config.ts
+├── nginx/
+├── secrets/
+├── docker-compose.yml
+├── setup-secrets.sh
+├── ARCHITECTURE.md
+├── SECURITY.md
+├── GEMINI.md
+├── LICENSE
+├── README.md
+└── explore.py
+```
 
-### 3. **Auth0 API** (`auth0_api/`)
-- **Tech Stack**: FastAPI, Auth0, Azure OpenAI optional greeting
-- **Purpose**: auth flow, session management, org-aware user data, admin overview
+## Quick start
 
-## 🚀 Quick Start
-
-### Option 1: Docker (Recommended)
+### Docker Compose (recommended)
 
 ```bash
-docker-compose up --build
+./setup-secrets.sh
+# edit files in ./secrets with real credentials
+
+docker compose up --build
 ```
 
 This starts:
-- Auth0 API on `http://localhost:8001`
-- SQL Query API on `http://localhost:8002`
-- Web app on `http://localhost:5173`
-- Grafana/OTel stack on `http://localhost:3000`
+- Auth0 API: http://localhost:8001
+- SQL Query API: http://localhost:8002
+- Web app: http://localhost:5173
+- Nginx gateway: http://localhost:8080
+- OTEL/LGTM stack: http://localhost:3000
 
-Secrets are read from `secrets/` and environment variables/files as needed.
+### Manual setup
 
-### Option 2: Manual Setup
-
-For development without Docker:
-
-### Prerequisites
-
-- **Python**: 3.11 or higher
-- **Node.js**: 18.x or higher
-- **PostgreSQL**: Database instance (or compatible SQL database)
-- **Auth0 Account**: For authentication setup
-
-### Installation
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/keniz01/read_only_database_explorer.git
-   cd read_only_database_explorer
-   ```
-
-2. **Set up the SQL Query API**
-   ```bash
-   cd sql_query_api
-   
-   # Create virtual environment
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   
-   # Install dependencies
-   pip install -r requirements.txt
-   
-   # Create .env file
-   cp .env.example .env
-   # Edit .env with your database credentials
-   ```
-
-3. **Set up the Auth0 API**
-   ```bash
-   cd ../auth0_api
-   
-   # Create virtual environment
-   python -m venv venv
-   source venv/bin/activate
-   
-   # Install dependencies
-   pip install -r requirements.txt
-   
-   # Create .env file
-   cp .env.example .env
-   # Edit .env with your Auth0 credentials
-   ```
-
-4. **Set up the Web Application**
-   ```bash
-   cd ../web-app
-   
-   # Install dependencies
-   npm install
-   
-   # Create .env file
-   cp .env.example .env
-   # Edit .env with API endpoints
-   ```
-
-### Configuration
-
-#### Auth0 API Configuration (`.env`)
-```env
-AUTH0_DOMAIN=your-domain.auth0.com
-AUTH0_CLIENT_ID=your_client_id
-AUTH0_CLIENT_SECRET=your_client_secret
-APP_SECRET_KEY=generate-strong-random-key-min-32-chars
-SESSION_SECRET_KEY=generate-strong-random-key-min-32-chars
-CORS_ORIGINS=http://localhost:5173
-ENABLE_AI_GREETING=true
-AUTH0_ORG_ID_CLAIM=org_id
-GRAFANA_PROMETHEUS_URL=http://localhost:9090
-```
-
-#### SQL Query API Configuration (`.env`)
-```env
-DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/db
-CORS_ORIGINS=http://localhost:5173
-LOG_LEVEL=INFO
-DB_POOL_SIZE=5
-DB_MAX_OVERFLOW=10
-DB_POOL_TIMEOUT_SECONDS=30
-OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-lgtm:4318
-```
-
-#### Web Application Configuration (`.env`)
-```env
-VITE_API_BASE_URL=http://localhost:8080
-VITE_SQL_GRAPHQL_BASE_URL=http://localhost:8002/graphql
-VITE_ADMIN_EMAILS=admin@example.com
-```
-
-### Running the Application
-
-Start all three services in separate terminals:
-
-1. **Start SQL Query API**
-   ```bash
-   cd sql_query_api
-   source venv/bin/activate
-   uvicorn main:app --reload --port 8001
-   ```
-
-2. **Start Auth0 API**
-   ```bash
-   cd auth0_api
-   source venv/bin/activate
-   uvicorn app.main:app --reload --port 8000
-   ```
-
-3. **Start Web Application**
-   ```bash
-   cd web-app
-   npm run dev
-   ```
-
-Access the application at `http://localhost:5173`
-
-## 🔒 Security Features
-
-This application implements comprehensive security measures:
-
-### Authentication & Authorization
-- **Auth0 Integration** - Industry-standard authentication
-- **httpOnly Cookies** - Protects JWT tokens from XSS attacks
-- **CSRF Protection** - Custom headers for request validation
-- **Session Management** - Secure session handling
-
-### Input Validation
-- **Query Length Limits** - Maximum 10,000 characters
-- **Query Type Validation** - Only SELECT statements allowed
-- **SQL Safety Checks** - Prevents subqueries, CTEs, DDL, DML
-- **Empty Query Detection** - Validates non-empty input
-
-### Network Security
-- **Strict CORS** - Whitelisted origins only
-- **Security Headers** - X-Frame-Options, X-Content-Type-Options, etc.
-- **HTTPS Enforcement** - Strict-Transport-Security header
-- **Rate Limiting Ready** - Architecture supports rate limiting
-
-### Error Handling
-- **Generic Error Messages** - Prevents information disclosure
-- **Detailed Logging** - Server-side error tracking
-- **Try-Catch Protection** - Graceful error recovery
-
-For complete security details, see [SECURITY.md](SECURITY.md)
-
-## 📚 API Documentation
-
-### SQL Query API Endpoints
-
-#### Execute Query
-```http
-POST /api/v1/query/execute
-Content-Type: application/json
-
-{
-  "sql": "SELECT * FROM users LIMIT 10"
-}
-```
-
-**Response:**
-```json
-{
-  "columns": ["id", "name", "email"],
-  "rows": [
-    [1, "John Doe", "john@example.com"],
-    [2, "Jane Smith", "jane@example.com"]
-  ],
-  "row_count": 2
-}
-```
-
-### Auth0 API Endpoints
-
-#### Login
-```http
-POST /api/auth/login
-```
-
-#### Logout
-```http
-POST /api/auth/logout
-```
-
-#### Verify Session
-```http
-GET /api/auth/verify
-```
-
-## 🛠️ Development
-
-### Project Structure
-```
-read_only_database_explorer/
-├── auth0_api/              # Authentication service
-│   ├── app/
-│   │   ├── config/         # Configuration settings
-│   │   ├── middleware/     # CORS, security headers
-│   │   └── routes/         # Auth endpoints
-│   └── requirements.txt
-├── sql_query_api/          # Query execution service
-│   ├── routes/             # API endpoints
-│   ├── services/           # Business logic
-│   ├── models/             # Data models
-│   └── requirements.txt
-├── web-app/                # React frontend
-│   ├── src/
-│   │   ├── components/     # React components
-│   │   ├── services/       # API clients
-│   │   └── pages/          # Application pages
-│   └── package.json
-├── ARCHITECTURE.md         # Architecture documentation
-├── SECURITY.md            # Security implementation guide
-└── README.md              # This file
-```
-
-### Technology Stack
-
-**Frontend:**
-- React 18
-- TypeScript
-- Vite
-- Axios
-- React Router
-
-**Backend:**
-- FastAPI
-- Python 3.11+
-- PostgreSQL
-- Auth0
-- Pydantic
-
-### Running Tests
+#### 1) SQL Query API
 
 ```bash
-# Backend tests (when available)
 cd sql_query_api
-pytest
-
-cd ../auth0_api
-pytest
-
-# Frontend tests (when available)
-cd ../web-app
-npm test
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+python main.py
 ```
 
-### Code Quality
+#### 2) Auth0 API
 
 ```bash
-# Python linting
-cd sql_query_api
-flake8 .
-black .
+cd auth0_api
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e .
+python main.py
+```
 
-# TypeScript linting
+#### 3) Web app
+
+```bash
 cd web-app
-npm run lint
+npm install
+npm run dev
 ```
 
-## 📖 Documentation
+## Environment and secrets
 
-- [Architecture Overview](ARCHITECTURE.md) - System design and component interaction
-- [Security Guide](SECURITY.md) - Comprehensive security implementation details
-- API Documentation - Available at `/docs` endpoint when running the APIs
+Secret values are expected to be provided via environment variables or Docker secrets files instead of being hardcoded.
 
-## 🤝 Contributing
+Common examples:
 
-Contributions are welcome! Please follow these steps:
+```bash
+# SQL Query API
+export DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/appdb
+export AUTH0_AUDIENCE=https://your-api-audience
+export AUTH0_DOMAIN=your-domain.auth0.com
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+# Auth0 API
+export AUTH0_CLIENT_ID=...
+export AUTH0_CLIENT_SECRET=...
+export SECRET_KEY=...
+export SESSION_SECRET_KEY=...
+export FRONTEND_URL=http://localhost:5173
+```
 
-### Contribution Guidelines
+Docker uses `secrets/*.txt` files and populates `*_FILE` environment variables; see `docker-compose.yml` and `setup-secrets.sh` for the expected secret names.
 
-- Follow existing code style and conventions
-- Add tests for new features
-- Update documentation as needed
-- Ensure all tests pass before submitting PR
-- Keep commits focused and write clear commit messages
+## Security model
 
-## 🐛 Reporting Security Issues
+This application is designed around a read-only database access model:
 
-**IMPORTANT**: Do NOT create public GitHub issues for security vulnerabilities.
+- only SELECT-style queries are accepted by the SQL safety layer
+- DDL/DML and other mutating statements are rejected
+- request identity comes from validated Auth0 JWT claims, not caller-supplied headers
+- org scoping is driven from `org_id` claim values and is enforced in middleware
+- audit logging captures user, org, and table access metadata
+- rate limiting and structured logging are enabled for operational control
 
-For security issues, please email: kenneth.kiiza@googlemail.com
+For the full policy and threat model, see [SECURITY.md](SECURITY.md).
 
-Allow 30 days for response before public disclosure.
+## Testing
 
-## 📝 License
+Run the project checks with the same tooling used in CI:
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+```bash
+# SQL Query API
+cd sql_query_api
+python -m pytest
 
-## 🙏 Acknowledgments
+# Auth0 API
+cd ../auth0_api
+python -m pytest
 
-- Auth0 for authentication infrastructure
-- FastAPI for the excellent Python framework
-- React team for the frontend framework
-- The open-source community
+# Web app
+cd ../web-app
+npm run lint
+npm test -- --pretty false
+npm run build
+```
 
-## 📞 Support
+## Documentation
 
-- **Issues**: [GitHub Issues](https://github.com/keniz01/read_only_database_explorer/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/keniz01/read_only_database_explorer/discussions)
-- **Documentation**: See the `/docs` folder
+- [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component responsibilities
+- [SECURITY.md](SECURITY.md) — security controls and governance notes
+- [GEMINI.md](GEMINI.md) — AI/CLI guardrails and project context
+- [sql_query_api/README.md](sql_query_api/README.md)
+- [auth0_api/README.md](auth0_api/README.md)
+- [web-app/README.md](web-app/README.md)
 
-## 🗺️ Roadmap
+## Contributing
 
-### Completed Features
-- [x] Docker containerization (Docker Compose & Nginx gateway)
+1. Create a feature branch from your work branch
+2. Keep changes focused and testable
+3. Update relevant docs when behavior changes
+4. Run the targeted backend/frontend checks before opening a PR
 
-### Planned Enhancements
-- [ ] Add query history tracking
-- [ ] Implement query result export (CSV, JSON)
-- [ ] Add database schema visualization
-- [ ] Support for multiple database connections
-- [ ] Query performance metrics
-- [ ] Saved queries functionality
-- [ ] Role-based access control
-- [ ] Audit logging
-- [ ] Rate limiting implementation
+## License
 
-## 📊 Project Status
-
-**Current Version**: 1.1.0  
-**Status**: Development  
-**Last Updated**: August 2026
-
----
-
-**Made with ❤️ for secure database exploration**
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
