@@ -3,7 +3,7 @@
 # Setup script for Docker secrets
 # This script helps create the secrets directory with example files
 
-echo "Setting up Docker secrets for Read-Only Database Explorer..."
+echo "Setting up Docker secrets for Secure DB Access Gateway..."
 echo ""
 
 # Create secrets directory if it doesn't exist

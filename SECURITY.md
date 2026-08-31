@@ -1,7 +1,7 @@
 # Security Implementation Guide
 
 ## Overview
-This document outlines the security measures implemented in the Read-Only Database Explorer application to protect against common vulnerabilities and attacks.
+This document outlines the security measures implemented in the Secure DB Access Gateway application to protect against common vulnerabilities and attacks.
 
 ## Security Measures Implemented
 

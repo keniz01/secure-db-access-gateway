@@ -1,9 +1,9 @@
-# GEMINI.md - Read-Only Database Explorer & AI Guardrails
+# GEMINI.md - Secure DB Access Gateway & AI Guardrails
 
 This document serves as the primary system prompt and guardrail for future Gemini/Antigravity development sessions in this codebase.
 
 ## 1. Project Global Context
-The Read-Only Database Explorer is a secure, full-stack application designed to safely inspect, query, and document relational databases with **read-only access**. The architecture separates user sessions, SQL validation, and user interface layers to ensure zero-risk database exploration.
+The Secure DB Access Gateway is a secure, full-stack application designed to safely inspect, query, and document relational databases with **read-only access**. The architecture separates user sessions, SQL validation, and user interface layers to ensure zero-risk database exploration.
 
 ### Core Technology Stack
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, TanStack Query.
