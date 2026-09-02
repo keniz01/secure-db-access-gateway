@@ -186,7 +186,7 @@ async def get_dashboard(request: Request):
     final_message = (
         message.strip()
         if isinstance(message, str) and message.strip()
-        else "You are successfully authenticated."
+        else "Welcome back! You are successfully authenticated."
     )
 
     return JSONResponse(

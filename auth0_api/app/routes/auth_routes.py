@@ -158,16 +158,20 @@ async def auth_callback(request: Request):
             ).model_dump()
         )
 
+    user_id = user_info.get('sub')
     org_id = (
         user_info.get(settings.AUTH0_ORG_ID_CLAIM)
         or user_info.get("org_id")
         or user_info.get("organization")
         or user_info.get("https://example.com/org_id")
         or user_info.get("https://app.read-only-database-explorer.org/org_id")
+        # Until Auth0 Organizations/actions are configured, isolate each user
+        # in a tenant derived from the validated subject claim.
+        or user_id
     )
 
     user = {
-        "id": user_info.get('sub'),
+        "id": user_id,
         "email": user_info.get('email'),
         "name": user_info.get('name'),
         "org_id": org_id,
