@@ -8,7 +8,8 @@ from app.services.ai_service import AIService
 def ai_service_real_retry():
     # We want to test the retry logic which is in the method, 
     # so we mock the client but not the service method
-    with patch("app.services.ai_service.AsyncOpenAI") as mock_openai:
+    with patch("app.services.ai_service.AsyncOpenAI"), \
+         patch("app.services.ai_service.genai.Client"):
         service = AIService()
         # Mock settings for faster retries
         with patch("app.config.settings.settings.AI_RETRIES", 2), \
