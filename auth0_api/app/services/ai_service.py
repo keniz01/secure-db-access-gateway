@@ -4,6 +4,8 @@ AI service for interacting with LLM models via Azure OpenAI.
 
 import asyncio
 from typing import List, Optional
+from google import genai
+from google.genai import types
 from openai import AsyncOpenAI, RateLimitError, APIError, APITimeoutError
 from app.config.settings import settings
 from app.config.logging import get_logger
@@ -19,9 +21,10 @@ class AIService:
         """Initialize the AI service with Azure OpenAI client."""
         self.client = AsyncOpenAI(
             base_url=settings.AI_BASE_URL,
-            api_key=settings.GITHUB_TOKEN,
+            api_key=settings.OPENROUTER_API_KEY,
             timeout=settings.AI_REQUEST_TIMEOUT,
         )
+        self.embedding_client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
     async def get_greeting(
         self,
@@ -99,12 +102,12 @@ class AIService:
         backoff_base: float = settings.AI_BACKOFF_BASE,
     ) -> List[float]:
         """
-        Generate embeddings for text using Azure OpenAI embeddings API.
+        Generate embeddings for text using Gemini.
 
         Args:
             text: Text to generate embeddings for
             model: Embedding model identifier (default from settings)
-            dimensions: Number of dimensions for embeddings (default 384)
+            dimensions: Number of dimensions for embeddings (default 768)
             retries: Number of retry attempts for transient failures
             backoff_base: Exponential backoff base multiplier
 
@@ -116,13 +119,17 @@ class AIService:
         """
         for attempt in range(1, retries + 1):
             try:
-                response = await self.client.embeddings.create(
+                response = await asyncio.to_thread(
+                    self.embedding_client.models.embed_content,
                     model=model,
-                    input=text.strip(),
-                    dimensions=dimensions,
+                    contents=text.strip(),
+                    config=types.EmbedContentConfig(
+                        output_dimensionality=dimensions,
+                        task_type="RETRIEVAL_QUERY",
+                    ),
                 )
 
-                embedding = response.data[0].embedding
+                embedding = response.embeddings[0].values
                 if not embedding or len(embedding) != dimensions:
                     raise AIServiceError(
                         f"Invalid embedding response: expected {dimensions} dimensions, got {len(embedding) if embedding else 0}"
@@ -146,6 +153,9 @@ class AIService:
                 logger.error("Embedding API error: %s", e)
                 # Do not retry server-side failures
                 raise AIServiceError(f"Embedding service error: {str(e)}") from e
+
+            except AIServiceError:
+                raise
 
             except Exception as e:
                 logger.exception("Unexpected embedding failure: %s", e)

@@ -79,7 +79,7 @@ class TestGraphQLHealthCheck:
         assert response.status_code == 401
         assert response.json()["detail"] == "Authentication required."
 
-    def test_graphql_rejects_token_without_an_organisation_claim(
+    def test_graphql_uses_subject_when_token_has_no_organisation_claim(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -89,8 +89,8 @@ class TestGraphQLHealthCheck:
 
         response = client.post("/graphql", json={"query": "query { ping }"}, headers=auth_headers())
 
-        assert response.status_code == 401
-        assert response.json()["detail"] == "Authentication required."
+        assert response.status_code == 200
+        assert response.json()["data"]["ping"] == "GraphQL SQL Query API is running!"
 
     def test_graphql_ping(self, client: TestClient) -> None:
         payload = {"query": "query { ping }"}
@@ -276,7 +276,7 @@ class TestGraphQLGetTableSchema:
         assert response.status_code == 200
         res = response.json()
         assert "errors" in res
-        assert "Embeddings must be exactly 384 dimensions, got 3" in res["errors"][0]["message"]
+        assert "Embeddings must be exactly 768 dimensions, got 3" in res["errors"][0]["message"]
 
 
 

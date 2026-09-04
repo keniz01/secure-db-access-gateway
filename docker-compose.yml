@@ -30,7 +30,9 @@ services:
       - google_client_secret
       - gemini_api_key
       - openai_api_key
-      - github_token
+      - openrouter_api_key
+      - ai_model
+      - embedding_model
       - auth0_client_id
       - auth0_client_secret
       - auth0_domain
@@ -43,7 +45,11 @@ services:
       GOOGLE_CLIENT_SECRET_FILE: /run/secrets/google_client_secret
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
       OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
-      GITHUB_TOKEN_FILE: /run/secrets/github_token
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      AI_MODEL_FILE: /run/secrets/ai_model
+      EMBEDDING_MODEL_FILE: /run/secrets/embedding_model
+      AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
       AUTH0_CLIENT_ID_FILE: /run/secrets/auth0_client_id
       AUTH0_CLIENT_SECRET_FILE: /run/secrets/auth0_client_secret
       AUTH0_DOMAIN_FILE: /run/secrets/auth0_domain
@@ -67,6 +73,7 @@ services:
       DATABASE_URL_FILE: /run/secrets/database_url
       AUTH0_DOMAIN_FILE: /run/secrets/auth0_domain
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://secure-db-access-gateway-api}
+      SQL_DATA_SCHEMA: ${SQL_DATA_SCHEMA:-music}
       CORS_ORIGINS: http://localhost:5173,http://web-app:5173
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: sql-query-api
@@ -103,8 +110,12 @@ secrets:
     file: ./secrets/gemini_api_key.txt
   openai_api_key:
     file: ./secrets/openai_api_key.txt
-  github_token:
-    file: ./secrets/github_token.txt
+  openrouter_api_key:
+    file: ./secrets/openrouter_api_key.txt
+  ai_model:
+    file: ./secrets/ai_model.txt
+  embedding_model:
+    file: ./secrets/embedding_model.txt
   auth0_client_id:
     file: ./secrets/auth0_client_id.txt
   auth0_client_secret:

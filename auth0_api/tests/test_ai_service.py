@@ -5,7 +5,7 @@ from app.exceptions.handlers import AIServiceError
 
 @pytest.fixture
 def ai_service():
-    with patch("app.services.ai_service.AsyncOpenAI"):
+    with patch("app.services.ai_service.AsyncOpenAI"), patch("app.services.ai_service.genai.Client"):
         return AIService()
 
 @pytest.mark.asyncio
@@ -33,8 +33,8 @@ async def test_get_greeting_empty_response(ai_service):
 async def test_generate_embeddings_success(ai_service):
     """Test successful embedding generation."""
     mock_response = MagicMock()
-    mock_response.data = [MagicMock(embedding=[0.1, 0.2, 0.3])]
-    ai_service.client.embeddings.create = AsyncMock(return_value=mock_response)
+    mock_response.embeddings = [MagicMock(values=[0.1, 0.2, 0.3])]
+    ai_service.embedding_client.models.embed_content = MagicMock(return_value=mock_response)
     
     result = await ai_service.generate_embeddings("text", dimensions=3)
     assert result == [0.1, 0.2, 0.3]
@@ -44,7 +44,8 @@ async def test_generate_embeddings_invalid_dimensions(ai_service):
     """Test embedding generation with dimension mismatch."""
     mock_response = MagicMock()
     mock_response.data = [MagicMock(embedding=[0.1, 0.2])]
-    ai_service.client.embeddings.create = AsyncMock(return_value=mock_response)
+    mock_response.embeddings = [MagicMock(values=[0.1, 0.2])]
+    ai_service.embedding_client.models.embed_content = MagicMock(return_value=mock_response)
     
     with pytest.raises(AIServiceError, match="Invalid embedding response"):
         await ai_service.generate_embeddings("text", dimensions=3)

@@ -28,7 +28,7 @@ class TextToSqlService:
         self.sql_query_api_url = settings.SQL_QUERY_API_URL
 
     async def generate_sql_from_text(
-        self, query: str, execute: bool = False
+        self, query: str, execute: bool = False, access_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Generate SQL from natural language query and optionally execute it.
@@ -51,7 +51,7 @@ class TextToSqlService:
 
             # Step 2: Get relevant schema using embeddings
             logger.info("Retrieving relevant schema information")
-            schema = await self._get_relevant_schema(embeddings)
+            schema = await self._get_relevant_schema(embeddings, access_token)
 
             # Step 3: Generate SQL using LLM
             logger.info("Generating SQL from natural language query")
@@ -65,7 +65,7 @@ class TextToSqlService:
             # Step 4: Optionally execute the SQL
             if execute:
                 logger.info("Executing generated SQL query")
-                execution_result = await self._execute_sql(sql)
+                execution_result = await self._execute_sql(sql, access_token)
                 result["results"] = execution_result
 
             return result
@@ -81,7 +81,9 @@ class TextToSqlService:
             logger.exception("Unexpected error in text-to-SQL: %s", e)
             return {"error": f"Unexpected error: {str(e)}", "sql": None}
 
-    async def _get_relevant_schema(self, embeddings: List[float]) -> str:
+    async def _get_relevant_schema(
+        self, embeddings: List[float], access_token: Optional[str] = None
+    ) -> str:
         """
         Retrieve relevant schema information using vector embeddings.
 
@@ -106,7 +108,7 @@ class TextToSqlService:
                 response = await client.post(
                     self.sql_query_api_url,
                     json={"query": graphql_query, "variables": variables},
-                    headers={"Content-Type": "application/json"},
+                    headers=self._api_headers(access_token),
                 )
                 response.raise_for_status()
 
@@ -165,7 +167,9 @@ class TextToSqlService:
             logger.error("Error generating SQL with LLM: %s", e)
             raise AIServiceError(f"Failed to generate SQL: {str(e)}")
 
-    async def _execute_sql(self, sql: str) -> List[Dict[str, Any]]:
+    async def _execute_sql(
+        self, sql: str, access_token: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Execute SQL query via SQL Query API.
 
@@ -188,7 +192,7 @@ class TextToSqlService:
                 response = await client.post(
                     self.sql_query_api_url,
                     json={"query": graphql_query, "variables": variables},
-                    headers={"Content-Type": "application/json"},
+                    headers=self._api_headers(access_token),
                 )
                 response.raise_for_status()
 
@@ -214,3 +218,10 @@ class TextToSqlService:
             logger.error("Error executing SQL: %s", e)
             raise Exception(f"Failed to execute SQL: {str(e)}")
 
+    @staticmethod
+    def _api_headers(access_token: Optional[str] = None) -> Dict[str, str]:
+        """Build headers for authenticated SQL Query API requests."""
+        headers = {"Content-Type": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        return headers

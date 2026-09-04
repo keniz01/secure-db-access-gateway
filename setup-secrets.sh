@@ -44,6 +44,21 @@ cat > secrets/openai_api_key.txt << 'EOF'
 your-openai-api-key
 EOF
 
+cat > secrets/openrouter_api_key.txt << 'EOF'
+# Your OpenRouter API key
+your-openrouter-api-key
+EOF
+
+cat > secrets/ai_model.txt << 'EOF'
+# OpenRouter model identifier
+configure-your-ai-model
+EOF
+
+cat > secrets/embedding_model.txt << 'EOF'
+# Gemini embedding model identifier
+configure-your-embedding-model
+EOF
+
 cat > secrets/github_token.txt << 'EOF'
 # Your GitHub token for Azure OpenAI
 github_pat_xxx

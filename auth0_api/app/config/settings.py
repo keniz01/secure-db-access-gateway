@@ -51,17 +51,18 @@ class Settings:
     REACT_APP_URL: str = os.getenv("REACT_APP_URL") or read_secret_from_file(os.getenv("REACT_APP_URL_FILE", ""))
 
     # AI/LLM Configuration
-    GITHUB_TOKEN: str = os.getenv("GITHUB_TOKEN") or read_secret_from_file(os.getenv("GITHUB_TOKEN_FILE", ""))
-    AI_MODEL: str = "gpt-4o-mini"
-    AI_BASE_URL: str = "https://models.inference.ai.azure.com"
+    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY") or read_secret_from_file(os.getenv("OPENROUTER_API_KEY_FILE", ""))
+    AI_MODEL: str = os.getenv("AI_MODEL") or read_secret_from_file(os.getenv("AI_MODEL_FILE", ""))
+    AI_BASE_URL: str = os.getenv("AI_BASE_URL", "https://openrouter.ai/api/v1")
     AI_REQUEST_TIMEOUT: float = 15.0
     AI_MAX_TOKENS: int = 300
     AI_RETRIES: int = 3
     AI_BACKOFF_BASE: float = 2.0
 
     # Embedding Configuration
-    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
-    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "384"))
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY") or read_secret_from_file(os.getenv("GEMINI_API_KEY_FILE", ""))
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL") or read_secret_from_file(os.getenv("EMBEDDING_MODEL_FILE", ""))
+    EMBEDDING_DIMENSIONS: int = int(os.getenv("EMBEDDING_DIMENSIONS", "768"))
 
     # SQL Query API Configuration
     SQL_QUERY_API_URL: str = os.getenv("SQL_QUERY_API_URL") or read_secret_from_file(os.getenv("SQL_QUERY_API_URL_FILE", "")) or "http://localhost:8002/graphql"
