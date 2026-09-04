@@ -168,7 +168,7 @@ class Query:
         Retrieves relevant database schema information using vector similarity search.
 
         Args:
-            embeddings: List of float values representing the query embedding vector (384 dimensions)
+            embeddings: List of float values representing the query embedding vector (768 dimensions)
 
         Returns:
             SchemaInfo containing formatted schema information
@@ -177,9 +177,9 @@ class Query:
         if not embeddings:
             raise ValueError("Embeddings list cannot be empty.")
 
-        # Input validation: Check embedding dimensions (should be 384)
-        if len(embeddings) != 384:
-            raise ValueError(f"Embeddings must be exactly 384 dimensions, got {len(embeddings)}")
+        # Stored schema vectors must be regenerated before using the 768-dimension model.
+        if len(embeddings) != 768:
+            raise ValueError(f"Embeddings must be exactly 768 dimensions, got {len(embeddings)}")
 
         try:
             logger.info("Fetching table schema with embeddings (dimensions=%d)", len(embeddings))
@@ -189,7 +189,10 @@ class Query:
         except Exception as e:
             logger.exception("Error fetching table schema")
             # Don't expose internal error details to client
-            raise Exception("Failed to fetch table schema. Please verify your embeddings.")
+            raise Exception(
+                "Schema embeddings are unavailable or incompatible with 768 dimensions. "
+                "Regenerate schema embeddings before using text-to-SQL."
+            )
 
     @strawberry.field(description="Dynamically introspect the connected database schema")
     async def introspect_schema(self) -> DatabaseSchemaInfo:

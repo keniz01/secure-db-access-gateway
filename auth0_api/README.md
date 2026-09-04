@@ -90,8 +90,12 @@ AUTH0_DOMAIN=your-auth0-domain
 AUTH0_CLIENT_ID=your-client-id
 AUTH0_CLIENT_SECRET=your-client-secret
 
-# API Keys
-GITHUB_TOKEN=your-azure-openai-token
+# AI API Keys
+OPENROUTER_API_KEY=your-openrouter-api-key
+GEMINI_API_KEY=your-gemini-api-key
+EMBEDDING_DIMENSIONS=768
+
+Model identifiers are loaded from `AI_MODEL_FILE` and `EMBEDDING_MODEL_FILE`.
 
 # Session Management
 APP_SECRET_KEY=your-secret-key
@@ -245,8 +249,8 @@ Part of the SQL Query Executor platform.
 - Verify callback URL matches Auth0 configuration
 
 ### AI service unavailable
-- Check `GITHUB_TOKEN` is valid
-- Verify network connectivity to Azure OpenAI
+- Check `OPENROUTER_API_KEY` and `GEMINI_API_KEY` are valid
+- Verify network connectivity to OpenRouter and Gemini
 - Check logs for rate limiting
 
 ### CORS errors

@@ -30,6 +30,9 @@ async def proxy_graphql(request: Request):
         upstream = await client.post(
             settings.SQL_QUERY_API_URL,
             content=await request.body(),
-            headers={"Authorization": f"Bearer {access_token}", "Content-Type": request.headers.get("content-type", "application/json")},
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": request.headers.get("content-type", "application/json"),
+            },
         )
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))

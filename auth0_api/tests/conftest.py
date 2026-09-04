@@ -46,7 +46,7 @@ def mock_ai_service():
     """Mock the AI service."""
     mock_instance = MagicMock(spec=AIService)
     mock_instance.get_greeting = AsyncMock(return_value="Mocked AI greeting")
-    mock_instance.generate_embeddings = AsyncMock(return_value=[0.1] * 384)
+    mock_instance.generate_embeddings = AsyncMock(return_value=[0.1] * 768)
     
     with patch("app.services.ai_service.get_ai_service", return_value=mock_instance), \
          patch("app.routes.user_routes.get_ai_service", return_value=mock_instance):

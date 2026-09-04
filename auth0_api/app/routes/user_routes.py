@@ -83,7 +83,8 @@ async def get_user(request: Request):
     Returns:
         User information or 401 if not authenticated
     """
-    user = get_authenticated_user(request)
+    session = get_authenticated_session(request)
+    user = session.get("user") if session else None
 
     if not user:
         logger.info("Unauthenticated /user access attempt")
@@ -105,7 +106,8 @@ async def get_user(request: Request):
 @router.get("/admin/overview")
 async def get_admin_overview(request: Request):
     """Return a minimal admin overview for this org, backed by Prometheus/Grafana usage data."""
-    user = get_authenticated_user(request)
+    session = get_authenticated_session(request)
+    user = session.get("user") if session else None
     if not user:
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -157,7 +159,8 @@ async def get_dashboard(request: Request):
     Returns:
         Dashboard data with greeting message or 401 if not authenticated
     """
-    user = get_authenticated_user(request)
+    session = get_authenticated_session(request)
+    user = session.get("user") if session else None
 
     if not user:
         logger.info("Unauthenticated dashboard access attempt")
@@ -218,7 +221,8 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
     Returns:
         Generated SQL and optionally query results, or 401 if not authenticated
     """
-    user = get_authenticated_user(request)
+    session = get_authenticated_session(request)
+    user = session.get("user") if session else None
 
     if not user:
         logger.info("Unauthenticated text-to-sql access attempt")
@@ -250,7 +254,8 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
         # Generate SQL from natural language
         result = await text_to_sql_service.generate_sql_from_text(
             query=body.query.strip(),
-            execute=body.execute
+            execute=body.execute,
+            access_token=session.get("access_token") if session else None,
         )
 
         if "error" in result:

@@ -100,3 +100,36 @@ async def test_graphql_proxy_rejects_requests_without_csrf_header(client):
 
     assert response.status_code == 403
     assert response.json()["detail"] == "CSRF protection failed"
+
+
+@pytest.mark.asyncio
+async def test_graphql_proxy_forwards_session_access_token(client, mocker):
+    """The SQL API receives the authenticated user's bearer token."""
+    mocker.patch(
+        "app.routes.graphql_routes.get_authenticated_session",
+        return_value={"access_token": "test-access-token"},
+    )
+
+    upstream = MagicMock()
+    upstream.content = b'{"data":{"ping":"pong"}}'
+    upstream.status_code = 200
+    upstream.headers = {"content-type": "application/json"}
+
+    mock_client = MagicMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+    mock_client.post = AsyncMock(return_value=upstream)
+    mocker.patch("app.routes.graphql_routes.httpx.AsyncClient", return_value=mock_client)
+
+    response = await client.post(
+        "/api/graphql",
+        content=b'{"query":"query { ping }"}',
+        headers={
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 200
+    mock_client.post.assert_awaited_once()
+    assert mock_client.post.await_args.kwargs["headers"]["Authorization"] == "Bearer test-access-token"

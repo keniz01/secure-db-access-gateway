@@ -157,7 +157,11 @@ class SqlQueryRepository(ISqlQueryRepository):
         # Add default LIMIT if not present
         sql = self._ensure_limit(sql)
 
-        async with self.get_conn() as conn:
+        data_schema = os.getenv("SQL_DATA_SCHEMA", "music")
+        if not data_schema.replace("_", "").isalnum():
+            raise ValueError("SQL_DATA_SCHEMA must be a valid PostgreSQL schema identifier.")
+
+        async with self.get_conn(data_schema) as conn:
             try:
                 async def _execute_query() -> List[Dict[str, Any]]:
                     result: AsyncResult = await conn.execute(
@@ -354,8 +358,7 @@ class SqlQueryRepository(ISqlQueryRepository):
 
     async def get_table_schema(self, query_embeddings: List[float]) -> Dict[str, Any]:
         """
-        Fetches the top 4 most similar database schema entries if available,
-        or dynamically introspects database schema.
+        Fetches the top 4 most similar database schema entries.
         """
         query = self._build_similarity_query()
 
@@ -372,21 +375,11 @@ class SqlQueryRepository(ISqlQueryRepository):
                 return {"schema": formatted}
 
         except Exception as e:
-            logging.info(f"Vector schema lookup unavailable ({e}), falling back to dynamic introspection.")
-            try:
-                schema_info = await self.introspect_schema()
-                lines = []
-                for table in schema_info.get("tables", []):
-                    lines.append(f"{table['name']}:")
-                    for col in table.get("columns", []):
-                        lines.append(f"  {col['name']}: {col.get('type', '')}")
-                    lines.append("")
-                return {"schema": "\n".join(lines)}
-            except Exception as inner_e:
-                logging.error(f"Error fetching database schema: {inner_e}", exc_info=True)
-                raise SqlStatementExecutionException(
-                    f"Error fetching database schema: {type(inner_e).__name__}: {inner_e}"
-                ) from inner_e
+            logging.error("Schema embedding lookup failed; vectors must be regenerated: %s", e)
+            raise SqlStatementExecutionException(
+                "Schema embeddings are unavailable or incompatible with the configured embedding dimensions. "
+                "Regenerate schema embeddings before using text-to-SQL."
+            ) from e
 
     def _build_similarity_query(self) -> TextClause:
         return text(
