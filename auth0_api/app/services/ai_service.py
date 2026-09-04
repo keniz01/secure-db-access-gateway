@@ -63,8 +63,13 @@ class AIService:
                     max_tokens=max_tokens,
                 )
 
-                choice = response.choices[0].message.content
-                if not choice:
+                choices = getattr(response, "choices", None)
+                if not choices:
+                    raise AIServiceError("Empty response from AI model")
+
+                message = getattr(choices[0], "message", None)
+                choice = getattr(message, "content", None)
+                if not isinstance(choice, str) or not choice.strip():
                     raise AIServiceError("Empty response from AI model")
 
                 logger.debug("AI response generated successfully")
