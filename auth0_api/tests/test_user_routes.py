@@ -38,7 +38,7 @@ async def test_get_dashboard_ai_failure(client, authenticated_session, mock_ai_s
     response = await client.get("/api/dashboard")
     assert response.status_code == 200
     data = response.json()
-    assert data["message"] == "You are successfully authenticated."
+    assert data["message"] == "Welcome back! You are successfully authenticated."
 
 @pytest.mark.asyncio
 async def test_get_dashboard_ai_greeting_disabled(client, authenticated_session):
@@ -48,7 +48,7 @@ async def test_get_dashboard_ai_greeting_disabled(client, authenticated_session)
         response = await client.get("/api/dashboard")
         assert response.status_code == 200
         assert response.json()["org_id"] == "org-456"
-        assert response.json()["message"] == "You are successfully authenticated."
+        assert response.json()["message"] == "Welcome back! You are successfully authenticated."
 
 @pytest.mark.asyncio
 async def test_get_admin_overview(client, authenticated_session):

@@ -42,6 +42,7 @@ class Settings:
     AUTH0_DOMAIN: str = os.getenv("AUTH0_DOMAIN") or read_secret_from_file(os.getenv("AUTH0_DOMAIN_FILE", ""))
     AUTH0_CLIENT_ID: str = os.getenv("AUTH0_CLIENT_ID") or read_secret_from_file(os.getenv("AUTH0_CLIENT_ID_FILE", ""))
     AUTH0_CLIENT_SECRET: str = os.getenv("AUTH0_CLIENT_SECRET") or read_secret_from_file(os.getenv("AUTH0_CLIENT_SECRET_FILE", ""))
+    AUTH0_AUDIENCE: str = os.getenv("AUTH0_AUDIENCE") or read_secret_from_file(os.getenv("AUTH0_AUDIENCE_FILE", ""))
     AUTH0_SCOPE: str = "openid profile email organizations"
     AUTH0_ORG_ID_CLAIM: str = os.getenv("AUTH0_ORG_ID_CLAIM", "org_id")
 

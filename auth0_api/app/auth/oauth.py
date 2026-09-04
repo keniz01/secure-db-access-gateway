@@ -19,14 +19,23 @@ def setup_oauth() -> OAuth:
     oauth = OAuth()
 
     # Register Auth0
+    client_kwargs = {
+        'scope': settings.AUTH0_SCOPE,
+    }
+    if settings.AUTH0_AUDIENCE:
+        client_kwargs['audience'] = settings.AUTH0_AUDIENCE
+
+    authorize_params = {}
+    if settings.AUTH0_AUDIENCE:
+        authorize_params['audience'] = settings.AUTH0_AUDIENCE
+
     auth0 = oauth.register(
         'auth0',
         client_id=settings.AUTH0_CLIENT_ID,
         client_secret=settings.AUTH0_CLIENT_SECRET,
         server_metadata_url=f'https://{settings.AUTH0_DOMAIN}/.well-known/openid-configuration',
-        client_kwargs={
-            'scope': settings.AUTH0_SCOPE,
-        },
+        client_kwargs=client_kwargs,
+        authorize_params=authorize_params,
     )
 
     logger.debug("OAuth client initialized for Auth0 domain: %s", settings.AUTH0_DOMAIN)

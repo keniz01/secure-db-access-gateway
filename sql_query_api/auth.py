@@ -61,15 +61,19 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> Principal | No
 
     normalized_roles = frozenset(str(role).lower() for role in roles if str(role).strip())
 
-    email = claims.get("email") or claims.get("preferred_username")
+    user_id = claims.get("sub")
+    # Auth0 access tokens for a custom API may omit profile claims. The
+    # validated subject remains a stable, non-spoofable audit identity.
+    email = claims.get("email") or claims.get("preferred_username") or user_id
     org_id = (
         claims.get("org_id")
         or claims.get("organization")
         or claims.get("https://app.read-only-database-explorer.org/org_id")
         or claims.get("https://example.com/org_id")
+        # Keep users isolated while Auth0 Organizations/actions are not configured.
+        or user_id
     )
 
-    user_id = claims.get("sub")
     if not all(isinstance(value, str) and value.strip() for value in (user_id, email, org_id)):
         return None
 
