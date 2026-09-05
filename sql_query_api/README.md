@@ -35,3 +35,32 @@ Windows
   `https://app.secure-db-access-gateway.org/tenant_id`. The application does
   not create users or manage tenant membership; Auth0 or an upstream identity
   provider must issue this claim.
+
+### Policy enforcement
+
+The governed query gateway can load a central, default-deny policy document
+from `POLICY_POLICIES_JSON`. Each policy may target `org_id`, `principal_id`,
+`roles`, `database_id`, and `table`, and may specify `columns`,
+`masked_columns`, and `row_scope` mappings from database columns to validated
+subject attributes:
+
+```json
+[
+  {
+    "id": "eu-orders",
+    "effect": "allow",
+    "org_id": "auth0-org-id",
+    "roles": ["viewer"],
+    "database_id": "analytics",
+    "table": "orders",
+    "columns": ["id", "region", "total"],
+    "masked_columns": ["total"],
+    "row_scope": {"region": "region"}
+  }
+]
+```
+
+Denials take precedence, missing subject attributes fail closed, and row
+predicates are added by the gateway before execution. `simulatePolicy` is
+available to administrators through GraphQL and returns the decision without
+reading protected data.

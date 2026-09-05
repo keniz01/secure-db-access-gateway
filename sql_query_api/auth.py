@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
@@ -33,11 +33,21 @@ class Principal:
     email: str
     org_id: str
     roles: frozenset[str]
+    attributes: dict[str, Any] = field(default_factory=dict)
 
     @property
     def role(self) -> str:
         """Return the highest role understood by this application."""
         return "admin" if "admin" in self.roles else "viewer"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "attributes", dict(self.attributes or {}))
+
+    def __getattr__(self, name: str) -> Any:
+        attributes = object.__getattribute__(self, "attributes")
+        if name in attributes:
+            return attributes[name]
+        raise AttributeError(name)
 
 
 def extract_bearer_token(request) -> str | None:
@@ -76,6 +86,11 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> Principal | No
         email=email,
         org_id=org_id,
         roles=normalized_roles,
+        attributes={
+            str(key): value
+            for key, value in claims.items()
+            if key not in {"sub", "email", "preferred_username", "roles", TENANT_ID_CLAIM}
+        },
     )
 
 

@@ -27,6 +27,7 @@ try:
     from dependencies.tenant_service_provider import TenantServiceProvider  # noqa: E402
     from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker  # noqa: E402
     from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest  # noqa: E402
+    from services.policy_engine import PolicyEvaluator  # noqa: E402
     from services.tenant_database_resolver import TenantDatabaseConfig, TenantDatabaseResolver  # noqa: E402
     HAS_SAFETY_CHECKER = True
 except ImportError:
@@ -112,12 +113,17 @@ async def execute_query(db_url: str, sql: str) -> List[Dict[str, Any]]:
         email=os.getenv("CLI_USER_EMAIL", "cli@localhost"),
         org_id=org_id,
         roles=frozenset({"viewer"}),
+        attributes=json.loads(os.getenv("CLI_SUBJECT_ATTRIBUTES_JSON", "{}")),
     )
     resolver = TenantDatabaseResolver(
         [TenantDatabaseConfig(org_id, database_id, db_url)]
     )
     provider = TenantServiceProvider(resolver)
-    gateway = GovernedQueryGateway(provider, DefaultSqlSafetyChecker())
+    gateway = GovernedQueryGateway(
+        provider,
+        DefaultSqlSafetyChecker(),
+        policy_evaluator=PolicyEvaluator.from_environment(),
+    )
     try:
         return await gateway.execute(
             GovernedQueryRequest(principal=principal, database_id=database_id, sql=sql)

@@ -14,6 +14,14 @@ from metrics import observe_query
 from repositories.sql_validators.sql_safety_checker import SqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
 from services.tenant_database_resolver import TenantDatabaseConfig
+from services.policy_engine import (
+    PolicyDecision,
+    PolicyEvaluator,
+    apply_row_restrictions,
+    mask_rows,
+    referenced_columns,
+    tables_touched,
+)
 
 
 class QueryServiceProvider(Protocol):
@@ -53,10 +61,12 @@ class GovernedQueryGateway:
         provider: QueryServiceProvider | Callable[[], QueryServiceProvider],
         safety_checker: SqlSafetyChecker,
         audit: Callable[..., None] = log_audit_event,
+        policy_evaluator: PolicyEvaluator | None = None,
     ) -> None:
         self._provider = provider
         self._safety_checker = safety_checker
         self._audit = audit
+        self._policy_evaluator = policy_evaluator or PolicyEvaluator(enabled=False)
 
     def _provider_instance(self) -> QueryServiceProvider:
         if hasattr(self._provider, "resolve"):
@@ -74,6 +84,13 @@ class GovernedQueryGateway:
             request.principal, request.database_id
         )
         cleaned_sql = self._safety_checker.clean_and_validate_sql(request.sql)
+        decision = self.evaluate(request, cleaned_sql)
+        if not decision.allowed:
+            self._audit("policy_denied", user=request.principal.email, org_id=request.principal.org_id,
+                        database_id=binding.database_id, reason=decision.reason,
+                        policy_ids=list(decision.policy_ids))
+            raise PermissionError(decision.reason)
+        cleaned_sql = apply_row_restrictions(cleaned_sql, decision.row_restrictions, request.principal)
         started_at = time.perf_counter()
         self._audit(
             "sql_query",
@@ -90,4 +107,17 @@ class GovernedQueryGateway:
             row_count=len(result),
             duration_seconds=time.perf_counter() - started_at,
         )
-        return result
+        return mask_rows(result, decision.masked_columns)
+
+    def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
+        statement = sql or request.sql
+        return self._policy_evaluator.evaluate(
+            request.principal,
+            request.database_id,
+            tables_touched(statement),
+            referenced_columns=referenced_columns(statement),
+        )
+
+    def simulate(self, request: GovernedQueryRequest) -> PolicyDecision:
+        """Evaluate policy without resolving a database or reading protected data."""
+        return self.evaluate(request)

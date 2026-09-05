@@ -13,6 +13,7 @@ from services.tenant_database_resolver import (
     TenantDatabaseResolver,
     TenantDatabaseResolutionError,
 )
+from services.policy_engine import PolicyEvaluator
 
 _tenant_database_resolver = TenantDatabaseResolver.from_environment()
 _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
@@ -24,6 +25,7 @@ _query_gateway = GovernedQueryGateway(
     lambda: _tenant_service_provider,
     _sql_safety_checker,
     audit=lambda event_type, **payload: log_audit_event(event_type, **payload),
+    policy_evaluator=PolicyEvaluator.from_environment(),
 )
 
 
@@ -82,6 +84,15 @@ class QueryCostEstimate:
     score: int
     level: str
     reason: str
+
+
+@strawberry.type
+class PolicySimulation:
+    allowed: bool
+    reason: str
+    policy_ids: List[str]
+    row_restrictions: JSON
+    masked_columns: List[str]
 
 
 # GraphQL Query type
@@ -156,6 +167,33 @@ class Query:
             logger.exception("Error executing SQL")
             # Don't expose internal error details to client
             raise Exception("Failed to execute SQL statement. Please verify your query syntax.")
+
+    @strawberry.field(description="Explain policy enforcement without executing SQL")
+    def simulate_policy(
+        self,
+        info: strawberry.Info,
+        request: SqlStatementRequest,
+    ) -> PolicySimulation:
+        principal, binding, _ = Query._request_context(info, request.database_id)
+        if principal.role != "admin":
+            raise PermissionError("Policy simulation requires an administrator role.")
+        sql = request.sql_statement.strip()
+        if not sql:
+            raise ValueError("SQL statement cannot be empty.")
+        try:
+            cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
+            decision = _query_gateway.simulate(
+                GovernedQueryRequest(principal=principal, database_id=binding.database_id, sql=cleaned_sql)
+            )
+        except ValueError:
+            raise
+        return PolicySimulation(
+            allowed=decision.allowed,
+            reason=decision.reason,
+            policy_ids=list(decision.policy_ids),
+            row_restrictions=decision.row_restrictions,
+            masked_columns=sorted(decision.masked_columns),
+        )
 
     @strawberry.field(description="Get table schema information using vector embeddings")
     async def get_table_schema(
