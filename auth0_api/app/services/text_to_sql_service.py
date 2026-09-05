@@ -28,7 +28,11 @@ class TextToSqlService:
         self.sql_query_api_url = settings.SQL_QUERY_API_URL
 
     async def generate_sql_from_text(
-        self, query: str, execute: bool = False, access_token: Optional[str] = None
+        self,
+        query: str,
+        execute: bool = False,
+        access_token: Optional[str] = None,
+        database_id: str = "default",
     ) -> Dict[str, Any]:
         """
         Generate SQL from natural language query and optionally execute it.
@@ -51,7 +55,7 @@ class TextToSqlService:
 
             # Step 2: Get relevant schema using embeddings
             logger.info("Retrieving relevant schema information")
-            schema = await self._get_relevant_schema(embeddings, access_token)
+            schema = await self._get_relevant_schema(embeddings, access_token, database_id)
 
             # Step 3: Generate SQL using LLM
             logger.info("Generating SQL from natural language query")
@@ -65,7 +69,7 @@ class TextToSqlService:
             # Step 4: Optionally execute the SQL
             if execute:
                 logger.info("Executing generated SQL query")
-                execution_result = await self._execute_sql(sql, access_token)
+                execution_result = await self._execute_sql(sql, access_token, database_id)
                 result["results"] = execution_result
 
             return result
@@ -82,7 +86,10 @@ class TextToSqlService:
             return {"error": f"Unexpected error: {str(e)}", "sql": None}
 
     async def _get_relevant_schema(
-        self, embeddings: List[float], access_token: Optional[str] = None
+        self,
+        embeddings: List[float],
+        access_token: Optional[str] = None,
+        database_id: str = "default",
     ) -> str:
         """
         Retrieve relevant schema information using vector embeddings.
@@ -94,14 +101,14 @@ class TextToSqlService:
             Formatted schema string
         """
         graphql_query = """
-        query GetTableSchema($embeddings: [Float!]!) {
-            getTableSchema(embeddings: $embeddings) {
+        query GetTableSchema($embeddings: [Float!]!, $databaseId: String!) {
+            getTableSchema(embeddings: $embeddings, databaseId: $databaseId) {
                 schema
             }
         }
         """
 
-        variables = {"embeddings": embeddings}
+        variables = {"embeddings": embeddings, "databaseId": database_id}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -168,7 +175,10 @@ class TextToSqlService:
             raise AIServiceError(f"Failed to generate SQL: {str(e)}")
 
     async def _execute_sql(
-        self, sql: str, access_token: Optional[str] = None
+        self,
+        sql: str,
+        access_token: Optional[str] = None,
+        database_id: str = "default",
     ) -> List[Dict[str, Any]]:
         """
         Execute SQL query via SQL Query API.
@@ -180,12 +190,12 @@ class TextToSqlService:
             List of result dictionaries
         """
         graphql_query = """
-        query ExecuteSql($sql: String!) {
-            executeSqlStatement(request: { sqlStatement: $sql })
+        query ExecuteSql($sql: String!, $databaseId: String!) {
+            executeSqlStatement(request: { sqlStatement: $sql, databaseId: $databaseId })
         }
         """
 
-        variables = {"sql": sql}
+        variables = {"sql": sql, "databaseId": database_id}
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

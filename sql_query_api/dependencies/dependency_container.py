@@ -69,7 +69,14 @@ logger.add(
 # -----------------------------------------------------------------------------
 # Container Setup
 # -----------------------------------------------------------------------------
-def setup_container(connection_string: str) -> Container:
+def setup_container(
+    connection_string: str,
+    *,
+    data_schema: str | None = None,
+    metadata_schema: str | None = None,
+    tenant_org_id: str | None = None,
+    tenant_database_id: str | None = None,
+) -> Container:
     """
     Set up the dependency injection container for the SQL Query system.
 
@@ -117,6 +124,10 @@ def setup_container(connection_string: str) -> Container:
             query_timeout_seconds=query_timeout_seconds,
             sensitive_columns=_parse_sensitive_columns(os.getenv("SQL_SENSITIVE_COLUMNS", "")),
             row_filter=_parse_row_filter(os.getenv("SQL_ROW_FILTER", "")),
+            data_schema=data_schema or os.getenv("SQL_DATA_SCHEMA", "public"),
+            metadata_schema=metadata_schema or os.getenv("SQL_METADATA_SCHEMA", "meta"),
+            tenant_org_id=tenant_org_id,
+            tenant_database_id=tenant_database_id,
         )
         container.register(ISqlQueryRepository, instance=repo)
         logger.success("Registered ISqlQueryRepository -> SqlQueryRepository")

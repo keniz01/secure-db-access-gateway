@@ -52,7 +52,7 @@ export const Dashboard = () => {
     error: schemaError,
   } = useQuery({
     queryKey: ['schema-browser'],
-    queryFn: graphqlApi.fetchSchema,
+    queryFn: () => graphqlApi.fetchSchema(),
     retry: 1,
     staleTime: 1000 * 60 * 5,
   });

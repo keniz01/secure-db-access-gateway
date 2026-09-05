@@ -44,7 +44,7 @@ class Settings:
     AUTH0_CLIENT_SECRET: str = os.getenv("AUTH0_CLIENT_SECRET") or read_secret_from_file(os.getenv("AUTH0_CLIENT_SECRET_FILE", ""))
     AUTH0_AUDIENCE: str = os.getenv("AUTH0_AUDIENCE") or read_secret_from_file(os.getenv("AUTH0_AUDIENCE_FILE", ""))
     AUTH0_SCOPE: str = "openid profile email organizations"
-    AUTH0_ORG_ID_CLAIM: str = os.getenv("AUTH0_ORG_ID_CLAIM", "org_id")
+    AUTH0_ORG_ID_CLAIM: str = "https://app.secure-db-access-gateway.org/tenant_id"
 
     # Frontend Configuration
     FRONTEND_URL: str = os.getenv("FRONTEND_URL") or read_secret_from_file(os.getenv("FRONTEND_URL_FILE", ""))

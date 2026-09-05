@@ -67,10 +67,11 @@ services:
   sql_query_api:
     build: ./sql_query_api
     secrets:
-      - database_url
       - auth0_domain
+      - tenant_databases
     environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
+      TENANT_DATABASES_FILE: /run/secrets/tenant_databases
+      ENVIRONMENT: production
       AUTH0_DOMAIN_FILE: /run/secrets/auth0_domain
       AUTH0_AUDIENCE: ${AUTH0_AUDIENCE:-https://secure-db-access-gateway-api}
       SQL_DATA_SCHEMA: ${SQL_DATA_SCHEMA:-music}
@@ -128,3 +129,5 @@ secrets:
     file: ./secrets/react_app_url.txt
   database_url:
     file: ./secrets/database_url.txt
+  tenant_databases:
+    file: ./secrets/tenant_databases.json

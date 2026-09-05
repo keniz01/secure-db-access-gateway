@@ -145,7 +145,7 @@ async def auth_callback(request: Request):
             ).model_dump()
         )
 
-    user_info = token.get('userinfo')
+    user_info = token.get('userinfo') or token.get('id_token_claims')
 
     if not user_info:
         logger.error("No userinfo in token response")
@@ -159,16 +159,20 @@ async def auth_callback(request: Request):
         )
 
     user_id = user_info.get('sub')
-    org_id = (
-        user_info.get(settings.AUTH0_ORG_ID_CLAIM)
-        or user_info.get("org_id")
-        or user_info.get("organization")
-        or user_info.get("https://example.com/org_id")
-        or user_info.get("https://app.read-only-database-explorer.org/org_id")
-        # Until Auth0 Organizations/actions are configured, isolate each user
-        # in a tenant derived from the validated subject claim.
-        or user_id
-    )
+    org_id = user_info.get(settings.AUTH0_ORG_ID_CLAIM)
+    if not org_id and token.get("userinfo") is not None:
+        id_token_claims = token.get("id_token_claims") or {}
+        org_id = id_token_claims.get(settings.AUTH0_ORG_ID_CLAIM)
+    if not isinstance(org_id, str) or not org_id.strip():
+        logger.warning("Authenticated token is missing the required tenant claim")
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=ErrorResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="A trusted tenant claim is required",
+                error="missing_tenant_claim",
+            ).model_dump(),
+        )
 
     user = {
         "id": user_id,

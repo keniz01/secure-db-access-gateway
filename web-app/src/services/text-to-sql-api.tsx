@@ -1,9 +1,10 @@
-import { API_BASE_URL } from '../configs/url-config';
+import { API_BASE_URL, DEFAULT_DATABASE_ID } from '../configs/url-config';
 import apiClient from './api-client';
 
 interface TextToSqlRequest {
   query: string;
   execute?: boolean;
+  database_id: string;
 }
 
 interface TextToSqlResponse {
@@ -14,11 +15,15 @@ interface TextToSqlResponse {
 }
 
 export const textToSqlApi = {
-  generateSql: async (query: string, execute: boolean = false): Promise<TextToSqlResponse> => {
+  generateSql: async (
+    query: string,
+    execute: boolean = false,
+    databaseId: string = DEFAULT_DATABASE_ID
+  ): Promise<TextToSqlResponse> => {
     try {
       const { data } = await apiClient.post<TextToSqlResponse>(
         `${API_BASE_URL}/api/text-to-sql`,
-        { query, execute } as TextToSqlRequest
+        { query, execute, database_id: databaseId } as TextToSqlRequest
       );
       return data;
     } catch (error) {
@@ -28,4 +33,3 @@ export const textToSqlApi = {
     }
   },
 };
-

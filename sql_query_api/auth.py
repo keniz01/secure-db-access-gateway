@@ -22,6 +22,7 @@ AUTH0_AUDIENCE = (
     or read_secret_from_file(os.getenv("AUTH0_AUDIENCE_FILE", ""))
 )
 AUTH0_ISSUER = os.getenv("AUTH0_ISSUER") or (f"https://{AUTH0_DOMAIN}/" if AUTH0_DOMAIN else "")
+TENANT_ID_CLAIM = "https://app.secure-db-access-gateway.org/tenant_id"
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,14 +66,7 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> Principal | No
     # Auth0 access tokens for a custom API may omit profile claims. The
     # validated subject remains a stable, non-spoofable audit identity.
     email = claims.get("email") or claims.get("preferred_username") or user_id
-    org_id = (
-        claims.get("org_id")
-        or claims.get("organization")
-        or claims.get("https://app.read-only-database-explorer.org/org_id")
-        or claims.get("https://example.com/org_id")
-        # Keep users isolated while Auth0 Organizations/actions are not configured.
-        or user_id
-    )
+    org_id = claims.get(TENANT_ID_CLAIM)
 
     if not all(isinstance(value, str) and value.strip() for value in (user_id, email, org_id)):
         return None

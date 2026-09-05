@@ -11,6 +11,7 @@ from routes import sql_query_controller
 from repositories.sql_query_repository import SqlQueryRepository
 from services.sql_query_service import SqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from services.tenant_database_resolver import TenantDatabaseConfig
 
 
 @pytest.fixture(scope="module")
@@ -41,7 +42,13 @@ def override_sql_service(test_engine: AsyncEngine, monkeypatch: pytest.MonkeyPat
     safety_checker = DefaultSqlSafetyChecker()
     test_repo = SqlQueryRepository(engine=test_engine, sql_safety_checker=safety_checker)
     test_service = SqlQueryService(repository=test_repo)
-    monkeypatch.setattr(sql_query_controller, "_sql_query_service", test_service)
+    class TestProvider:
+        def resolve(self, principal, database_id):
+            return (
+                TenantDatabaseConfig(principal.org_id, database_id, "sqlite+aiosqlite:///:memory:"),
+                test_service,
+            )
+    monkeypatch.setattr(sql_query_controller, "_tenant_service_provider", TestProvider())
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +60,7 @@ def mock_valid_auth(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             "sub": "auth0|user-123",
             "email": "alice@example.com",
-            "org_id": "org-42",
+            "https://app.secure-db-access-gateway.org/tenant_id": "org-42",
             "roles": ["admin"],
         }
 
@@ -79,7 +86,7 @@ class TestGraphQLHealthCheck:
         assert response.status_code == 401
         assert response.json()["detail"] == "Authentication required."
 
-    def test_graphql_uses_subject_when_token_has_no_organisation_claim(
+    def test_graphql_rejects_token_without_tenant_claim(
         self, client: TestClient, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setattr(
@@ -89,8 +96,8 @@ class TestGraphQLHealthCheck:
 
         response = client.post("/graphql", json={"query": "query { ping }"}, headers=auth_headers())
 
-        assert response.status_code == 200
-        assert response.json()["data"]["ping"] == "GraphQL SQL Query API is running!"
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Authentication required."
 
     def test_graphql_ping(self, client: TestClient) -> None:
         payload = {"query": "query { ping }"}
