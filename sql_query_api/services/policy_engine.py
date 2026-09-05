@@ -9,6 +9,143 @@ from typing import Any
 
 from auth import Principal
 
+_SQL_KEYWORDS = {
+    "select",
+    "from",
+    "where",
+    "group",
+    "having",
+    "order",
+    "by",
+    "limit",
+    "offset",
+    "join",
+    "left",
+    "right",
+    "inner",
+    "outer",
+    "cross",
+    "on",
+    "as",
+    "asc",
+    "desc",
+    "and",
+    "or",
+    "not",
+    "null",
+    "true",
+    "false",
+    "case",
+    "when",
+    "then",
+    "else",
+    "end",
+    "distinct",
+    "count",
+    "sum",
+    "avg",
+    "min",
+    "max",
+    "concat",
+    "coalesce",
+    "cast",
+    "lower",
+    "upper",
+    "trim",
+    "substring",
+    "date",
+    "time",
+    "timestamp",
+    "round",
+    "abs",
+    "length",
+}
+
+
+def _normalize_identifier(value: str | None) -> str:
+    if value is None:
+        return ""
+    cleaned = str(value).strip().lower()
+    cleaned = cleaned.strip("`\"[]")
+    if "." in cleaned:
+        cleaned = cleaned.rsplit(".", 1)[-1]
+    return cleaned
+
+
+def _split_sql_list(value: str) -> list[str]:
+    items: list[str] = []
+    buffer: list[str] = []
+    depth = 0
+    quote: str | None = None
+    for char in value:
+        if quote:
+            buffer.append(char)
+            if char == quote:
+                quote = None
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            buffer.append(char)
+            continue
+        if char in "([":
+            depth += 1
+            buffer.append(char)
+            continue
+        if char in ")]":
+            if depth > 0:
+                depth -= 1
+            buffer.append(char)
+            continue
+        if char == "," and depth == 0:
+            item = "".join(buffer).strip()
+            if item:
+                items.append(item)
+            buffer = []
+            continue
+        buffer.append(char)
+    item = "".join(buffer).strip()
+    if item:
+        items.append(item)
+    return items
+
+
+def _column_candidates_from_expression(expression: str) -> set[str]:
+    cleaned = expression.strip()
+    if not cleaned:
+        return set()
+    candidates = set()
+    identifier_pattern = re.compile(r"[A-Za-z_][\w$]*")
+    for match in identifier_pattern.finditer(cleaned):
+        identifier = match.group(0).lower()
+        if identifier in _SQL_KEYWORDS:
+            continue
+        candidates.add(identifier)
+    if not candidates:
+        candidates.add(_normalize_identifier(cleaned))
+    return candidates
+
+
+def _select_alias_map(sql: str) -> dict[str, set[str]]:
+    match = re.search(r"\bselect\s+(.*?)\s+\bfrom\b", sql, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return {}
+
+    select_clause = match.group(1)
+    alias_map: dict[str, set[str]] = {}
+    for item in _split_sql_list(select_clause):
+        lower_item = item.lower()
+        alias_match = re.search(r"\bAS\s+([A-Za-z_][\w$]*)\s*$", item, re.IGNORECASE)
+        alias = alias_match.group(1).lower() if alias_match else None
+        expression = item if alias is None else item[: alias_match.start()].rstrip()
+        source_ids = _column_candidates_from_expression(expression)
+        if alias:
+            alias_map[_normalize_identifier(alias)] = source_ids
+        else:
+            last_column = _normalize_identifier(expression.rsplit(".", 1)[-1])
+            if last_column:
+                alias_map[last_column] = source_ids
+    return alias_map
+
 
 @dataclass(frozen=True, slots=True)
 class Policy:
@@ -165,18 +302,25 @@ def tables_touched(sql: str) -> list[str]:
 def referenced_columns(sql: str) -> set[str]:
     columns = {match.lower() for match in _COLUMN_PATTERN.findall(sql)}
     select_match = re.search(r"\bselect\s+(.*?)\s+\bfrom\b", sql, re.IGNORECASE | re.DOTALL)
-    if select_match:
-        select_clause = select_match.group(1)
-        if "*" in select_clause:
-            return {"*"}
-        sql_words = {
-            "as", "asc", "desc", "and", "or", "not", "null", "true", "false",
-            "case", "when", "then", "else", "end", "distinct",
-        }
-        for identifier in re.findall(r"\b[a-zA-Z_][\w]*\b", select_clause):
+    if not select_match:
+        return columns
+
+    select_clause = select_match.group(1)
+    if "*" in select_clause:
+        return {"*"}
+
+    for item in _split_sql_list(select_clause):
+        expression = item
+        alias_match = re.search(r"\bAS\s+([A-Za-z_][\w$]*)\s*$", item, re.IGNORECASE)
+        if alias_match:
+            expression = item[: alias_match.start()].rstrip()
+        for identifier in re.findall(r"\b[a-zA-Z_][\w]*\b", expression):
             lowered = identifier.lower()
-            if lowered not in sql_words and not re.search(rf"\b{re.escape(identifier)}\s*\(", select_clause):
-                columns.add(lowered.split(".")[-1])
+            if lowered in _SQL_KEYWORDS:
+                continue
+            if re.search(rf"\b{re.escape(identifier)}\s*\(", expression):
+                continue
+            columns.add(lowered.split(".")[-1])
     return columns
 
 
@@ -184,7 +328,20 @@ def apply_row_restrictions(sql: str, restrictions: dict[str, str], principal: Pr
     """Add immutable predicates to a SELECT without trusting user SQL."""
     if not restrictions:
         return sql
-    predicates = []
+
+    table_aliases = []
+    for match in re.finditer(
+        r"\b(?:from|join)\s+(?:only\s+)?(?P<table>(?:[A-Za-z_][\w]*\.)?[A-Za-z_][\w]*)(?:\s+(?:as\s+)?(?P<alias>[A-Za-z_][\w]*))?",
+        sql,
+        re.IGNORECASE,
+    ):
+        alias = match.group("alias")
+        table_name = match.group("table")
+        identifier = alias or table_name.rsplit(".", 1)[-1]
+        if identifier:
+            table_aliases.append(identifier.lower())
+
+    predicates: list[str] = []
     for column, subject_attribute in restrictions.items():
         if subject_attribute not in principal.attributes:
             raise PermissionError(f"Required subject attribute '{subject_attribute}' is absent.")
@@ -192,7 +349,11 @@ def apply_row_restrictions(sql: str, restrictions: dict[str, str], principal: Pr
         if value is None:
             raise PermissionError(f"Required subject attribute '{subject_attribute}' is absent.")
         escaped = str(value).replace("'", "''")
-        predicates.append(f"{column} = '{escaped}'")
+        targets = [column]
+        if table_aliases:
+            targets = [f"{alias}.{column}" for alias in table_aliases]
+        predicates.extend(f"{target} = '{escaped}'" for target in targets)
+
     suffix = " AND ".join(predicates)
     match = re.search(r"\b(order\s+by|group\s+by|having|limit)\b", sql, re.IGNORECASE)
     if match:
@@ -203,10 +364,22 @@ def apply_row_restrictions(sql: str, restrictions: dict[str, str], principal: Pr
     return f"{head.rstrip()}{conjunction}{suffix} {tail}".strip()
 
 
-def mask_rows(rows: list[dict[str, Any]], columns: frozenset[str]) -> list[dict[str, Any]]:
+def mask_rows(rows: list[dict[str, Any]], columns: frozenset[str], sql: str | None = None) -> list[dict[str, Any]]:
     if not columns:
         return rows
+
+    alias_map = _select_alias_map(sql) if sql else {}
+    normalized_columns = {str(column).lower() for column in columns}
+
+    def should_mask(key: str) -> bool:
+        normalized = _normalize_identifier(key)
+        if not normalized:
+            return False
+        if normalized in normalized_columns:
+            return True
+        return any(source in normalized_columns for source in alias_map.get(normalized, set()))
+
     return [
-        {key: (None if key.lower().split(".")[-1] in columns else value) for key, value in row.items()}
+        {key: (None if should_mask(str(key)) else value) for key, value in row.items()}
         for row in rows
     ]

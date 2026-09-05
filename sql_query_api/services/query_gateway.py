@@ -107,7 +107,7 @@ class GovernedQueryGateway:
             row_count=len(result),
             duration_seconds=time.perf_counter() - started_at,
         )
-        return mask_rows(result, decision.masked_columns)
+        return mask_rows(result, decision.masked_columns, cleaned_sql)
 
     def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
         statement = sql or request.sql

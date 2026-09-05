@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from auth import Principal
 from exceptions.sql_statement_execution_exception import SqlStatementExecutionException
 from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from services.policy_engine import apply_row_restrictions, mask_rows
 
 
 @pytest.fixture
@@ -188,6 +190,25 @@ class TestSqlSafetyCheckerCleanAndValidate:
         rows = await repo.execute_sql_statement("SELECT tenant_id, name FROM users")
         assert len(rows) == 1
         assert rows[0]["tenant_id"] == 1
+
+    def test_policy_row_restrictions_qualify_join_tables(self) -> None:
+        principal = Principal(
+            user_id="u1",
+            email="u1@example.com",
+            org_id="org-1",
+            roles=frozenset({"viewer"}),
+            attributes={"region": "EU"},
+        )
+        sql = "SELECT o.region, c.name FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.country = 'FR'"
+        restricted = apply_row_restrictions(sql, {"region": "region"}, principal)
+        assert "o.region = 'EU'" in restricted
+        assert "c.region = 'EU'" in restricted
+
+    def test_mask_rows_masks_derived_aliases(self) -> None:
+        rows = [{"customer_email": "alice@example.com", "name": "Alice"}]
+        masked = mask_rows(rows, frozenset({"email"}), "SELECT CONCAT(email, '@example.com') AS customer_email, name FROM users")
+        assert masked[0]["customer_email"] is None
+        assert masked[0]["name"] == "Alice"
 
 
 class TestSqlQueryTimeout:
