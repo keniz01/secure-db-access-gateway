@@ -96,6 +96,25 @@ def test_production_configuration_never_uses_legacy_database_url(monkeypatch: py
         TenantDatabaseResolver.from_environment()
 
 
+def test_replica_configuration_is_resolved_and_audited() -> None:
+    config = TenantDatabaseConfig(
+        org_id="org-a",
+        database_id="db-a",
+        connection_string="sqlite+aiosqlite:///primary.db",
+        replica_connection_string="sqlite+aiosqlite:///replica.db",
+    )
+    assert config.effective_connection_string == "sqlite+aiosqlite:///replica.db"
+    assert config.effective_target == "replica"
+
+    config_with_primary = TenantDatabaseConfig(
+        org_id="org-a",
+        database_id="db-a",
+        connection_string="sqlite+aiosqlite:///primary.db",
+        use_read_replica=False,
+    )
+    assert config_with_primary.effective_target == "primary"
+
+
 @pytest.fixture
 def tenant_client(
     tenant_databases: dict[str, str],

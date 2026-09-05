@@ -128,7 +128,7 @@ def create_app() -> FastAPI:
     """
     # Create FastAPI app
     app = FastAPI(
-        title="Postgres SQL API",
+        title="Secure Database Query API",
         version="1.0.0",
         lifespan=lifespan
     )
