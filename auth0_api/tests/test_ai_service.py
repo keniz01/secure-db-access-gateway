@@ -29,6 +29,18 @@ async def test_get_greeting_empty_response(ai_service):
     with pytest.raises(AIServiceError, match="Empty response from AI model"):
         await ai_service.get_greeting("system", "user")
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("choices", [None, []])
+async def test_get_greeting_missing_choices(ai_service, choices):
+    """Test malformed provider responses are reported as empty responses."""
+    mock_response = MagicMock()
+    mock_response.choices = choices
+    ai_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    with pytest.raises(AIServiceError, match="Empty response from AI model"):
+        await ai_service.get_greeting("system", "user")
+
 @pytest.mark.asyncio
 async def test_generate_embeddings_success(ai_service):
     """Test successful embedding generation."""
