@@ -15,6 +15,7 @@ The project is structured as a three-part system:
 - Auth0 JWT validation with `viewer` / `admin` role checks
 - Tenant-aware principal mapping using a required trusted tenant claim and enforcement at the middleware layer
 - Server-side tenant database resolution using opaque logical `database_id` values
+- Web, API, AI, and CLI execution through the shared governed query gateway
 - Schema browser and admin-safe UI for browsing connected database metadata
 - Docker Compose setup for the web app, APIs, Nginx gateway, and OTEL/LGTM observability stack
 - CI pipeline for backend and frontend validation
@@ -36,6 +37,7 @@ The project is structured as a three-part system:
 - SQLite/PostgreSQL-compatible schema introspection
 - Read-only validation enforced before execution
 - Middleware-based Auth0 and RBAC enforcement
+- One execution pipeline for tenant resolution, SQL classification, limits, read-only execution, masking, and audit
 
 ### Auth0 API
 - FastAPI service for auth flows and session management

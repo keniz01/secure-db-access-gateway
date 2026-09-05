@@ -54,8 +54,8 @@ class TestSqlSafetyCheckerRejectedDDLAndDML:
         assert checker.is_safe_select_query(query) is False
 
 
-class TestSqlSafetyCheckerRejectedSubqueriesAndCTEs:
-    """Test suite for rejecting nested subqueries and Common Table Expressions (CTEs)."""
+class TestSqlSafetyCheckerAllowsAnalyticalSubqueriesAndCTEs:
+    """Analytical read queries may use subqueries and CTEs when they remain read-only."""
 
     @pytest.mark.parametrize(
         "query",
@@ -64,14 +64,17 @@ class TestSqlSafetyCheckerRejectedSubqueriesAndCTEs:
             "SELECT * FROM (SELECT * FROM artist) AS sub",
             "WITH cte AS (SELECT * FROM artist) SELECT * FROM cte",
             "SELECT (SELECT name FROM artist LIMIT 1) FROM album",
+            "SELECT * FROM artist UNION SELECT * FROM artist",
+            "SELECT * FROM artist INTERSECT SELECT * FROM artist",
+            "SELECT * FROM artist EXCEPT SELECT * FROM artist",
         ],
     )
-    def test_rejected_subqueries_and_ctes(self, checker: DefaultSqlSafetyChecker, query: str) -> None:
-        assert checker.is_safe_select_query(query) is False
+    def test_allowed_analytical_queries(self, checker: DefaultSqlSafetyChecker, query: str) -> None:
+        assert checker.is_safe_select_query(query) is True
 
 
 class TestSqlSafetyCheckerRejectedCommentsAndMultiStatements:
-    """Test suite for rejecting comments, set operations, and multiple statements."""
+    """Comments and multi-statement inputs remain blocked."""
 
     @pytest.mark.parametrize(
         "query",
@@ -80,12 +83,11 @@ class TestSqlSafetyCheckerRejectedCommentsAndMultiStatements:
             "SELECT * FROM artist /* block comment */",
             "SELECT * FROM artist; SELECT * FROM album;",
             "SELECT * FROM artist; DROP TABLE artist;",
-            "SELECT * FROM artist UNION SELECT * FROM artist",
-            "SELECT * FROM artist INTERSECT SELECT * FROM artist",
-            "SELECT * FROM artist EXCEPT SELECT * FROM artist",
+            "WITH cte AS (DELETE FROM artist WHERE id = 1) SELECT * FROM cte",
+            "SELECT * FROM artist WHERE id IN (DELETE FROM artist WHERE id = 1)",
         ],
     )
-    def test_rejected_comments_set_ops_multistatements(
+    def test_rejected_comments_multistatements_and_mutating_subqueries(
         self, checker: DefaultSqlSafetyChecker, query: str
     ) -> None:
         assert checker.is_safe_select_query(query) is False

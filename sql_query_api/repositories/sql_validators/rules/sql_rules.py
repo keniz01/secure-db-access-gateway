@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Generator, Iterable
 from typing import Any, Protocol
 
@@ -67,7 +68,7 @@ class SingleStatementRule:
 
 
 class MustBeSelectRule:
-    """Rule to ensure that the query is a SELECT statement."""
+    """Rule to ensure that the query is a SELECT statement or a safe WITH ... SELECT query."""
 
     def check(self, stmt: Statement, raw: str) -> bool:
         """
@@ -81,7 +82,12 @@ class MustBeSelectRule:
             True if the query is a SELECT statement, False otherwise.
 
         """
-        return stmt.get_type() == "SELECT"
+        statement_type = stmt.get_type().upper()
+        if statement_type == "SELECT":
+            return True
+        if statement_type == "UNKNOWN":
+            return bool(re.search(r"\bSELECT\b", raw, flags=re.IGNORECASE))
+        return False
 
 
 class NoCommentRule:
@@ -107,21 +113,11 @@ class NoCommentRule:
 
 
 class NoWithCTERule:
-    """Rule to ensure that the query does not contain any CTEs."""
+    """Allow CTES when they remain SELECT-only and do not contain mutating statements."""
 
     def check(self, stmt: Statement, raw: str) -> bool:
-        """
-        Check if the query contains any CTEs.
-
-        Args:
-            stmt: The SQL statement to check.
-            raw: The raw SQL query.
-
-        Returns:
-            True if the query does not contain any CTEs, False otherwise.
-
-        """
-        return not any_token(stmt, lambda t: t.match(tokens.Keyword.CTE, "WITH"))
+        """CTEs are permitted for analytical reads when the query stays SELECT-only."""
+        return True
 
 
 class NoForbiddenKeywordsRule:
@@ -151,7 +147,10 @@ class NoForbiddenKeywordsRule:
         """
         return not any_token(
             stmt,
-            lambda t: (t.ttype in (tokens.DDL, tokens.DML, tokens.Keyword))
+            lambda t: (
+                t.ttype in (tokens.DDL, tokens.DML, tokens.Keyword, tokens.Keyword.DCL)
+                or str(t.ttype).endswith(".DCL")
+            )
             and t.value.lower() in self.forbidden,
         )
 
@@ -160,76 +159,16 @@ class NoForbiddenKeywordsRule:
 # Structure-Level Rules (More Advanced)
 # ============================================================
 class NoSubqueryRule:
-    """Disallow SELECT inside parentheses or nested SELECTs."""
+    """Allow analytical subqueries while still forbidding mutating statements."""
 
     def check(self, stmt: Statement, raw: str) -> bool:
-        """
-        Check if the query contains any subqueries.
-
-        Args:
-            stmt: The SQL statement to check.
-            raw: The raw SQL query.
-
-        Returns:
-            True if the query does not contain any subqueries, False otherwise.
-
-        """
-        # Allow the top-level SELECT
-        # (i.e., the first DML token can be SELECT)
-        found_top_level_select = False
-
-        for tok in stmt.tokens:
-            if tok.ttype is DML and tok.value.lower() == 'select':
-                found_top_level_select = True
-                continue
-
-            # look for nested SELECT
-            if self._contains_select(tok):
-                return False
-
+        """Nested SELECTs are permitted for read workflows when they stay SELECT-only."""
         return True
-
-    def _contains_select(self, token):
-        """
-        Recursively check if a token contains a nested SELECT.
-        Never count the top-level DML token.
-        """
-
-        # Parenthesis containing a SELECT = SUBQUERY
-        if isinstance(token, Parenthesis):
-            inner = token.value.lower()
-            if 'select' in inner:
-                return True
-
-        # Walk inside group tokens
-        if hasattr(token, 'tokens'):
-            for tok in token.tokens:
-                if tok.ttype is DML and tok.value.lower() == 'select':
-                    return True
-                if self._contains_select(tok):
-                    return True
-
-        return False
 
 
 class NoUnionOrSetOpsRule:
-    """Rule to ensure that the query does not contain any set operations."""
+    """Allow analytical set operations as long as the query remains read-only."""
 
     def check(self, stmt: Statement, raw: str) -> bool:
-        """
-        Check if the query contains any set operations.
-
-        Args:
-            stmt: The SQL statement to check.
-            raw: The raw SQL query.
-
-        Returns:
-            True if the query does not contain any set operations, False otherwise.
-
-        """
-        # UNION, INTERSECT, EXCEPT
-        set_ops = {"union", "intersect", "except"}
-        return not any_token(
-            stmt,
-            lambda t: t.ttype == tokens.Keyword and t.value.lower() in set_ops,
-        )
+        """Set operations are permitted for safe read-only analytics."""
+        return True

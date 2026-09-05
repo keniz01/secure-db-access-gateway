@@ -33,6 +33,7 @@ class SqlQueryRepository(ISqlQueryRepository):
         metadata_schema: str = "meta",
         tenant_org_id: str | None = None,
         tenant_database_id: str | None = None,
+        database_target: str = "primary",
     ) -> None:
         self._engine: AsyncEngine = engine
         self._sql_safety_checker: SqlSafetyChecker = sql_safety_checker
@@ -42,12 +43,21 @@ class SqlQueryRepository(ISqlQueryRepository):
         self._metadata_schema = metadata_schema
         self._tenant_org_id = tenant_org_id
         self._tenant_database_id = tenant_database_id
+        self._database_target = database_target or "primary"
         configured_timeout = query_timeout_seconds
         if configured_timeout is None:
             configured_timeout = float(os.getenv("SQL_QUERY_TIMEOUT_SECONDS", "30"))
         self._query_timeout_seconds = float(configured_timeout)
         if self._query_timeout_seconds <= 0:
             raise ValueError("SQL_QUERY_TIMEOUT_SECONDS must be greater than zero.")
+        self._query_cost_threshold = float(os.getenv("SQL_QUERY_COST_THRESHOLD", "12"))
+        self._query_cost_action = os.getenv("SQL_QUERY_COST_ACTION", "deny").strip().lower()
+        if self._query_cost_action not in {"allow", "warn", "deny"}:
+            self._query_cost_action = "deny"
+
+    @property
+    def database_target(self) -> str:
+        return self._database_target
 
     def estimate_query_cost(self, sql: str) -> Dict[str, Any]:
         """Estimate a query's relative execution cost from a few static heuristics."""
@@ -103,6 +113,71 @@ class SqlQueryRepository(ISqlQueryRepository):
             "level": level,
             "reason": ", ".join(reasons) if reasons else "basic select",
         }
+
+    def evaluate_query_cost(self, sql: str) -> Dict[str, Any]:
+        """Return the estimated cost and the effective guardrail decision."""
+        estimate = self.estimate_query_cost(sql)
+        score = int(estimate.get("score", 0))
+        threshold = self._query_cost_threshold
+        decision = "allow"
+        if score >= threshold:
+            decision = self._query_cost_action if self._query_cost_action in {"warn", "deny"} else "allow"
+        if decision == "deny" and score >= threshold:
+            return {
+                **estimate,
+                "threshold": threshold,
+                "decision": "deny",
+                "message": "Query exceeds the configured cost threshold and is rejected.",
+            }
+        if decision == "warn" and score >= threshold:
+            return {
+                **estimate,
+                "threshold": threshold,
+                "decision": "warn",
+                "message": "Query exceeds the configured cost threshold and will be allowed with a warning.",
+            }
+        return {
+            **estimate,
+            "threshold": threshold,
+            "decision": "allow",
+            "message": "Query is within the configured cost budget.",
+        }
+
+    async def explain_query_cost(self, sql: str) -> Dict[str, Any]:
+        """Run an EXPLAIN plan when the backend supports it and summarize the plan cost."""
+        normalized_sql = self._ensure_limit(sql).strip()
+        try:
+            async with self.get_conn(self._data_schema) as conn:
+                dialect_name = conn.dialect.name
+                if dialect_name != "postgresql":
+                    return {
+                        "dialect": dialect_name,
+                        "supported": False,
+                        "total_cost": None,
+                        "plan": {},
+                    }
+                result = await conn.execute(text(f"EXPLAIN (FORMAT JSON) {normalized_sql}"))
+                rows = result.fetchall()
+                payload = rows[0][0] if rows and rows[0] and len(rows[0]) else []
+                if not payload:
+                    return {"dialect": dialect_name, "supported": True, "total_cost": None, "plan": {}}
+                plan = payload[0].get("Plan", {}) if isinstance(payload, list) and payload and isinstance(payload[0], dict) else {}
+                total_cost = plan.get("Total Cost")
+                return {
+                    "dialect": dialect_name,
+                    "supported": True,
+                    "total_cost": total_cost,
+                    "plan": plan,
+                }
+        except Exception as exc:  # pragma: no cover - database-specific execution failure
+            logging.warning("EXPLAIN cost estimation failed for query: %s", exc)
+            return {
+                "dialect": "postgresql",
+                "supported": False,
+                "total_cost": None,
+                "plan": {},
+                "error": str(exc),
+            }
 
     @asynccontextmanager
     async def get_conn(self, schema_name: Optional[str] = None) -> AsyncGenerator[AsyncConnection, None]:
@@ -162,8 +237,29 @@ class SqlQueryRepository(ISqlQueryRepository):
                 "Only simple SELECT statements are allowed."
             )
 
-        # Add default LIMIT if not present
+        # Add default LIMIT if not present before scoring the query.
         sql = self._ensure_limit(sql)
+
+        cost_guard = self.evaluate_query_cost(sql)
+        if cost_guard["decision"] == "deny":
+            logging.warning(
+                "Query rejected by cost guardrail for %s target: score=%s threshold=%s sql=%s",
+                self._database_target,
+                cost_guard["score"],
+                cost_guard["threshold"],
+                sql,
+            )
+            raise ForbiddenSqlStatementException(
+                "Query exceeds the configured cost threshold and is rejected."
+            )
+        if cost_guard["decision"] == "warn":
+            logging.warning(
+                "Query cost warning for %s target: score=%s threshold=%s sql=%s",
+                self._database_target,
+                cost_guard["score"],
+                cost_guard["threshold"],
+                sql,
+            )
 
         if not self._data_schema.replace("_", "").isalnum():
             raise ValueError("SQL_DATA_SCHEMA must be a valid PostgreSQL schema identifier.")
