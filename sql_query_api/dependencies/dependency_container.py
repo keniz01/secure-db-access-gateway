@@ -91,6 +91,16 @@ def setup_container(
     container = Container()
 
     try:
+        if connection_string.startswith(("sqlite://", "sqlite+aiosqlite://")):
+            if ":memory:" not in connection_string and "mode=ro" not in connection_string:
+                prefix, path = connection_string.split("://", 1)
+                if not path.startswith("/file:"):
+                    connection_string = f"{prefix}:///file:/{path.lstrip('/')}"
+                connection_string = (
+                    f"{connection_string}&mode=ro&uri=true"
+                    if "?" in connection_string
+                    else f"{connection_string}?mode=ro&uri=true"
+                )
         # Create database engine
         logger.debug("Creating async SQLAlchemy engine...")
         engine_kwargs = {

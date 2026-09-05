@@ -37,3 +37,12 @@ class TenantServiceProvider:
             )
             self._containers[cache_key] = container
         return binding, container.resolve(ISqlQueryService)
+
+    async def close(self) -> None:
+        """Dispose cached engines for short-lived callers such as the CLI."""
+        for container in self._containers.values():
+            service = container.resolve(ISqlQueryService)
+            engine = getattr(service.repository, "_engine", None)
+            if engine is not None:
+                await engine.dispose()
+        self._containers.clear()

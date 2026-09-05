@@ -1,16 +1,14 @@
 import logging as logger
-import re
-import time
 from typing import Any, Callable, List, Dict
 
 import strawberry
 from strawberry.fastapi import GraphQLRouter
 
 from config.app_logger import log_audit_event
-from metrics import observe_query
 from dependencies.tenant_service_provider import TenantServiceProvider
 from services.abstract_sql_query_service import ISqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
 from services.tenant_database_resolver import (
     TenantDatabaseResolver,
     TenantDatabaseResolutionError,
@@ -22,16 +20,11 @@ _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
 # to execute requests.
 _sql_query_service: ISqlQueryService | None = None
 _sql_safety_checker = DefaultSqlSafetyChecker()
-
-
-def _extract_tables_touched(sql: str) -> List[str]:
-    targets = re.findall(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_\.]*)", sql, flags=re.IGNORECASE)
-    unique_tables: List[str] = []
-    for table in targets:
-        table_name = table.split(".")[-1]
-        if table_name and table_name not in unique_tables:
-            unique_tables.append(table_name)
-    return unique_tables
+_query_gateway = GovernedQueryGateway(
+    lambda: _tenant_service_provider,
+    _sql_safety_checker,
+    audit=lambda event_type, **payload: log_audit_event(event_type, **payload),
+)
 
 
 # Strawberry input type for the query
@@ -147,23 +140,14 @@ class Query:
             raise ValueError("SQL statement is too long (max 10000 characters).")
 
         try:
-            # Clean and validate SQL (handles LLM-generated SQL cleaning and safety validation)
-            cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
-            logger.info("Executing SQL query (length=%d)", len(cleaned_sql))
-            started_at = time.perf_counter()
-            log_audit_event(
-                "sql_query",
-                user=principal.email,
-                org_id=principal.org_id,
-                database_id=binding.database_id,
-                database_target=service.repository.database_target,
-                query=cleaned_sql,
-                tables_touched=_extract_tables_touched(cleaned_sql),
+            logger.info("Executing SQL query (length=%d)", len(sql))
+            return await _query_gateway.execute(
+                GovernedQueryRequest(
+                    principal=principal,
+                    database_id=binding.database_id,
+                    sql=sql,
+                )
             )
-            result: List[Dict[str, Any]] = await service.execute_sql_statement(cleaned_sql)
-            elapsed = time.perf_counter() - started_at
-            observe_query(org_id=principal.org_id, row_count=len(result), duration_seconds=elapsed)
-            return result
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message
             logger.warning("SQL validation failed: %s", str(e))
