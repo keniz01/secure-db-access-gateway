@@ -63,6 +63,9 @@ npm run dev  # Runs UI on port 5173
 ## 3. Headless Mode CLI & AI Documentation Utilities
 
 The CLI runner `explore.py` is located at the root of the repository. It auto-detects and re-executes itself in the `.venv` of the SQL Query API to ensure dependencies are resolved.
+It is an intentionally separate local operator utility and does not pass
+through the Auth0-governed GraphQL tenant resolver. It must not be presented
+as a governed multi-tenant access path.
 
 ### Direct Terminal Queries (Headless Mode)
 Output results cleanly to standard output (stdout) as JSON or CSV:

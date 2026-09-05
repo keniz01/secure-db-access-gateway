@@ -48,7 +48,8 @@ async def test_auth_callback_success(client, mocker):
         "userinfo": {
             "sub": "test-sub",
             "email": "test@example.com",
-            "name": "Test User"
+            "name": "Test User",
+            "https://app.secure-db-access-gateway.org/tenant_id": "tenant-test",
         }
     }
     mock_auth0.authorize_access_token = AsyncMock(return_value=token)
@@ -82,6 +83,52 @@ async def test_auth_callback_error(client, mocker):
         data = response.json()
         assert data["detail"] == "access_denied"
         assert data["error_description"] == "User denied"
+
+
+@pytest.mark.asyncio
+async def test_auth_callback_rejects_missing_tenant_claim(client, mocker):
+    mock_oauth = MagicMock()
+    mock_auth0 = MagicMock()
+    mock_oauth.auth0 = mock_auth0
+    mock_auth0.authorize_access_token = AsyncMock(return_value={
+        "access_token": "test-token",
+        "userinfo": {
+            "sub": "test-sub",
+            "email": "test@example.com",
+            "name": "Test User",
+        },
+    })
+
+    with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
+        response = await client.get("/api/auth?code=test-code")
+
+    assert response.status_code == 403
+    assert response.json()["error"] == "missing_tenant_claim"
+
+
+@pytest.mark.asyncio
+async def test_auth_callback_reads_tenant_claim_from_verified_id_token(client, mocker):
+    mock_oauth = MagicMock()
+    mock_auth0 = MagicMock()
+    mock_oauth.auth0 = mock_auth0
+    mock_auth0.authorize_access_token = AsyncMock(return_value={
+        "access_token": "test-token",
+        "userinfo": {
+            "sub": "test-sub",
+            "email": "test@example.com",
+            "name": "Test User",
+        },
+        "id_token_claims": {
+            "https://app.secure-db-access-gateway.org/tenant_id": "tenant-test",
+        },
+    })
+    mock_session = {}
+    mocker.patch("starlette.requests.Request.session", new_callable=mocker.PropertyMock, return_value=mock_session)
+
+    with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
+        response = await client.get("/api/auth?code=test-code")
+
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

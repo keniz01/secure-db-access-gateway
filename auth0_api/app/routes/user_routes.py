@@ -207,6 +207,7 @@ class TextToSqlRequest(BaseModel):
     """Request model for text-to-SQL conversion."""
     query: str
     execute: bool = False
+    database_id: str = "default"
 
 
 @router.post("/text-to-sql")
@@ -256,6 +257,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             query=body.query.strip(),
             execute=body.execute,
             access_token=session.get("access_token") if session else None,
+            database_id=body.database_id,
         )
 
         if "error" in result:

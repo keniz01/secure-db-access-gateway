@@ -94,6 +94,18 @@ cat > secrets/database_url.txt << 'EOF'
 postgresql://music_user:music_pass@postgres:5432/music_db
 EOF
 
+cat > secrets/tenant_databases.json << 'EOF'
+[
+  {
+    "org_id": "replace-with-auth0-org-id",
+    "database_id": "default",
+    "connection_string": "******postgres:5432/music_db",
+    "data_schema": "music",
+    "metadata_schema": "meta"
+  }
+]
+EOF
+
 echo "✅ Secret files created!"
 echo ""
 echo "Next steps:"

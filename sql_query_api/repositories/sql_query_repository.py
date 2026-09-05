@@ -29,11 +29,19 @@ class SqlQueryRepository(ISqlQueryRepository):
         query_timeout_seconds: Optional[float] = None,
         sensitive_columns: Optional[set[str]] = None,
         row_filter: Optional[Callable[[Dict[str, Any]], bool]] = None,
+        data_schema: str = "public",
+        metadata_schema: str = "meta",
+        tenant_org_id: str | None = None,
+        tenant_database_id: str | None = None,
     ) -> None:
         self._engine: AsyncEngine = engine
         self._sql_safety_checker: SqlSafetyChecker = sql_safety_checker
         self._sensitive_columns = {column.lower() for column in (sensitive_columns or set())}
         self._row_filter = row_filter
+        self._data_schema = data_schema
+        self._metadata_schema = metadata_schema
+        self._tenant_org_id = tenant_org_id
+        self._tenant_database_id = tenant_database_id
         configured_timeout = query_timeout_seconds
         if configured_timeout is None:
             configured_timeout = float(os.getenv("SQL_QUERY_TIMEOUT_SECONDS", "30"))
@@ -157,11 +165,10 @@ class SqlQueryRepository(ISqlQueryRepository):
         # Add default LIMIT if not present
         sql = self._ensure_limit(sql)
 
-        data_schema = os.getenv("SQL_DATA_SCHEMA", "music")
-        if not data_schema.replace("_", "").isalnum():
+        if not self._data_schema.replace("_", "").isalnum():
             raise ValueError("SQL_DATA_SCHEMA must be a valid PostgreSQL schema identifier.")
 
-        async with self.get_conn(data_schema) as conn:
+        async with self.get_conn(self._data_schema) as conn:
             try:
                 async def _execute_query() -> List[Dict[str, Any]]:
                     result: AsyncResult = await conn.execute(
@@ -363,7 +370,7 @@ class SqlQueryRepository(ISqlQueryRepository):
         query = self._build_similarity_query()
 
         try:
-            async with self.get_conn("meta") as conn:
+            async with self.get_conn(self._metadata_schema) as conn:
                 embedding_str = f"[{','.join(map(str, query_embeddings))}]"
 
                 result: AsyncResult = await conn.execute(
@@ -411,7 +418,10 @@ class SqlQueryRepository(ISqlQueryRepository):
             schema_lines.extend(self._format_single_schema(raw_json))
             schema_lines.append("")  # spacing
 
-        logging.info("Fetched database schema for meta")
+        logging.info(
+            "Fetched schema embeddings for tenant database %s",
+            self._tenant_database_id or "unscoped",
+        )
         return "\n".join(schema_lines)
 
     def _format_single_schema(self, raw_json: Dict[str, Any]) -> List[str]:

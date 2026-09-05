@@ -1,4 +1,4 @@
-import { SQL_GRAPHQL_BASE_URL } from '../configs/url-config';
+import { DEFAULT_DATABASE_ID, SQL_GRAPHQL_BASE_URL } from '../configs/url-config';
 import apiClient from './api-client';
 
 interface GraphQLRequest {
@@ -41,10 +41,10 @@ interface IntrospectSchemaResponse {
 }
 
 export const graphqlApi = {
-  fetchSchema: async (): Promise<SchemaTable[]> => {
+  fetchSchema: async (databaseId: string = DEFAULT_DATABASE_ID): Promise<SchemaTable[]> => {
     const graphql_query = `
-      query IntrospectSchema {
-        introspectSchema {
+      query IntrospectSchema($databaseId: String!) {
+        introspectSchema(databaseId: $databaseId) {
           tables {
             name
             schemaName
@@ -66,6 +66,7 @@ export const graphqlApi = {
 
     const payload: GraphQLRequest = {
       query: graphql_query,
+      variables: { databaseId },
     };
 
     try {
@@ -93,16 +94,19 @@ export const graphqlApi = {
     }
   },
 
-  executeSqlQuery: async (sqlStatement: string): Promise<GraphQLResponse> => {
+  executeSqlQuery: async (
+    sqlStatement: string,
+    databaseId: string = DEFAULT_DATABASE_ID
+  ): Promise<GraphQLResponse> => {
     const graphql_query = `
-      query GetSqlData($sql: String!) {
-        executeSqlStatement(request: { sqlStatement: $sql })
+      query GetSqlData($sql: String!, $databaseId: String!) {
+        executeSqlStatement(request: { sqlStatement: $sql, databaseId: $databaseId })
       }
     `;
 
     const payload: GraphQLRequest = {
       query: graphql_query,
-      variables: { sql: sqlStatement },
+      variables: { sql: sqlStatement, databaseId },
     };
 
     try {

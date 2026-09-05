@@ -13,7 +13,8 @@ The project is structured as a three-part system:
 - Automatic query limits and audit logging for every SQL execution
 - Dynamic schema introspection for arbitrary database tables and foreign keys
 - Auth0 JWT validation with `viewer` / `admin` role checks
-- Org-aware principal mapping using `org_id` claims and enforcement at the middleware layer
+- Tenant-aware principal mapping using a required trusted tenant claim and enforcement at the middleware layer
+- Server-side tenant database resolution using opaque logical `database_id` values
 - Schema browser and admin-safe UI for browsing connected database metadata
 - Docker Compose setup for the web app, APIs, Nginx gateway, and OTEL/LGTM observability stack
 - CI pipeline for backend and frontend validation
@@ -147,6 +148,11 @@ export DATABASE_URL=postgresql+asyncpg://user:pass@host:5432/appdb
 export AUTH0_AUDIENCE=https://your-api-audience
 export AUTH0_DOMAIN=your-domain.auth0.com
 
+# Production: configure only server-side tenant mappings. The client receives
+# logical IDs, never these connection strings.
+export ENVIRONMENT=production
+export TENANT_DATABASES_FILE=/run/secrets/tenant_databases.json
+
 # Auth0 API
 export AUTH0_CLIENT_ID=...
 export AUTH0_CLIENT_SECRET=...
@@ -173,8 +179,11 @@ This application is designed around a read-only database access model:
 - only SELECT-style queries are accepted by the SQL safety layer
 - DDL/DML and other mutating statements are rejected
 - request identity comes from validated Auth0 JWT claims, not caller-supplied headers
-- org scoping is driven from `org_id` claim values and is enforced in middleware
-- audit logging captures user, org, and table access metadata
+- tenant scoping is driven from the required signed tenant claim
+  `https://app.secure-db-access-gateway.org/tenant_id` and is enforced in middleware
+- every governed operation resolves `(tenant_id, database_id)` against server-side configuration
+- requests without a trusted tenant claim are rejected; the application does not manage users or memberships
+- audit logging captures trusted user, org, database, and table access metadata
 - rate limiting and structured logging are enabled for operational control
 
 For the full policy and threat model, see [SECURITY.md](SECURITY.md).

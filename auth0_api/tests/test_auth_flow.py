@@ -81,6 +81,7 @@ class TestCallbackFlow:
                 "sub": "auth0|123456",
                 "email": "jane.doe@example.com",
                 "name": "Jane Doe",
+                "https://app.secure-db-access-gateway.org/tenant_id": "tenant-test",
             },
         }
         mock_auth0.authorize_access_token = AsyncMock(return_value=token)

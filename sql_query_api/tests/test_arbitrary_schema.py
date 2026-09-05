@@ -16,6 +16,7 @@ from routes import sql_query_controller
 from repositories.sql_query_repository import SqlQueryRepository
 from services.sql_query_service import SqlQueryService
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from services.tenant_database_resolver import TenantDatabaseConfig
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +82,13 @@ def override_service_with_products_db(
     checker = DefaultSqlSafetyChecker()
     repo = SqlQueryRepository(engine=products_engine, sql_safety_checker=checker)
     service = SqlQueryService(repository=repo)
-    monkeypatch.setattr(sql_query_controller, "_sql_query_service", service)
+    class TestProvider:
+        def resolve(self, principal, database_id):
+            return (
+                TenantDatabaseConfig(principal.org_id, database_id, "sqlite+aiosqlite:///:memory:"),
+                service,
+            )
+    monkeypatch.setattr(sql_query_controller, "_tenant_service_provider", TestProvider())
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +100,7 @@ def mock_valid_auth(monkeypatch: pytest.MonkeyPatch) -> None:
         return {
             "sub": "auth0|user-123",
             "email": "alice@example.com",
-            "org_id": "org-42",
+            "https://app.secure-db-access-gateway.org/tenant_id": "org-42",
             "roles": ["admin"],
         }
 
