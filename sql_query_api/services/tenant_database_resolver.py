@@ -30,6 +30,8 @@ class TenantDatabaseConfig:
     connection_string: str = field(repr=False)
     data_schema: str = "public"
     metadata_schema: str = "meta"
+    replica_connection_string: str | None = field(default=None, repr=False)
+    use_read_replica: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -40,11 +42,29 @@ class TenantDatabaseConfig:
             or not self.connection_string.strip()
         ):
             raise ValueError("Tenant database configuration is incomplete.")
+        if self.replica_connection_string is not None and not isinstance(self.replica_connection_string, str):
+            raise ValueError("Replica database configuration must be a valid connection string.")
+        if self.replica_connection_string and not self.use_read_replica:
+            object.__setattr__(self, "use_read_replica", True)
         if not TenantDatabaseResolver.is_valid_database_id(self.database_id):
             raise ValueError("Tenant database identifiers must be opaque logical identifiers.")
         for schema_name in (self.data_schema, self.metadata_schema):
             if not schema_name.replace("_", "").isalnum():
                 raise ValueError("Configured schema names must be valid identifiers.")
+
+    @property
+    def effective_connection_string(self) -> str:
+        """Return the active DB endpoint for read traffic."""
+        if self.use_read_replica and self.replica_connection_string:
+            return self.replica_connection_string
+        return self.connection_string
+
+    @property
+    def effective_target(self) -> str:
+        """Return the DB target used for the request for auditing."""
+        if self.use_read_replica and self.replica_connection_string:
+            return "replica"
+        return "primary"
 
 
 class TenantDatabaseResolver:
@@ -147,6 +167,29 @@ class TenantDatabaseResolver:
                 or entry.get("database_url")
                 or entry.get("url")
             )
+            replica_connection_string = (
+                entry.get("replica_connection_string")
+                or entry.get("read_replica_connection_string")
+                or entry.get("replica_url")
+                or entry.get("read_replica_url")
+            )
+            if isinstance(entry.get("replica"), dict):
+                replica_connection_string = (
+                    replica_connection_string
+                    or entry["replica"].get("connection_string")
+                    or entry["replica"].get("database_url")
+                    or entry["replica"].get("url")
+                )
+            if isinstance(entry.get("read_replica"), dict):
+                replica_connection_string = (
+                    replica_connection_string
+                    or entry["read_replica"].get("connection_string")
+                    or entry["read_replica"].get("database_url")
+                    or entry["read_replica"].get("url")
+                )
+            use_read_replica = entry.get("use_read_replica")
+            if use_read_replica is None and replica_connection_string:
+                use_read_replica = True
             if not all(isinstance(entry.get(key), str) for key in ("org_id", "database_id")):
                 raise ValueError("Tenant database entries require org_id and database_id.")
             if not isinstance(connection_string, str) or not connection_string.strip():
@@ -158,6 +201,8 @@ class TenantDatabaseResolver:
                     connection_string=connection_string.strip(),
                     data_schema=str(entry.get("data_schema", os.getenv("SQL_DATA_SCHEMA", "public"))),
                     metadata_schema=str(entry.get("metadata_schema", os.getenv("SQL_METADATA_SCHEMA", "meta"))),
+                    replica_connection_string=replica_connection_string.strip() if isinstance(replica_connection_string, str) and replica_connection_string.strip() else None,
+                    use_read_replica=bool(use_read_replica),
                 )
             )
         return result

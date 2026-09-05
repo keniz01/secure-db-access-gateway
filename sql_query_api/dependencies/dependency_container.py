@@ -76,6 +76,7 @@ def setup_container(
     metadata_schema: str | None = None,
     tenant_org_id: str | None = None,
     tenant_database_id: str | None = None,
+    database_target: str = "primary",
 ) -> Container:
     """
     Set up the dependency injection container for the SQL Query system.
@@ -128,6 +129,7 @@ def setup_container(
             metadata_schema=metadata_schema or os.getenv("SQL_METADATA_SCHEMA", "meta"),
             tenant_org_id=tenant_org_id,
             tenant_database_id=tenant_database_id,
+            database_target=database_target,
         )
         container.register(ISqlQueryRepository, instance=repo)
         logger.success("Registered ISqlQueryRepository -> SqlQueryRepository")
