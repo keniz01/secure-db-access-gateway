@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from auth import Principal
 from exceptions.sql_statement_execution_exception import SqlStatementExecutionException
 from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from services.policy_engine import apply_row_restrictions, mask_rows
 
 
 @pytest.fixture
@@ -54,8 +56,8 @@ class TestSqlSafetyCheckerRejectedDDLAndDML:
         assert checker.is_safe_select_query(query) is False
 
 
-class TestSqlSafetyCheckerRejectedSubqueriesAndCTEs:
-    """Test suite for rejecting nested subqueries and Common Table Expressions (CTEs)."""
+class TestSqlSafetyCheckerAllowsAnalyticalSubqueriesAndCTEs:
+    """Analytical read queries may use subqueries and CTEs when they remain read-only."""
 
     @pytest.mark.parametrize(
         "query",
@@ -64,14 +66,17 @@ class TestSqlSafetyCheckerRejectedSubqueriesAndCTEs:
             "SELECT * FROM (SELECT * FROM artist) AS sub",
             "WITH cte AS (SELECT * FROM artist) SELECT * FROM cte",
             "SELECT (SELECT name FROM artist LIMIT 1) FROM album",
+            "SELECT * FROM artist UNION SELECT * FROM artist",
+            "SELECT * FROM artist INTERSECT SELECT * FROM artist",
+            "SELECT * FROM artist EXCEPT SELECT * FROM artist",
         ],
     )
-    def test_rejected_subqueries_and_ctes(self, checker: DefaultSqlSafetyChecker, query: str) -> None:
-        assert checker.is_safe_select_query(query) is False
+    def test_allowed_analytical_queries(self, checker: DefaultSqlSafetyChecker, query: str) -> None:
+        assert checker.is_safe_select_query(query) is True
 
 
 class TestSqlSafetyCheckerRejectedCommentsAndMultiStatements:
-    """Test suite for rejecting comments, set operations, and multiple statements."""
+    """Comments and multi-statement inputs remain blocked."""
 
     @pytest.mark.parametrize(
         "query",
@@ -80,12 +85,11 @@ class TestSqlSafetyCheckerRejectedCommentsAndMultiStatements:
             "SELECT * FROM artist /* block comment */",
             "SELECT * FROM artist; SELECT * FROM album;",
             "SELECT * FROM artist; DROP TABLE artist;",
-            "SELECT * FROM artist UNION SELECT * FROM artist",
-            "SELECT * FROM artist INTERSECT SELECT * FROM artist",
-            "SELECT * FROM artist EXCEPT SELECT * FROM artist",
+            "WITH cte AS (DELETE FROM artist WHERE id = 1) SELECT * FROM cte",
+            "SELECT * FROM artist WHERE id IN (DELETE FROM artist WHERE id = 1)",
         ],
     )
-    def test_rejected_comments_set_ops_multistatements(
+    def test_rejected_comments_multistatements_and_mutating_subqueries(
         self, checker: DefaultSqlSafetyChecker, query: str
     ) -> None:
         assert checker.is_safe_select_query(query) is False
@@ -186,6 +190,25 @@ class TestSqlSafetyCheckerCleanAndValidate:
         rows = await repo.execute_sql_statement("SELECT tenant_id, name FROM users")
         assert len(rows) == 1
         assert rows[0]["tenant_id"] == 1
+
+    def test_policy_row_restrictions_qualify_join_tables(self) -> None:
+        principal = Principal(
+            user_id="u1",
+            email="u1@example.com",
+            org_id="org-1",
+            roles=frozenset({"viewer"}),
+            attributes={"region": "EU"},
+        )
+        sql = "SELECT o.region, c.name FROM orders o JOIN customers c ON o.customer_id = c.id WHERE c.country = 'FR'"
+        restricted = apply_row_restrictions(sql, {"region": "region"}, principal)
+        assert "o.region = 'EU'" in restricted
+        assert "c.region = 'EU'" in restricted
+
+    def test_mask_rows_masks_derived_aliases(self) -> None:
+        rows = [{"customer_email": "alice@example.com", "name": "Alice"}]
+        masked = mask_rows(rows, frozenset({"email"}), "SELECT CONCAT(email, '@example.com') AS customer_email, name FROM users")
+        assert masked[0]["customer_email"] is None
+        assert masked[0]["name"] == "Alice"
 
 
 class TestSqlQueryTimeout:

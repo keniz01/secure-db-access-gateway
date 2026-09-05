@@ -51,6 +51,7 @@ The Secure DB Access Gateway is designed with a microservices-inspired architect
 
 #### Core Responsibilities
 - GraphQL query interface (`/graphql`).
+- One governed query gateway shared by GraphQL, AI/text-to-SQL, and the headless CLI.
 - Read-only SQL safety enforcement (`DefaultSqlSafetyChecker` preventing non-SELECT operations).
 - Automatic `LIMIT` clause injection and input validation.
 - Connection management enforcing read-only driver flags (`SET TRANSACTION READ ONLY`).
@@ -92,7 +93,8 @@ Dashboard
     │   │
     │   ├─→ Validate SQL safety (SELECT-only check)
     │   ├─→ Apply automatic LIMIT
-    │   ├─→ Execute on PostgreSQL (READ ONLY mode)
+    │   ├─→ GovernedQueryGateway
+    │   │   └─→ Execute on PostgreSQL (READ ONLY mode)
     │   └─→ Return results as JSON
     │
     └─→ Display results in UI table

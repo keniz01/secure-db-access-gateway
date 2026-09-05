@@ -76,6 +76,7 @@ def setup_container(
     metadata_schema: str | None = None,
     tenant_org_id: str | None = None,
     tenant_database_id: str | None = None,
+    database_target: str = "primary",
 ) -> Container:
     """
     Set up the dependency injection container for the SQL Query system.
@@ -90,6 +91,16 @@ def setup_container(
     container = Container()
 
     try:
+        if connection_string.startswith(("sqlite://", "sqlite+aiosqlite://")):
+            if ":memory:" not in connection_string and "mode=ro" not in connection_string:
+                prefix, path = connection_string.split("://", 1)
+                if not path.startswith("/file:"):
+                    connection_string = f"{prefix}:///file:/{path.lstrip('/')}"
+                connection_string = (
+                    f"{connection_string}&mode=ro&uri=true"
+                    if "?" in connection_string
+                    else f"{connection_string}?mode=ro&uri=true"
+                )
         # Create database engine
         logger.debug("Creating async SQLAlchemy engine...")
         engine_kwargs = {
@@ -128,6 +139,7 @@ def setup_container(
             metadata_schema=metadata_schema or os.getenv("SQL_METADATA_SCHEMA", "meta"),
             tenant_org_id=tenant_org_id,
             tenant_database_id=tenant_database_id,
+            database_target=database_target,
         )
         container.register(ISqlQueryRepository, instance=repo)
         logger.success("Registered ISqlQueryRepository -> SqlQueryRepository")

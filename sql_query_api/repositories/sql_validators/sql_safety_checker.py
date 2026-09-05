@@ -60,7 +60,6 @@ class DefaultSqlSafetyChecker:
             SingleStatementRule(),
             MustBeSelectRule(),
             NoCommentRule(),
-            NoWithCTERule(),
             NoForbiddenKeywordsRule(
                 [
                     "delete",
@@ -71,11 +70,14 @@ class DefaultSqlSafetyChecker:
                     "alter",
                     "commit",
                     "rollback",
+                    "truncate",
+                    "grant",
+                    "revoke",
+                    "merge",
+                    "call",
+                    "execute",
                 ],
             ),
-            # Advanced Structural Guardrails
-            NoSubqueryRule(),
-            NoUnionOrSetOpsRule(),
         ]
 
     def _extract_table_names(self, stmt) -> set[str]:
@@ -185,6 +187,32 @@ class DefaultSqlSafetyChecker:
 
         return True
 
+    def _contains_forbidden_mutation(self, stmt) -> bool:
+        for token in stmt.flatten():
+            if (
+                token.ttype in (sql_tokens.DDL, sql_tokens.DML, sql_tokens.Keyword, sql_tokens.Keyword.DCL)
+                or str(token.ttype).endswith(".DCL")
+            ):
+                value = str(token.value).strip().lower()
+                if value in {
+                    "delete",
+                    "insert",
+                    "update",
+                    "drop",
+                    "create",
+                    "alter",
+                    "commit",
+                    "rollback",
+                    "truncate",
+                    "grant",
+                    "revoke",
+                    "merge",
+                    "call",
+                    "execute",
+                }:
+                    return True
+        return False
+
     def is_safe_select_query(self, query: str) -> bool:
         """
         Check if a given SQL query is a "safe" SELECT statement.
@@ -208,6 +236,9 @@ class DefaultSqlSafetyChecker:
 
         stmt = parsed[0]
         if not all(rule.check(stmt, query) for rule in self.rules):
+            return False
+
+        if self._contains_forbidden_mutation(stmt):
             return False
 
         return self._enforces_allowlist(stmt)

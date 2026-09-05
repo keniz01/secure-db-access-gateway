@@ -23,7 +23,12 @@ if os.path.exists(venv_python) and sys.executable != venv_python:
 # Add sql_query_api to path to allow importing safety checker
 sys.path.append(os.path.join(current_dir, "sql_query_api"))
 try:
+    from auth import build_principal_from_claims, read_secret_from_file, validate_access_token  # noqa: E402
+    from dependencies.tenant_service_provider import TenantServiceProvider  # noqa: E402
     from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker  # noqa: E402
+    from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest  # noqa: E402
+    from services.policy_engine import PolicyEvaluator  # noqa: E402
+    from services.tenant_database_resolver import TenantDatabaseConfig, TenantDatabaseResolver  # noqa: E402
     HAS_SAFETY_CHECKER = True
 except ImportError:
     HAS_SAFETY_CHECKER = False
@@ -85,6 +90,8 @@ def resolve_database_url(db_arg: Optional[str] = None) -> str:
     # Ensure PostgreSQL is using asyncpg driver
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://")
+    elif url.startswith("sqlite://") and not url.startswith("sqlite+aiosqlite://"):
+        url = url.replace("sqlite://", "sqlite+aiosqlite://", 1)
 
     return url
 
@@ -92,72 +99,44 @@ def resolve_database_url(db_arg: Optional[str] = None) -> str:
 async def execute_query(db_url: str, sql: str) -> List[Dict[str, Any]]:
     """
     Executes a SQL SELECT query safely.
-    Enforces read-only database connections and checks using the SQL safety rules.
+    Execute through the same governed gateway used by the API.
     """
-    # 1. Clean and validate query using the SQL safety checker (if available)
-    if HAS_SAFETY_CHECKER:
-        checker = DefaultSqlSafetyChecker()
-        # clean_and_validate_sql will raise ValueError if invalid/unsafe
-        validated_sql = checker.clean_and_validate_sql(sql)
-    else:
-        # Fallback safety check if packages aren't imported
-        validated_sql = sql.strip()
-        sql_upper = validated_sql.upper()
-        if not sql_upper.startswith("SELECT"):
-            raise ValueError("SQL safety check failed: Only SELECT statements are permitted.")
-        for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "COMMIT", "ROLLBACK"]:
-            if f" {keyword} " in f" {sql_upper} " or sql_upper.startswith(keyword):
-                raise ValueError(f"SQL safety check failed: Forbidden keyword '{keyword}' detected.")
+    if not HAS_SAFETY_CHECKER:
+        raise RuntimeError("The governed query gateway dependencies are unavailable.")
 
-    # 2. Add LIMIT if not specified
-    import re
-    if not re.search(r'\bLIMIT\s+\d+\b', validated_sql, re.IGNORECASE):
-        validated_sql = f"{validated_sql.rstrip(';')} LIMIT 100"
+    if db_url.startswith("sqlite://") and not db_url.startswith("sqlite+aiosqlite://"):
+        db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    database_id = os.getenv("CLI_DATABASE_ID", "default")
+    token = os.getenv("CLI_ACCESS_TOKEN", "").strip()
+    if not token:
+        token_file = os.getenv("CLI_ACCESS_TOKEN_FILE", "").strip()
+        if token_file:
+            token = read_secret_from_file(token_file)
+    if not token:
+        raise PermissionError(
+            "A validated access token is required. Set CLI_ACCESS_TOKEN or CLI_ACCESS_TOKEN_FILE."
+        )
 
-    # 3. Execute using either SQLite or PostgreSQL
-    if db_url.startswith("sqlite"):
-        # Parse path
-        db_path = db_url
-        if ":///" in db_path:
-            db_path = db_path.split(":///")[1]
-        elif "://" in db_path:
-            db_path = db_path.split("://")[1]
-
-        # Enforce read-only at the driver/connection level for SQLite
-        # Using mode=ro URI parameter
-        conn_uri = f"file:{db_path}?mode=ro"
-        conn = sqlite3.connect(conn_uri, uri=True)
-        conn.row_factory = sqlite3.Row
-        try:
-            cursor = conn.cursor()
-            cursor.execute(validated_sql)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
-        finally:
-            conn.close()
-    else:
-        # PostgreSQL
-        if not HAS_SQLALCHEMY:
-            raise RuntimeError("SQLAlchemy is required for PostgreSQL connections.")
-        
-        engine = create_async_engine(db_url)
-        try:
-            async with engine.connect() as conn:
-                # Absolute enforcement of read-only database transaction level flags
-                await conn.execute(text("SET TRANSACTION READ ONLY"))
-                # Set search path to include music schema
-                try:
-                    await conn.execute(text("SET search_path TO music, public"))
-                except Exception:
-                    pass  # Ignore if search_path fails (e.g. schema doesn't exist)
-                
-                result = await conn.execute(text(validated_sql))
-                if result.returns_rows:
-                    rows = result.fetchall()
-                    return [dict(row._mapping) for row in rows]
-                return []
-        finally:
-            await engine.dispose()
+    claims = validate_access_token(token)
+    principal = build_principal_from_claims(claims)
+    if principal is None:
+        raise PermissionError("The access token is invalid or missing required tenant claims.")
+    org_id = principal.org_id
+    resolver = TenantDatabaseResolver(
+        [TenantDatabaseConfig(org_id, database_id, db_url)]
+    )
+    provider = TenantServiceProvider(resolver)
+    gateway = GovernedQueryGateway(
+        provider,
+        DefaultSqlSafetyChecker(),
+        policy_evaluator=PolicyEvaluator.from_environment(),
+    )
+    try:
+        return await gateway.execute(
+            GovernedQueryRequest(principal=principal, database_id=database_id, sql=sql)
+        )
+    finally:
+        await provider.close()
 
 
 async def crawl_schema(db_url: str) -> Dict[str, Any]:
@@ -619,11 +598,26 @@ async def main():
     parser.add_argument("--format", choices=["json", "csv"], default="json", help="Output format (json or csv).")
     parser.add_argument("--limit", type=int, default=10, help="Row limit for database query.")
     parser.add_argument("--headless", action="store_true", help="Bypass interactive dashboard entirely (headless mode).")
+    parser.add_argument(
+        "--access-token",
+        help="Validated OIDC/Auth0 access token (prefer CLI_ACCESS_TOKEN_FILE for automation).",
+    )
+    parser.add_argument(
+        "--access-token-file",
+        help="Path to a file containing a validated OIDC/Auth0 access token.",
+    )
     parser.add_argument("--generate-wiki", help="Designated output directory to write schema Markdown documentation.")
     parser.add_argument("--analyze", action="store_true", help="Run Gemini expert diagnostic summary on query result or piped stdin.")
     parser.add_argument("--gemini-api-key", help="Explicit Gemini API key to override configured defaults.")
 
     args = parser.parse_args()
+
+    if args.access_token and args.access_token_file:
+        parser.error("--access-token and --access-token-file are mutually exclusive.")
+    if args.access_token:
+        os.environ["CLI_ACCESS_TOKEN"] = args.access_token
+    if args.access_token_file:
+        os.environ["CLI_ACCESS_TOKEN_FILE"] = args.access_token_file
 
     # Stdin check (to see if data/logs are piped)
     piped_data = ""
@@ -648,8 +642,8 @@ async def main():
         # If no CLI actions specified, prompt user and show simple usage instructions
         print("--- Secure DB Access Gateway CLI ---")
         print("Usage:")
-        print("  Query a table:  python explore.py --db secrets/database_url.txt --table artist --format json --limit 10")
-        print("  Run custom SQL: python explore.py --db secrets/database_url.txt --sql \"SELECT * FROM album\" --format csv")
+        print("  Query a table:  python explore.py --db secrets/database_url.txt --table customers --format json --limit 10")
+        print("  Run custom SQL: python explore.py --db secrets/database_url.txt --sql \"SELECT * FROM orders\" --format csv")
         print("  Generate Wiki:  python explore.py --db secrets/database_url.txt --generate-wiki docs/wiki")
         print("  Analyze Log:    cat my_log.log | python explore.py --analyze")
         sys.exit(0)

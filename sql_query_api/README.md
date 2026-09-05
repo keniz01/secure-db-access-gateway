@@ -35,3 +35,41 @@ Windows
   `https://app.secure-db-access-gateway.org/tenant_id`. The application does
   not create users or manage tenant membership; Auth0 or an upstream identity
   provider must issue this claim.
+
+### Policy enforcement
+
+The governed query gateway can load a central, default-deny policy document
+from `POLICY_POLICIES_JSON`. Each policy may target `org_id`, `principal_id`,
+`roles`, `database_id`, and `table`, and may specify `columns`,
+`masked_columns`, and `row_scope` mappings from database columns to validated
+subject attributes:
+
+```json
+[
+  {
+    "id": "eu-orders",
+    "effect": "allow",
+    "org_id": "auth0-org-id",
+    "roles": ["viewer"],
+    "database_id": "analytics",
+    "table": "orders",
+    "columns": ["id", "region", "total"],
+    "masked_columns": ["total"],
+    "row_scope": {"region": "region"}
+  }
+]
+```
+
+Denials take precedence, missing subject attributes fail closed, and row
+predicates are added by the gateway before execution. `simulatePolicy` is
+available to administrators through GraphQL and returns the decision without
+reading protected data.
+
+### Headless CLI authentication
+
+The headless `explore.py` query path requires a validated OIDC/Auth0 access
+token. Provide a short-lived token through `CLI_ACCESS_TOKEN` or, preferably
+for automation, `CLI_ACCESS_TOKEN_FILE`. The CLI uses the same issuer,
+audience, signature, expiry, tenant claim, role, and subject-attribute
+validation as the API before constructing a principal. It does not accept
+locally configured roles or tenant identity as authorization inputs.
