@@ -23,7 +23,7 @@ if os.path.exists(venv_python) and sys.executable != venv_python:
 # Add sql_query_api to path to allow importing safety checker
 sys.path.append(os.path.join(current_dir, "sql_query_api"))
 try:
-    from auth import Principal  # noqa: E402
+    from auth import build_principal_from_claims, read_secret_from_file, validate_access_token  # noqa: E402
     from dependencies.tenant_service_provider import TenantServiceProvider  # noqa: E402
     from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker  # noqa: E402
     from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest  # noqa: E402
@@ -107,14 +107,21 @@ async def execute_query(db_url: str, sql: str) -> List[Dict[str, Any]]:
     if db_url.startswith("sqlite://") and not db_url.startswith("sqlite+aiosqlite://"):
         db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
     database_id = os.getenv("CLI_DATABASE_ID", "default")
-    org_id = os.getenv("CLI_TENANT_ID", "local-cli")
-    principal = Principal(
-        user_id=os.getenv("CLI_USER_ID", "local-cli"),
-        email=os.getenv("CLI_USER_EMAIL", "cli@localhost"),
-        org_id=org_id,
-        roles=frozenset({"viewer"}),
-        attributes=json.loads(os.getenv("CLI_SUBJECT_ATTRIBUTES_JSON", "{}")),
-    )
+    token = os.getenv("CLI_ACCESS_TOKEN", "").strip()
+    if not token:
+        token_file = os.getenv("CLI_ACCESS_TOKEN_FILE", "").strip()
+        if token_file:
+            token = read_secret_from_file(token_file)
+    if not token:
+        raise PermissionError(
+            "A validated access token is required. Set CLI_ACCESS_TOKEN or CLI_ACCESS_TOKEN_FILE."
+        )
+
+    claims = validate_access_token(token)
+    principal = build_principal_from_claims(claims)
+    if principal is None:
+        raise PermissionError("The access token is invalid or missing required tenant claims.")
+    org_id = principal.org_id
     resolver = TenantDatabaseResolver(
         [TenantDatabaseConfig(org_id, database_id, db_url)]
     )
@@ -591,11 +598,26 @@ async def main():
     parser.add_argument("--format", choices=["json", "csv"], default="json", help="Output format (json or csv).")
     parser.add_argument("--limit", type=int, default=10, help="Row limit for database query.")
     parser.add_argument("--headless", action="store_true", help="Bypass interactive dashboard entirely (headless mode).")
+    parser.add_argument(
+        "--access-token",
+        help="Validated OIDC/Auth0 access token (prefer CLI_ACCESS_TOKEN_FILE for automation).",
+    )
+    parser.add_argument(
+        "--access-token-file",
+        help="Path to a file containing a validated OIDC/Auth0 access token.",
+    )
     parser.add_argument("--generate-wiki", help="Designated output directory to write schema Markdown documentation.")
     parser.add_argument("--analyze", action="store_true", help="Run Gemini expert diagnostic summary on query result or piped stdin.")
     parser.add_argument("--gemini-api-key", help="Explicit Gemini API key to override configured defaults.")
 
     args = parser.parse_args()
+
+    if args.access_token and args.access_token_file:
+        parser.error("--access-token and --access-token-file are mutually exclusive.")
+    if args.access_token:
+        os.environ["CLI_ACCESS_TOKEN"] = args.access_token
+    if args.access_token_file:
+        os.environ["CLI_ACCESS_TOKEN_FILE"] = args.access_token_file
 
     # Stdin check (to see if data/logs are piped)
     piped_data = ""

@@ -70,9 +70,16 @@ as a governed multi-tenant access path.
 ### Direct Terminal Queries (Headless Mode)
 Output results cleanly to standard output (stdout) as JSON or CSV:
 ```bash
-./explore.py --db secrets/database_url.txt --table artist --format json --limit 10
-./explore.py --db secrets/database_url.txt --sql "SELECT title, release_year FROM album" --format csv
+./explore.py --db secrets/database_url.txt --table artist --access-token-file "$CLI_TOKEN_FILE" --format json --limit 10
+./explore.py --db secrets/database_url.txt --sql "SELECT title, release_year FROM album" --access-token-file "$CLI_TOKEN_FILE" --format csv
 ```
+
+The CLI requires a validated OIDC/Auth0 access token for database queries. Set
+`CLI_ACCESS_TOKEN` or `CLI_ACCESS_TOKEN_FILE`; roles, tenant identity, subject
+attributes, issuer, audience, signature, and expiry are derived from the
+validated token. The CLI does not accept locally configured roles or tenant
+identity as authorization inputs. Use a short-lived user token for interactive
+access and a workload/service-account token for automation.
 
 ### Autonomous AI Schema-to-Wiki Generator
 Crawl the active database schema, map relations, and generate a cross-linked Markdown documentation wiki:

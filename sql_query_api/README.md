@@ -64,3 +64,12 @@ Denials take precedence, missing subject attributes fail closed, and row
 predicates are added by the gateway before execution. `simulatePolicy` is
 available to administrators through GraphQL and returns the decision without
 reading protected data.
+
+### Headless CLI authentication
+
+The headless `explore.py` query path requires a validated OIDC/Auth0 access
+token. Provide a short-lived token through `CLI_ACCESS_TOKEN` or, preferably
+for automation, `CLI_ACCESS_TOKEN_FILE`. The CLI uses the same issuer,
+audience, signature, expiry, tenant claim, role, and subject-attribute
+validation as the API before constructing a principal. It does not accept
+locally configured roles or tenant identity as authorization inputs.
