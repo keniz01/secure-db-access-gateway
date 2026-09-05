@@ -28,11 +28,12 @@ class TenantServiceProvider:
         container = self._containers.get(cache_key)
         if container is None:
             container = setup_container(
-                binding.connection_string,
+                binding.effective_connection_string,
                 data_schema=binding.data_schema,
                 metadata_schema=binding.metadata_schema,
                 tenant_org_id=binding.org_id,
                 tenant_database_id=binding.database_id,
+                database_target=binding.effective_target,
             )
             self._containers[cache_key] = container
         return binding, container.resolve(ISqlQueryService)

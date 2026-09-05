@@ -156,6 +156,7 @@ class Query:
                 user=principal.email,
                 org_id=principal.org_id,
                 database_id=binding.database_id,
+                database_target=service.repository.database_target,
                 query=cleaned_sql,
                 tables_touched=_extract_tables_touched(cleaned_sql),
             )
