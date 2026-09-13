@@ -1,0 +1,116 @@
+name: Deploy to Production
+
+# Deploys the stack to the production host over SSH.
+#
+# Triggers:
+#   - push of a v* tag      -> builds release images (semver + latest), then deploys
+#   - workflow_dispatch     -> deploys an already-published image tag.
+#                             Pass an older v* tag as `image_tag` to ROLL BACK.
+#                             Leave blank to re-deploy the current `edge` build.
+#
+# Secrets/injection notes (see DOCKER_README.md "Automated deployment"):
+#   - DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY: where and how to SSH in.
+#   - CR_PAT: a read-scoped GitHub PAT the host uses to `docker login ghcr.io`.
+#   - GATEWAY_ENV_FILE (optional, default /etc/gateway/gateway.env): the host's
+#     secret file. It is never read or stored by this workflow.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "GHCR image tag to deploy (set an older v* to roll back; blank deploys edge)"
+        required: false
+        type: string
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    name: Build release images
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/docker.yml
+    secrets: inherit
+
+  deploy:
+    name: Deploy to production host
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    # always() lets the deploy run when build-and-push was skipped (rollback
+    # dispatch); the business conditions below still gate failures.
+    if: >-
+      always() && !cancelled() && (
+        (startsWith(github.ref, 'refs/tags/v') && needs.build-and-push.result == 'success')
+        || github.event_name == 'workflow_dispatch'
+      )
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR || '/opt/secure-db-access-gateway' }}
+          GHCR_USER: ${{ secrets.GHCR_USER || secrets.DEPLOY_USER }}
+          CR_PAT: ${{ secrets.CR_PAT }}
+          CHECKOUT_SHA: ${{ github.sha }}
+          IMAGE_TAG: ${{ github.event_name == 'workflow_dispatch' && (inputs.image_tag || 'edge') || github.ref_name }}
+          IMAGE_BASE: ghcr.io/${{ github.repository }}
+          GATEWAY_ENV_FILE: ${{ secrets.GATEWAY_ENV_FILE || '/etc/gateway/gateway.env' }}
+          VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL || 'https://app.secure-db-access-gateway.org' }}
+          VITE_SQL_GRAPHQL_BASE_URL: ${{ vars.VITE_SQL_GRAPHQL_BASE_URL || 'https://app.secure-db-access-gateway.org/api/graphql' }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+          ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "DEPLOY_DIR='$DEPLOY_DIR' CHECKOUT_SHA='$CHECKOUT_SHA' \
+             IMAGE_TAG='$IMAGE_TAG' IMAGE_BASE='$IMAGE_BASE' \
+             GATEWAY_ENV_FILE='$GATEWAY_ENV_FILE' GHCR_USER='$GHCR_USER' CR_PAT='$CR_PAT' \
+             VITE_API_BASE_URL='$VITE_API_BASE_URL' \
+             VITE_SQL_GRAPHQL_BASE_URL='$VITE_SQL_GRAPHQL_BASE_URL' \
+             bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          : "${DEPLOY_DIR:?DEPLOY_DIR not set}"
+          : "${IMAGE_TAG:?IMAGE_TAG not set}"
+          : "${IMAGE_BASE:?IMAGE_BASE not set}"
+          : "${GATEWAY_ENV_FILE:?GATEWAY_ENV_FILE not set}"
+
+          # Bring the checked-out compose files to the deployed commit.
+          cd "$DEPLOY_DIR"
+          git fetch origin --prune --tags
+          if [[ "$IMAGE_TAG" == v* ]]; then
+            # Rollback/release: match the compose files to the released tag.
+            git checkout -f "$IMAGE_TAG"
+          else
+            git checkout -f "${CHECKOUT_SHA:-FETCH_HEAD}"
+          fi
+          git log -1 --oneline
+
+          # A host-side, read-scoped PAT; never stored or built in this workflow.
+          printf '%s' "$CR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          unset CR_PAT
+
+          export IMAGE_TAG IMAGE_BASE GATEWAY_ENV_FILE
+          export VITE_API_BASE_URL VITE_SQL_GRAPHQL_BASE_URL
+
+          echo "==> Deploying images tagged '$IMAGE_TAG' (env: $GATEWAY_ENV_FILE)"
+          docker compose --env-file "$GATEWAY_ENV_FILE" \
+            -f docker-compose.yml -f docker-compose.prod.yml pull
+          docker compose --env-file "$GATEWAY_ENV_FILE" \
+            -f docker-compose.yml -f docker-compose.prod.yml \
+            up -d --no-build --wait --wait-timeout 300
+          docker compose ps
+          REMOTE

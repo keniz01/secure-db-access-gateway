@@ -9,8 +9,10 @@ set -euo pipefail
 #
 # This script:
 #   1. Creates .env from .env.example if it does not exist (never overwrites).
-#   2. Generates a self-signed TLS certificate for the nginx edge into certs/
-#      if it does not exist. Production: replace with a trusted CA cert / ACME.
+#   2. Generates a TLS certificate signed by the mkcert local CA into certs/ so
+#      browsers trust https://localhost:8443 with no security warning.
+#      Requires mkcert (brew install mkcert). Production: replace with a
+#      trusted CA cert / ACME.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
@@ -25,18 +27,33 @@ else
   echo "Kept  $ENV_FILE (does not overwrite existing values)"
 fi
 
-if [ ! -f certs/web_tls_cert.pem ] || [ ! -f certs/web_tls_key.pem ]; then
-  mkdir -p certs
-  openssl req -x509 -nodes -newkey rsa:2048 \
-    -keyout certs/web_tls_key.pem \
-    -out certs/web_tls_cert.pem \
-    -days 365 \
-    -subj "/CN=localhost" \
-    -addext "subjectAltName=DNS:localhost,DNS:web-app,DNS:auth0_api,DNS:sql_query_api,IP:127.0.0.1" 2>/dev/null
-  chmod 600 certs/web_tls_key.pem
-  echo "Generated self-signed TLS certificate (localhost) into certs/"
-else
-  echo "Kept  certs/ (existing TLS certificate)"
+if ! command -v mkcert >/dev/null 2>&1; then
+  echo "ERROR: mkcert is required to generate trusted dev TLS certificates."
+  echo "Install it with:   brew install mkcert"
+  exit 1
+fi
+
+mkdir -p certs
+
+# Install the mkcert local CA into the OS trust store once (prompts for the
+# macOS admin password the first time). Browsers then trust every cert mkcert
+# signs, including the one generated below.
+if ! mkcert -install >/dev/null 2>&1; then
+  echo "ERROR: could not install the mkcert CA automatically."
+  echo "Run 'mkcert -install' (follow the password prompt), then re-run this script."
+  exit 1
+fi
+
+# (Re)generate the leaf cert for localhost + 127.0.0.1 + Docker service names.
+mkcert -cert-file certs/web_tls_cert.pem -key-file certs/web_tls_key.pem \
+  localhost 127.0.0.1 web-app auth0_api sql_query_api >/dev/null
+chmod 600 certs/web_tls_key.pem
+echo "Generated mkcert-signed TLS certificate (localhost) into certs/"
+
+# Reload the running nginx edge so it serves the new certificate.
+if docker compose ps nginx >/dev/null 2>&1; then
+  docker compose exec -T nginx nginx -s reload >/dev/null 2>&1 \
+    && echo "Reloaded nginx to pick up the new certificate."
 fi
 
 echo ""
