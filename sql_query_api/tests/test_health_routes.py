@@ -22,3 +22,11 @@ def test_readiness_endpoint(client: TestClient) -> None:
     response = client.get("/readyz")
     assert response.status_code == 200
     assert response.json() == {"status": "ready"}
+
+
+def test_readiness_fails_without_tenant_configuration(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TENANT_DATABASES_JSON", raising=False)
+    response = client.get("/readyz")
+    assert response.status_code == 503

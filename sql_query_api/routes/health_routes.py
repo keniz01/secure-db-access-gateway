@@ -20,7 +20,7 @@ async def readiness() -> JSONResponse:
     """
     Return 200 only when the server-owned tenant database configuration is loadable.
 
-    In production the gateway must never accept traffic that is configured.
+    In production the gateway must never accept traffic while misconfigured.
     Checking here reuses the same validation the governed query path relies on,
     so orchestration can drain a misconfigured instance before routing work to it.
     """

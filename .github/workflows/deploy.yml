@@ -91,11 +91,17 @@ jobs:
           # Bring the checked-out compose files to the deployed commit.
           cd "$DEPLOY_DIR"
           git fetch origin --prune --tags
-          git checkout -f "${CHECKOUT_SHA:-FETCH_HEAD}"
+          if [[ "$IMAGE_TAG" == v* ]]; then
+            # Rollback/release: match the compose files to the released tag.
+            git checkout -f "$IMAGE_TAG"
+          else
+            git checkout -f "${CHECKOUT_SHA:-FETCH_HEAD}"
+          fi
           git log -1 --oneline
 
           # A host-side, read-scoped PAT; never stored or built in this workflow.
-          echo "$CR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          printf '%s' "$CR_PAT" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          unset CR_PAT
 
           export IMAGE_TAG IMAGE_BASE GATEWAY_ENV_FILE
           export VITE_API_BASE_URL VITE_SQL_GRAPHQL_BASE_URL
