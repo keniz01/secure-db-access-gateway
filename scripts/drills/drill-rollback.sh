@@ -27,11 +27,13 @@ set -euo pipefail
 GOOD_TAG="${1:-}"
 FAULT_TAG=""
 DRY_RUN=0
-for arg in "${@:2}"; do
-  case "$arg" in
-    --fault-tag) FAULT_TAG="${3:-}"; shift 2 ;;
-    --fault-tag=*) FAULT_TAG="${arg#*=}" ;;
-    --dry-run) DRY_RUN=1 ;;
+shift
+while (($#)); do
+  case "$1" in
+    --fault-tag) FAULT_TAG="${2:-}"; shift 2 ;;
+    --fault-tag=*) FAULT_TAG="${1#*=}"; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    *) echo "usage: $0 <previous-good-tag> [--fault-tag <tag>] [--dry-run]" >&2; exit 2 ;;
   esac
 done
 
@@ -63,8 +65,6 @@ fi
 dispatch_and_wait() {
   local tag="$1"
   echo "==> dispatching deploy with image_tag=$tag"
-  local started
-  started="$(date +%s)"
   if (( DRY_RUN )); then
     echo "  [dry-run] gh workflow run deploy.yml -f image_tag=$tag"
     return 0

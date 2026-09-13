@@ -48,7 +48,6 @@ def services_in_compose() -> set[str]:
     """Return the service names declared under ``services:`` in Compose."""
     text = COMPOSE.read_text(encoding="utf-8")
     block = text.split("services:", 1)[1] if "services:" in text else ""
-    block = block.split("#", 1)[0] if False else block
     return set(SERVICE_NAME.findall(block))
 
 

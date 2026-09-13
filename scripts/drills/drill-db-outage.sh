@@ -32,10 +32,11 @@ GATEWAY_ENV_FILE="${GATEWAY_ENV_FILE:-/etc/gateway/gateway.env}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:-}"
 FAKE_DB='{"drill-org": {"drill-db": "postgresql+asyncpg://drill:unreachable@127.0.0.1:59999/nope"}}'
 OVERRIDE="$(mktemp /tmp/drill-db-outage.XXXXXX.yml)"
+COMPOSE=()
 
 cleanup() {
   rm -f "$OVERRIDE"
-  if [[ -d "$DEPLOY_DIR" ]]; then
+  if [[ -d "$DEPLOY_DIR" && ${#COMPOSE[@]} -gt 0 ]]; then
     (cd "$DEPLOY_DIR" && "${COMPOSE[@]}" up -d --no-deps --force-recreate sql_query_api >/dev/null 2>&1 || true)
   fi
 }

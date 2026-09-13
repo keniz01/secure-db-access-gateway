@@ -78,6 +78,8 @@ jobs:
         run: |
           bash -n scripts/probe-production.sh
           bash -n scripts/incident-start.sh
+          bash -n scripts/drills/drill-db-outage.sh
+          bash -n scripts/drills/drill-rollback.sh
 
   test-sql-query-api:
     name: SQL Query API Tests
