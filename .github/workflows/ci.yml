@@ -74,12 +74,22 @@ jobs:
         run: |
           python scripts/check-runbooks.py
 
+      - name: Smoke-test the backup planner (dry run)
+        env:
+          TENANT_DATABASES_JSON: '{"org-a":{"db-1":"postgresql+asyncpg://drill:secret@host:5432/prod","db-2":"sqlite+aiosqlite:///:memory:"},"org-b":{"db-1":{"connection_string":"postgresql://read:secret@replica:5432/other","replica_connection_string":"postgresql://read:secret@replica:5432/other"}}}'
+        run: |
+          python3 -m py_compile scripts/backup-databases.py
+          [ "$(python3 scripts/backup-databases.py --dry-run | grep -c '\[PLAN\]')" = "3" ] || exit 1
+          [ "$(python3 scripts/backup-databases.py --dry-run --include-replicas | grep -c '\[PLAN\]')" = "4" ] || exit 1
+          echo "backup planner resolves 3 targets by default, 4 with --include-replicas"
+
       - name: Syntax-check ops shell scripts
         run: |
           bash -n scripts/probe-production.sh
           bash -n scripts/incident-start.sh
           bash -n scripts/drills/drill-db-outage.sh
           bash -n scripts/drills/drill-rollback.sh
+          bash -n scripts/drills/drill-restore.sh
 
   test-sql-query-api:
     name: SQL Query API Tests

@@ -104,12 +104,14 @@ Production readiness is achieved only when all open items below are complete and
 
 ## Phase 3: Data layer and resilience — **PARTIAL (hardest remaining ops gap)**
 
-### 3.1 Production database strategy — OPEN, priority
+### 3.1 Production database strategy — IN PROGRESS (M18 · #143)
 - [x] Define the production database topology (primary + read replica routing shipped; tenant resolver validated)
-- [ ] Add explicit backup and restore procedures for tenant databases (M18 · #143)
-- [ ] Define retention, snapshot policy, and disaster recovery objective (RTO/RPO) (M18 · #143)
-- [ ] Validate read-only access patterns against database-level permissions and least privilege (app-layer only today; DB grants for the gateway account not yet documented) (M18 · #148)
-- [ ] Acceptance: DB administrators have a tested restore plan and least-privilege configuration
+- [x] Define backup + restore procedures and DR objectives (documented in `BACKUP_DR.md`: RPO ≤24 h / RTO ≤30 min targets, retention policy, off-host copy requirement)
+- [x] Automate the backup: `scripts/backup-databases.py` (verified `pg_dump` custom-format, rotating retention, per-database pruning) scheduled daily via `.github/workflows/backup.yml`, incident-tagged on failure
+- [x] Provide a safe restore path: `scripts/drills/drill-restore.sh` — validates the archive, restores into a scratch STAGING database, drops it even on failure
+- [ ] Execute the restore drill on a live stack, record measured RTO, and verify a restore from the off-host copy (#143)
+- [ ] Validate read-only access patterns against database-level permissions and least privilege (DB grants for the gateway account not yet documented) (M18 · #148)
+- [ ] Acceptance: DB administrators have a tested (drill-passed) restore plan and least-privilege configuration
 
 ### 3.2 Query safety and performance budgets — DONE
 - [x] Enforce maximum query execution time, row limits, and byte limits in the gateway (30s timeout, 5 MB result cap, lock timeout, auto-LIMIT, cost budgeting)

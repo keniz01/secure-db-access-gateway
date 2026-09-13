@@ -247,6 +247,7 @@ npm run build
 - [SECURITY.md](SECURITY.md) — security controls and governance notes
 - [GEMINI.md](GEMINI.md) — AI/CLI guardrails and project context
 - [RUNBOOKS.md](RUNBOOKS.md) — incident response runbooks and escalation model
+- [BACKUP_DR.md](BACKUP_DR.md) — tenant database backup/restore procedures and DR objectives
 - [PRODUCTION_READINESS_ROADMAP.md](PRODUCTION_READINESS_ROADMAP.md) — gaps and next steps to production readiness
 - [sql_query_api/README.md](sql_query_api/README.md)
 - [auth0_api/README.md](auth0_api/README.md)

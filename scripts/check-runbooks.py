@@ -116,6 +116,10 @@ def main() -> int:
         ".github/workflows/probe.yml",
         ".github/ISSUE_TEMPLATE/incident.md",
         "scripts/incident-start.sh",
+        "BACKUP_DR.md",
+        "scripts/backup-databases.py",
+        ".github/workflows/backup.yml",
+        "scripts/drills/drill-restore.sh",
     ]
     for path in automation:
         if not (REPO_ROOT / path).exists():

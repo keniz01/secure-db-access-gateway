@@ -78,9 +78,11 @@ logs, API logs, and audit events at the same instant.
 | --- | --- | --- |
 | **Health probe** | Runs on the host; checks P1 edge/SPA, P2 TLS expiry, P3 `auth0_api` ready, P4 `sql_query_api` ready, P5 **per-tenant DB connectivity**, P6 Auth0 provider reachability. Exit 0 = healthy. | `scripts/probe-production.sh` + `sql_query_api/probe/run.py` |
 | **Auto-incident** | Every 20 min SSHes to the host and runs the probe; on failure opens/updates an `incident:probe` issue pointing to the right runbook; closes it on recovery. | `.github/workflows/probe.yml` |
-| **Incident filing** | One-command SEV1/2/3 issue from the incident template with scripts| `.github/ISSUE_TEMPLATE/incident.md`, `scripts/incident-start.sh` |
+| **Incident filing** | One-command SEV1/2/3 issue from the incident template. | `.github/ISSUE_TEMPLATE/incident.md`, `scripts/incident-start.sh` |
 | **Drill: DB outage (R2)** | Injects an unreachable tenant DB via a scratch compose override, asserts P5 detects it, restores, asserts recovery. Requires `STAGING=1`. | `scripts/drills/drill-db-outage.sh` |
 | **Drill: rollback (R5)** | Dispatches the deploy workflow at a provisional tag, then re-pins the previous good tag and verifies health. Optional `--fault-tag` asserts a broken tag is caught. | `scripts/drills/drill-rollback.sh` |
+| **Tenant DB backup (R6)** | Daily (`17 2 * * *`) host-side `pg_dump` custom-format backup of every tenant DB, archive-verified, rotating retention; opens/closes an `incident:backup` issue. | `scripts/backup-databases.py` + `.github/workflows/backup.yml` |
+| **Drill: restore (R6)** | Restores the newest backup into a scratch STAGING database, verifies data, drops it. Requires `STAGING=1` + `RESTORE_ADMIN_URL`. | `scripts/drills/drill-restore.sh` |
 | **Freshness lint** | Fails CI if this file references a compose service, path, or endpoint that no longer exists. | `scripts/check-runbooks.py` + CI job |
 
 How to use them: `bash -n scripts/probe-production.sh` to check syntax; run `bash scripts/probe-production.sh` on the host to probe on demand; read the incident issue to know which runbook to start with.
@@ -197,10 +199,9 @@ $C logs --tail=100 web_app               # GraphQL client errors surfaced in the
 **Recovery:**
 - Restore DB connectivity (provider-side for Postgres; check
   `host.docker.internal` / host firewall for local Postgres).
-- If a DB is corrupted or lost, follow the **backup/restore procedure
-  (issue #143 — restore drill in progress)** and restore from the last valid
-  snapshot. Until #143 ships a documented, tested restore path, treat any
-  tenant data loss as a SEV1 and escalate to L2 immediately.
+- If a DB is corrupted or lost, follow the **backup/restore procedure (R6 →
+  `BACKUP_DR.md`)** and restore from the last verified dump — un-validated data
+  loss is a SEV1; escalate to L2 immediately.
 
 **Verify / exit criteria:**
 - A governed SELECT for the affected tenant returns rows; metrics show
@@ -337,6 +338,53 @@ itself (disk, docker daemon, deploy SSH) is failing.
 
 ---
 
+## R6 — Data loss / tenant database restore
+
+**Symptoms:** tenant tables missing/empty or schema corrupted; audit log for a
+tenant has gaps; a failed deploy or disk issue has made tenant data unavailable.
+Confirmed data loss or corruption = **SEV1**.
+
+**Detection:**
+```bash
+# BACKUP_DIR holds the daily dumps (default backups/ under the deploy dir):
+ls -lt "$DEPLOY_DIR/backups" 2>/dev/null | head
+# A backup incident issue tagged incident:backup means the scheduled backup failed:
+gh issue list --label incident:backup
+```
+
+**Triage / containment:**
+- Isolate the affected tenant(s); the gateway has no read-through cache, so a
+  failed restore only affects tenants pointed at it.
+- Do **not** delete or overwrite the existing dumps while investigating —
+  copy the dump you plan to restore from elsewhere first.
+- If the backup set itself is empty or unverified, the data-loss is
+  unrecoverable from this pipeline — escalate to L2/L3 (DB provider / object
+  storage) immediately.
+
+**Recovery:**
+- Full procedure in **`BACKUP_DR.md`** (issue #143). The identical, tested path
+  is the drill:
+  ```bash
+  STAGING=1 RESTORE_ADMIN_URL='postgresql://admin:****@staging-db:5432/postgres' \
+    DRILL_FORCE=0 ./scripts/drills/drill-restore.sh
+  # prod restore: rerun the same steps manually — validate, restore to a scratch
+  # name, then re-point the tenant, never pg_restore directly onto the live DB.
+  ```
+- Restore order: validate archive (`pg_restore --list`) → restore to a **new**
+  database name → grant the gateway's least-privilege role → point the tenant
+  binding at the restored database → verify with a governed SELECT + the audit
+  log → only then drop the broken database.
+
+**Verify / exit criteria:** the tenant's governed SELECTs return the expected
+rows; audit events for the tenant resume; `scripts/probe-production.sh` P5 is
+green for that tenant.
+
+**Escalate to L2/L3 when:** the restore path is untested/unavailable, the
+latest dumps are missing or unverified, or you need the DB provider to recover
+point-in-time state.
+
+---
+
 ## Post-incident
 
 For every SEV1/SEV2:
@@ -360,6 +408,10 @@ For every SEV1/SEV2:
     — re-pins a provisional `image_tag`, then rolls back to the previous
     release and verifies health; `--fault-tag` makes it assert a broken tag
     is caught first.
+  - **Restore (R6)**: `STAGING=1 RESTORE_ADMIN_URL=… ./scripts/drills/drill-restore.sh`
+    — restores the newest backup into a scratch database, verifies data,
+    drops it. Run at least once before launch and after any restore-path
+    change so the restore path is never "untested".
 - Drills are exercises of the runbooks first and the system second — the goal
   is that a fresh on-call can execute each runbook end-to-end without help.
   Run drills in a staging stack (`STAGING=1` / a staging `DEPLOY_DIR`), never
@@ -379,7 +431,11 @@ spots listed here, but the follow-up items still need building:
   outage shows up as an `incident:probe` issue (see R1).
 - **No correlation IDs across services yet** (issue #147) — time-correlate via
   wall-clock timestamps in logs until then.
-- **Backup/restore is not yet documented/tested** (issue #143) — until it is,
-  treat any tenant data loss as SEV1.
+- **Backup/restore (#143)**: dumps are documented + automated + drill-shaped
+  (`BACKUP_DR.md`, `scripts/backup-databases.py`, `drill-restore.sh`), but the
+  restore drill has not been executed on a live stack, no off-host copy is
+  verified yet (`BACKUP_OFFLOAD_CMD`), and RTO/RPO are targets, not yet
+  measured. Until an off-host copy + a passed restore drill exist, host-level
+  data loss still risks SEV1.
 - **Auth0 outage drill (R1)** has no executable harness yet — simulate by
   pointing `AUTH0_*` at a dead URL in a staging stack until one is added.

@@ -1,0 +1,120 @@
+name: Tenant Database Backup
+
+# Scheduled tenant-database backup for the gateway (issue #143 / M18).
+#
+# Copies the same SSH + secrets model as deploy.yml / probe.yml.
+# Backups land on the host's $BACKUP_DIR (default /opt/secure-db-access-gateway/backups).
+# Off-host copies are your responsibility (set BACKUP_OFFLOAD_CMD in secrets).
+#
+# Secrets:
+#   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PORT(optional),
+#   DEPLOY_DIR(optional), GATEWAY_ENV_FILE(optional),
+#   BACKUP_DIR(default backups/ relative to DEPLOY_DIR),
+#   BACKUP_RETENTION(default 14),
+#   BACKUP_OFFLOAD_CMD(optional shell command, e.g. "rsync -a --remove-source-files")
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  backup:
+    name: Backup tenant databases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run backup over SSH
+        id: backup
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR || '/opt/secure-db-access-gateway' }}
+          GATEWAY_ENV_FILE: ${{ secrets.GATEWAY_ENV_FILE || '/etc/gateway/gateway.env' }}
+          BACKUP_DIR: ${{ secrets.BACKUP_DIR || 'backups' }}
+          BACKUP_RETENTION: ${{ secrets.BACKUP_RETENTION || '14' }}
+          BACKUP_OFFLOAD_CMD: ${{ secrets.BACKUP_OFFLOAD_CMD || '' }}
+        run: |
+          mkdir -p "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+          set +e
+          output="$(
+            ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "cd '$DEPLOY_DIR' && \
+               GATEWAY_ENV_FILE='$GATEWAY_ENV_FILE' \
+               BACKUP_DIR='$BACKUP_DIR' \
+               BACKUP_RETENTION='$BACKUP_RETENTION' \
+               BACKUP_OFFLOAD_CMD='$BACKUP_OFFLOAD_CMD' \
+               python3 scripts/backup-databases.py" 2>&1
+          )"
+          rc=$?
+          set -e
+
+          echo "BACKUP_RC=$rc" >> "$GITHUB_ENV"
+          echo "BACKUP_OUTPUT<<EOF" >> "$GITHUB_ENV"
+          echo "$output" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+          printf 'backup exit code: %d\n' "$rc"
+          printf '%s\n' "$output"
+
+      - name: Open or close incident on failure
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const rc = Number(process.env.BACKUP_RC || '0');
+            const output = process.env.BACKUP_OUTPUT || '';
+            const label = 'incident:backup';
+            const title = '[incident] Tenant database backup failure';
+            const openIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: label,
+            });
+            const incident = openIssues.data.length ? openIssues.data[0] : null;
+            if (rc === 0) {
+              if (incident) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: incident.number,
+                  body: `Automated backup recovered. Closing incident.\n\n\`\`\`\n${output}\n\`\`\``,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: incident.number, state: 'closed', state_reason: 'completed',
+                });
+                console.log(`closed incident #${incident.number}`);
+              } else {
+                console.log('backup healthy, no incident open');
+              }
+              return;
+            }
+            const body = `Automated backup failed (SEV2 pending manual confirmation).\nSee **BACKUP_DR.md** and **RUNBOOKS.md** R6.\n\n\`\`\`\n${output.slice(0, 4000)}\n\`\`\``;
+            if (incident) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: incident.number, body,
+              });
+              console.log(`updated incident #${incident.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo, title,
+                labels: [label, 'area:operations', 'priority:high'], body,
+              });
+              console.log(`created incident #${created.data.number}`);
+            }
