@@ -1,0 +1,138 @@
+name: Production Health Probe
+
+# Automated incident detection for the ops runbooks (issue #142 / M18).
+#
+# Runs the host-side probe (scripts/probe-production.sh) over the same SSH
+# channel as the deploy workflow. On failure it opens/updates an incident issue
+# tagged `incident:probe` with the failing checks + a pointer to RUNBOOKS.md;
+# when the probe recovers it closes the incident as completed. This closes the
+# runbook gaps where /readyz cannot see DB or Auth0 outages.
+#
+# Secrets (same set as the deploy workflow, see DOCKER_README.md):
+#   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PORT(optional),
+#   DEPLOY_DIR(optional, default /opt/secure-db-access-gateway),
+#   GATEWAY_ENV_FILE(optional, default /etc/gateway/gateway.env)
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  probe:
+    name: Probe production health
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run probe over SSH
+        id: probe
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_DIR: ${{ secrets.DEPLOY_DIR || '/opt/secure-db-access-gateway' }}
+          GATEWAY_ENV_FILE: ${{ secrets.GATEWAY_ENV_FILE || '/etc/gateway/gateway.env' }}
+        run: |
+          mkdir -p "$HOME/.ssh"
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -H -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null
+
+          set +e
+          output="$(
+            ssh -p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "cd '$DEPLOY_DIR' && DEPLOY_DIR='$DEPLOY_DIR' GATEWAY_ENV_FILE='$GATEWAY_ENV_FILE' \
+               bash scripts/probe-production.sh" 2>&1
+          )"
+          rc=$?
+          set -e
+
+          echo "PROBE_RC=$rc" >> "$GITHUB_ENV"
+          echo "PROBE_OUTPUT<<EOF" >> "$GITHUB_ENV"
+          echo "$output" >> "$GITHUB_ENV"
+          echo "EOF" >> "$GITHUB_ENV"
+
+          printf 'probe exit code: %d\n' "$rc"
+          printf '%s\n' "$output"
+
+      - name: Open or close incident issue
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const rc = Number(process.env.PROBE_RC || '0');
+            const output = process.env.PROBE_OUTPUT || '';
+
+            const label = 'incident:probe';
+            const title = '[incident] Production health probe';
+            const openIssues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+            const incident = openIssues.data.length ? openIssues.data[0] : null;
+
+            if (rc === 0) {
+              if (incident) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: incident.number,
+                  body: `Automated probe recovered. Closing incident.\n\n\`\`\`\n${output}\n\`\`\``,
+                });
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: incident.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                console.log(`closed incident #${incident.number}`);
+              } else {
+                console.log('probe healthy, no incident open');
+              }
+              return;
+            }
+
+            const runbookRef = output.includes('[P1') ? 'R4 (nginx/TLS)' :
+              output.includes('[P2') ? 'R4 (TLS)' :
+              output.includes('[P3') ? 'R1/R3 (auth0_api)' :
+              output.includes('[P4') ? 'R2/R3 (sql_query_api)' :
+              output.includes('[P5') ? 'R2 (tenant databases)' :
+              output.includes('[P6') ? 'R1 (Auth0 provider)' : 'R1-R5 (see output)';
+
+            const body = `Automated health probe detected a failing check (SEV2 pending manual confirmation).\n` +
+              `See **RUNBOOKS.md** — start with ${runbookRef}.\n\n` +
+              `\`\`\`\n${output.slice(0, 4000)}\n\`\`\``;
+
+            if (incident) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: incident.number,
+                body,
+              });
+              console.log(`updated incident #${incident.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                labels: [label, 'area:operations', 'priority:high'],
+                body,
+              });
+              console.log(`created incident #${created.data.number}`);
+            }

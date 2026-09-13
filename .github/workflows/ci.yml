@@ -57,6 +57,28 @@ jobs:
           print('shared-secrets OK')
           EOF
 
+  lint-runbooks:
+    name: Runbook & Ops Script Freshness
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lint runbook freshness
+        run: |
+          python scripts/check-runbooks.py
+
+      - name: Syntax-check ops shell scripts
+        run: |
+          bash -n scripts/probe-production.sh
+          bash -n scripts/incident-start.sh
+
   test-sql-query-api:
     name: SQL Query API Tests
     runs-on: ubuntu-latest

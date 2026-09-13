@@ -246,6 +246,8 @@ npm run build
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component responsibilities
 - [SECURITY.md](SECURITY.md) — security controls and governance notes
 - [GEMINI.md](GEMINI.md) — AI/CLI guardrails and project context
+- [RUNBOOKS.md](RUNBOOKS.md) — incident response runbooks and escalation model
+- [PRODUCTION_READINESS_ROADMAP.md](PRODUCTION_READINESS_ROADMAP.md) — gaps and next steps to production readiness
 - [sql_query_api/README.md](sql_query_api/README.md)
 - [auth0_api/README.md](auth0_api/README.md)
 - [web-app/README.md](web-app/README.md)
