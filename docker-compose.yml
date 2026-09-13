@@ -9,9 +9,9 @@ services:
       - ./certs:/etc/nginx/certs:ro
     depends_on:
       auth0_api:
-        condition: service_started
+        condition: service_healthy
       sql_query_api:
-        condition: service_started
+        condition: service_healthy
       web_app:
         condition: service_healthy
     restart: unless-stopped
@@ -43,6 +43,12 @@ services:
     depends_on:
       - sql_query_api
       - otel-lgtm
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   sql_query_api:
     build:
@@ -59,6 +65,12 @@ services:
       - otel-lgtm
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=3).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   web_app:
     build: ./web-app

@@ -12,8 +12,8 @@ This project supports running the entire application stack using Docker Compose,
 1. **Bootstrap local env + TLS certs** (first time only):
    ```bash
    ./scripts/bootstrap-dev.sh
-   # Creates .env from .env.example (never overwrites) and generates a
-   # self-signed TLS certificate into certs/ if one does not exist.
+   # Creates .env from .env.example (never overwrites) and generates an
+   # mkcert-signed TLS certificate into certs/ (requires brew install mkcert).
    ```
 2. **Fill in real values in `.env`** — Auth0 credentials, `APP_SECRET_KEY`
    (generate with `openssl rand -hex 32`), AI keys, the tenant database
@@ -33,11 +33,12 @@ This will start:
 
 **Note**: PostgreSQL runs on your local machine, not in a container.
 
-**TLS**: `scripts/bootstrap-dev.sh` generates a self-signed certificate
-(`certs/web_tls_cert.pem` / `certs/web_tls_key.pem`). Accept the browser
-warning during local development and replace with a trusted CA certificate for
-production. Because HTTPS is enforced, the browser stores session cookies with
-the `Secure` flag.
+**TLS**: `scripts/bootstrap-dev.sh` generates a certificate signed by the
+mkcert local CA (`certs/web_tls_cert.pem` / `certs/web_tls_key.pem`). The first
+bootstrap run installs that CA into the OS trust store, so the browser accepts
+`https://localhost:8443` with no warning. For production, replace the cert with
+a trusted CA certificate (or ACME). Because HTTPS is enforced, the browser
+stores session cookies with the `Secure` flag.
 
 ## Services
 
@@ -108,15 +109,69 @@ docker compose up --build
 
 ## Production
 
-1. Provision `/etc/gateway/gateway.env` on the host from your secret manager /
-   password manager, and set `GATEWAY_ENV_FILE` accordingly (default `.env`).
-2. `ENVIRONMENT=production` enables startup fail-fast for required secrets.
-3. Replace the self-signed TLS cert with a trusted CA certificate (or ACME).
-4. Configure proper CORS origins and external database.
-5. At scale, inject the `NAME` env vars from a real secret manager (AWS
-   Secrets Manager, Vault, Azure Key Vault, Doppler, …) — the
-   `NAME`/`NAME_FILE` loader already supports any injected source, so you can
-   swap the manual env file without code changes.
+### Infrastructure model
+
+- **Images never build on the host.** CI builds the three service images and
+  pushes them to GHCR (`.github/workflows/docker.yml`); the host only pulls.
+- **Secrets never enter CI.** `/etc/gateway/gateway.env` (or any
+  `GATEWAY_ENV_FILE`) is provisioned on the host and injected via Compose
+  `env_file`. The deploy workflow only references the *path*.
+- **Readiness gate.** `ENVIRONMENT=production` fails fast on missing secrets,
+  each service has a `healthcheck`, and Compose `up --wait` aborts the deploy
+  if any container does not become healthy within `--wait-timeout`.
+- **Stable image tags.** Release images are tagged `vX.Y.Z` (semver), `latest`,
+  and `sha-<commit>`. `edge` tracks the default branch. Rollback = re-pin an
+  older tag.
+
+### One-time production host provisioning
+
+1. Host basics:
+   - Docker (Compose v2, or `docker-compose` plugin) and a deploy user in the
+     `docker` group. Postgres runs externally (as in dev).
+   - A checkout of this repo at e.g. `/opt/secure-db-access-gateway` writable
+     by the deploy user (the workflow `git fetch` + `git checkout` it).
+   - TLS certs in `certs/` on the host: either run
+     `./scripts/bootstrap-dev.sh` once (mkcert + installs the local CA) or drop
+     in trusted CA certificates / ACME material. `certs/` is gitignored and is
+     bind-mounted into nginx.
+2. Secrets file: `sudo install -m 600 -o deploy -g deploy gateway.env /etc/gateway/gateway.env`
+   (copy to the host from your secret manager — the host file is a copy, not
+   the backup).
+3. GitHub settings needed by the deploy workflow:
+   - **Repository secrets** (Actions → Settings → Secrets):
+     - `DEPLOY_HOST` — hostname/IP of the production host.
+     - `DEPLOY_USER` — SSH user with access to `DEPLOY_DIR` and docker.
+     - `DEPLOY_SSH_KEY` — private key (Ed25519) of a dedicated deploy keypair;
+       the public key goes in the deploy user's `~/.ssh/authorized_keys`.
+     - `CR_PAT` — GitHub PAT with **`read:packages`** scope; the host uses it
+       to `docker login ghcr.io`.
+     - Optional: `DEPLOY_PORT` (default 22), `DEPLOY_DIR`
+       (default `/opt/secure-db-access-gateway`), `GHCR_USER` (token owner,
+       defaults to `DEPLOY_USER`), `GATEWAY_ENV_FILE`
+       (default `/etc/gateway/gateway.env`).
+   - **Repository variables** (optional): `VITE_API_BASE_URL` and
+     `VITE_SQL_GRAPHQL_BASE_URL` if the SPA origin differs from
+     `https://app.secure-db-access-gateway.org`.
+
+### Deploy and roll back
+
+| Action | How |
+| --- | --- |
+| Release | Push a tag: `git tag v1.2.3 && git push origin v1.2.3` |
+| Re-deploy / roll back | GitHub Actions → **Deploy to Production** → *Run workflow* → set `image_tag` to a **published** GHCR tag (e.g. the previous `v1.2.2` to roll back). Leave blank to re-deploy `edge`. |
+| Ad-hoc build | **Build and Push Images** → *Run workflow* → optional `tag` input |
+
+The deploy job pulls the pinned tag and runs
+`docker compose ... up -d --no-build --wait --wait-timeout 300`; the run fails
+if any container does not become healthy. Because Compose recreates containers
+with the new image before health is confirmed, roll back promptly via
+`image_tag` = previous tag (see table above).
+
+Sanity-check a rollout:
+```bash
+docker compose --env-file /etc/gateway/gateway.env -f docker-compose.yml -f docker-compose.prod.yml ps
+docker compose --env-file /etc/gateway/gateway.env logs --tail=50 nginx web_app auth0_api sql_query_api
+```
 
 ## Troubleshooting
 

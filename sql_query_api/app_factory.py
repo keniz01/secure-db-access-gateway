@@ -20,6 +20,7 @@ from middlewares.correlation_middleware import correlation_id_middleware
 from middlewares.logging_middleware import LoggingMiddleware
 from middlewares.rate_limit_middleware import RateLimitMiddleware
 from middlewares.rbac_middleware import RBACMiddleware
+from routes.health_routes import router as health_router
 
 
 def setup_cors_middleware(app: FastAPI) -> None:
@@ -114,6 +115,7 @@ def setup_routes(app: FastAPI) -> None:
             media_type="text/plain; version=0.7.0; charset=utf-8",
         )
 
+    app.include_router(health_router)
     app.include_router(GraphQLRouter(schema), prefix="/graphql")
 
 

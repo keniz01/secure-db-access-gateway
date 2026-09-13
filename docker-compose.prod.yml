@@ -1,0 +1,34 @@
+# Production deployment override for the stack in docker-compose.yml.
+#
+# Images are pre-built and pushed to GHCR by .github/workflows/docker.yml; the
+# production host never builds. Rollback = re-run with IMAGE_TAG pinned to an
+# older tag. Secrets stay out of this file and out of the pipeline: the host
+# injects them from GATEWAY_ENV_FILE (default /etc/gateway/gateway.env).
+#
+# Usage on the production host (see DOCKER_README.md, "Automated deployment"):
+#   export GATEWAY_ENV_FILE=/etc/gateway/gateway.env
+#   export IMAGE_TAG=v1.2.3                     # or latest
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#       up -d --no-build --wait --wait-timeout 300
+
+services:
+  nginx:
+    image: nginx:alpine
+    ports: !override
+      - "80:80"
+      - "443:443"
+
+  auth0_api:
+    image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/auth0-api:${IMAGE_TAG:-latest}
+
+  sql_query_api:
+    image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/sql-query-api:${IMAGE_TAG:-latest}
+
+  web_app:
+    image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/web-app:${IMAGE_TAG:-latest}
+    # The SPA is served through the nginx TLS edge; no host port for the dev server.
+    ports: !override []
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://app.secure-db-access-gateway.org}
+      VITE_SQL_GRAPHQL_BASE_URL: ${VITE_SQL_GRAPHQL_BASE_URL:-https://app.secure-db-access-gateway.org/api/graphql}
