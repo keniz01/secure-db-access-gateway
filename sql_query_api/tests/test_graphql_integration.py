@@ -259,6 +259,49 @@ class TestGraphQLExecuteSqlStatement:
         assert "errors" in res
         assert "Failed to execute SQL statement. Please verify your query syntax." in res["errors"][0]["message"]
 
+    def test_execute_sql_error_exposes_sanitized_details(self, client: TestClient) -> None:
+        """Execution errors should surface a sanitized root-cause detail in structured extensions."""
+        gql_query = """
+        query ExecuteSql($req: SqlStatementRequest!) {
+            executeSqlStatement(request: $req)
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT * FROM definitely_missing_table"}}
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()
+        error = res["errors"][0]
+        extensions = error.get("extensions", {}).get("sqlQueryApi", {})
+        assert extensions.get("code") == "SQL_EXECUTION_ERROR"
+        assert extensions.get("details")
+        assert "SELECT" not in extensions.get("details", "").upper().split("\n")[0]
+        assert "definitely_missing_table" in extensions["details"]
+
+    def test_sanitize_db_error_extracts_caused_by_line(self) -> None:
+        from exceptions.sql_statement_execution_exception import SqlStatementExecutionError
+        from routes.sql_query_controller import _sanitize_db_error
+
+        formatted = (
+            "[SqlStatementExecutionError]\n"
+            "Error executing SQL statement\n"
+            "↳ Caused by ProgrammingError: <class 'asyncpg.exceptions.UndefinedTableError'>: "
+            'missing FROM-clause entry for table "a"\n'
+            "[SQL: SELECT COUNT(a.album_id) AS album_count FROM album a;]\n"
+            "(Background on this error at: https://sqlalche.me/e/20/f405)"
+        )
+        exc = SqlStatementExecutionError(formatted)
+        detail = _sanitize_db_error(exc)
+        assert 'missing FROM-clause entry for table "a"' in detail
+        assert "asyncpg.exceptions.UndefinedTableError" in detail
+        assert "[SQL:" not in detail
+
+    def test_sanitize_db_error_plain_message(self) -> None:
+        from exceptions.sql_statement_execution_exception import SqlStatementExecutionError
+        from routes.sql_query_controller import _sanitize_db_error
+
+        exc = SqlStatementExecutionError("SQL query timed out after 30.0 seconds.")
+        assert _sanitize_db_error(exc) == "SQL query timed out after 30.0 seconds."
+
 
 class TestGraphQLGetTableSchema:
     def test_get_table_schema_empty_embeddings(self, client: TestClient) -> None:

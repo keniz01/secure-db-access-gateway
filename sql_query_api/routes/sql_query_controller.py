@@ -1,14 +1,17 @@
 import logging as logger
+import re
 from collections.abc import Callable
 from typing import Any
 
 import strawberry
+from graphql import GraphQLError
 from strawberry.extensions import QueryDepthLimiter
 from strawberry.fastapi import GraphQLRouter
 
 from auth import Principal
 from config.app_logger import log_audit_event
 from dependencies.tenant_service_provider import TenantServiceProvider
+from exceptions.sql_statement_execution_exception import SqlStatementExecutionError
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
 from services.policy_engine import PolicyEvaluator
@@ -18,6 +21,28 @@ from services.tenant_database_resolver import (
     TenantDatabaseResolutionError,
     TenantDatabaseResolver,
 )
+
+
+def _sanitize_db_error(exc: Exception) -> str:
+    """
+    Extract a single-line, non-sensitive detail from a DB execution error.
+
+    Strips SQL text and traceback context so only the root-cause message is
+    returned.  The result is safe to surface in structured error extensions
+    to trusted internal callers (e.g. the text-to-sql feedback loop).
+    """
+    msg = str(exc.message if hasattr(exc, "message") else exc)
+    # Extract the "↳ Caused by ..." line if present
+    m = re.search(r"↳\s*Caused by\s*(.+?)(?:\n|$|\[SQL:)", msg)
+    if m:
+        detail = m.group(1).strip()
+        # Strip the [SQL: ...] prefix if it leaked in
+        detail = re.sub(r"\[SQL:.*", "", detail, flags=re.DOTALL).strip()
+        # Collapse "<class 'asyncpg.exceptions.UndefinedTableError'>" noise
+        detail = re.sub(r"<class '([^']+)'>", r"\1", detail)
+        return detail
+    # Plain-message errors (timeout, row limit) — return as-is
+    return msg.strip()
 
 _tenant_database_resolver = TenantDatabaseResolver.from_environment()
 _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
@@ -192,6 +217,18 @@ class Query:
             # ValueError from cleaning/validation - provide clear error message
             logger.warning("SQL validation failed: %s", str(e))
             raise ValueError(str(e)) from e
+        except SqlStatementExecutionError as e:
+            logger.exception("Error executing SQL")
+            detail = _sanitize_db_error(e)
+            raise GraphQLError(
+                message="Failed to execute SQL statement. Please verify your query syntax.",
+                extensions={
+                    "sqlQueryApi": {
+                        "code": "SQL_EXECUTION_ERROR",
+                        "details": detail,
+                    }
+                },
+            ) from e
         except Exception:
             logger.exception("Error executing SQL")
             # Don't expose internal error details to client

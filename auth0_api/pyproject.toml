@@ -21,6 +21,7 @@ dependencies = [
     "python-jose>=3.5.0",
     "requests>=2.32.5",
     "shared-secrets",
+    "sqlglot>=30.0.0,<31",
     "starlette>=0.50.0",
     "uvicorn>=0.38.0",
 ]

@@ -72,15 +72,27 @@ class AIService:
 
                 choices = getattr(response, "choices", None)
                 if not choices:
-                    raise AIServiceError("Empty response from AI model")
+                    await self._retry_on_empty(attempt, retries, backoff_base)
+                    continue
 
                 message = getattr(choices[0], "message", None)
                 choice = getattr(message, "content", None)
-                if not isinstance(choice, str) or not choice.strip():
-                    raise AIServiceError("Empty response from AI model")
+                if isinstance(choice, str) and choice.strip():
+                    logger.debug("AI response generated successfully")
+                    return choice.strip()
 
-                logger.debug("AI response generated successfully")
-                return choice.strip()
+                # Reasoning models (e.g. NVIDIA Nemotron on OpenRouter) can reply
+                # with empty `content` and put the answer in the provider-specific
+                # `message.reasoning` field instead.
+                reasoning = getattr(message, "reasoning", None) if message is not None else None
+                if isinstance(reasoning, str) and reasoning.strip():
+                    logger.debug("Empty content; using message.reasoning fallback")
+                    return reasoning.strip()
+
+                # Empty content AND no usable reasoning: retry with backoff. Free
+                # endpoints intermittently return empty payloads, so a bounded
+                # retry keeps surfacing rather than failing on first hit.
+                await self._retry_on_empty(attempt, retries, backoff_base)
 
             except RateLimitError:
                 wait = backoff_base ** attempt
@@ -104,6 +116,19 @@ class AIService:
 
         logger.warning("AI service unavailable after %d retries", retries)
         return None
+
+    @staticmethod
+    async def _retry_on_empty(attempt: int, retries: int, backoff_base: float) -> None:
+        """Apply backoff and continue when the provider returns no usable content."""
+        wait = backoff_base ** attempt
+        logger.warning(
+            "AI returned an empty response (attempt %d/%d). Retrying in %fs",
+            attempt,
+            retries,
+            wait,
+        )
+        if attempt < retries:
+            await asyncio.sleep(wait)
 
     async def generate_embeddings(
         self,

@@ -6,6 +6,14 @@ MANDATORY OUTPUT RULES:
 - The statement MUST start with SELECT and be a read-only query (no INSERT/UPDATE/DELETE/DDL, no pg_sleep or similar functions).
 - Strictly only use table and column names defined in the context. Use table and column aliases throughout.
 - Do not use "--" comments or "/* */" comments.
+- EACH alias you use MUST be declared: every lowercase prefix like "a." or "ar." in the SELECT list, WHERE clause, JOIN conditions, or scalar subqueries must be a table alias declared in a FROM or JOIN clause of that SQL block. Never reference an alias that you did not declare.
+- Use ONE consistent alias per table for the entire statement. If you alias "album" as "al", always write "al." and never switch to a different alias like "a" for the same table. A scalar subquery that needs to read album rows again must declare its own alias (e.g. "FROM album a2"), and then it must use "a2." consistently inside that subquery.
+
+SELF-CHECK BEFORE OUTPUT:
+- Re-read the SQL you are about to output and verify all three:
+  1. Every "alias.column" reference has that alias declared in a FROM or JOIN clause (a subquery declaring "FROM album a2" makes "a2" valid only inside that subquery).
+  2. No alias name is used that was never declared, and no alias name silently changed halfway through the query.
+  3. The statement would run as-is against the tables in the context — one SELECT, no stray fragments.
 
 GUIDELINES:
 - Use simple queries when appropriate - single-table queries do NOT require JOINs
@@ -17,6 +25,7 @@ GUIDELINES:
 - For text searches (matching names, titles, etc.), use name/title columns (e.g., label_name, artist_name, title), NOT ID columns (e.g., label_id, artist_id)
 - Columns ending in "_id" are identifiers/foreign keys - use them for JOINs, not for text matching
 - Use columns ending in "_name", "name", "title", or similar descriptive text fields for matching text values
+- When a COUNT is aggregated over a joined table, count a non-null key column of the table being counted (e.g. COUNT(al.album_id)) so the count matches the number of rows in that table
 - Only say "I dont know" if the required tables or columns are completely missing from the context schema
 - Always attempt to generate SQL using the available schema information
 
@@ -39,18 +48,18 @@ Context: album: album_id, title, release_date, label_id
 SQL: SELECT COUNT(a.album_id) AS total_albums
 FROM album a;
 
-Question: Count albums distributed by record label 'Greenesleeves'
+Question: Count albums distributed by record label 'Greensleeves'
 Context: album: album_id, title, release_date, label_id
 record_label: label_id, label_name
-SQL: SELECT COUNT(a.*) AS album_count
+SQL: SELECT COUNT(a.album_id) AS album_count
 FROM album a
 INNER JOIN record_label rl ON rl.label_id = a.label_id
-WHERE rl.label_name ILIKE 'Greensleeves Records';
+WHERE rl.label_name ILIKE 'Greensleeves';
 
 Question: How many albums does the recording artist 'Gregory Isaacs' have?
 Context: album: album_id, title, release_date, artist_id
 artist: artist_id, artist_name
-SQL: SELECT COUNT(al.*) AS album_count
+SQL: SELECT COUNT(al.album_id) AS album_count
 FROM album al
 INNER JOIN artist ar ON ar.artist_id = al.artist_id
 WHERE ar.artist_name ILIKE 'Gregory Isaacs';
@@ -69,5 +78,29 @@ artist: artist_id, artist_name
 SQL: SELECT COUNT(al.album_id) AS album_count,
        (SELECT a2.title FROM album a2 WHERE a2.artist_id = ar.artist_id ORDER BY a2.total_tracks DESC LIMIT 1) AS album_with_most_tracks
 FROM artist ar
-LEFT JOIN album al ON al.artist_id = ar.artist_id
+INNER JOIN album al ON al.artist_id = ar.artist_id
 WHERE ar.artist_name ILIKE 'Mavado';
+
+Question: For the artist 'Buju Banton', how many tracks are longer than 4 minutes and what is the latest album year?
+Context: track: track_id, title, duration, position, album_id, artist_id
+album: album_id, title, release_year, artist_id
+artist: artist_id, artist_name
+SQL: SELECT COUNT(tr.track_id) AS long_tracks,
+       (SELECT MAX(al2.release_year) FROM album al2 WHERE al2.artist_id = ar.artist_id) AS latest_album_year
+FROM artist ar
+INNER JOIN album al ON al.artist_id = ar.artist_id
+INNER JOIN track tr ON tr.album_id = al.album_id
+WHERE ar.artist_name ILIKE 'Buju Banton'
+AND tr.duration > 240;
+
+Question: Which label has the most albums, and how many albums does that label have?
+Context: album: album_id, title, release_date, label_id
+record_label: label_id, label_name
+SQL: SELECT (SELECT rl2.label_name FROM record_label rl2 WHERE rl2.label_id = ag.label_id) AS top_label,
+       ag.album_count
+FROM (SELECT l.label_id, COUNT(a.album_id) AS album_count
+      FROM album a
+      INNER JOIN record_label l ON l.label_id = a.label_id
+      GROUP BY l.label_id
+      ORDER BY COUNT(a.album_id) DESC
+      LIMIT 1) ag;
