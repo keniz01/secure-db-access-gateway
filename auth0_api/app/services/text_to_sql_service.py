@@ -90,6 +90,7 @@ class TextToSqlService:
             - results: Query results (if execute=True)
             - error: Error message (if any)
         """
+        sql: str | None = None
         try:
             # Step 1: Generate embeddings from natural language query
             logger.info("Generating embeddings for query: %s", query[:100])
@@ -156,7 +157,7 @@ class TextToSqlService:
         except ValueError as e:
             # Handle validation errors from sql_query_api
             logger.warning("SQL validation error: %s", e)
-            return {"error": str(e), "sql": sql if "sql" in locals() else None}
+            return {"error": str(e), "sql": sql}
         except Exception as e:
             logger.exception("Unexpected error in text-to-SQL: %s", e)
             return {"error": f"Unexpected error: {str(e)}", "sql": None}
