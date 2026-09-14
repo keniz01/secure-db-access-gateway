@@ -11,121 +11,6 @@ The harness patches the RBAC token validator and injects the seeded tenant
 binding so every request rides the exact governed path used in production:
 RBAC middleware -> rate-limit middleware -> GraphQL resolver ->
 TenantServiceProvider -> SqlSafetyChecker -> PolicyEvaluator -> repository
-(read-only SQLite, row cap, per-row limit) -> masking + audit.
-
-Scenarios:
-
-- ``normal``: N virtual users (unique client IPs via ``X-Forwarded-For``) each
-  issue a realistic weighted query mix for a fixed duration. Ramps across
-  ``--ramp`` user counts and reports the envelope (the largest count that
-  honors the budgets).
-- ``attack``: a single client IP fires queries as fast as possible; expects
-  429s to appear (in-memory rate limiter) while the app stays stable.
-
-Budgets (ms) are the accepted thresholds: p95 <= 1000, p99 <= 2000,
-hard-error rate <= 1% (row-cap/timeout/429 are classified and do not count
-as hard errors).
-
-Exit codes:
-    0 - envelope found (normal) or rate limiting validated (attack)
-    1 - budgets not met / envelope below the minimum requested concurrency
-    2 - usage/config error
-"""
-
-from __future__ import annotations
-
-import argparse
-import asyncio
-import json
-import os
-import random
-import sqlite3
-import statistics
-import subprocess
-import sys
-import tempfile
-import time
-from collections import Counter
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field
-from pathlib import Path
-
-import httpx
-
-P95_BUDGET_MS = 1000.0
-P99_BUDGET_MS = 2000.0
-MAX_HARD_ERROR_RATE = 0.01
-
-STATUSES = ("completed", "pending", "failed", "refunded", "processing")
-EXECUTE_QUERY = """query Exec($sql: String!) {
-  execute_sql_statement(request: { sql_statement: $sql, database_id: "default" })
-}"""
-INTROSPECT_QUERY = """query Introspect {
-  introspect_schema(database_id: "default") {
-    tables {
-      name
-      schema_name
-      columns { name type nullable is_primary }
-      foreign_keys { column foreign_table foreign_column }
-    }
-  }
-}"""
-COST_QUERY = """query Cost($sql: String!) {
-  estimate_query_cost(sql_statement: $sql, database_id: "default") { score level }
-}"""
-PING_QUERY = "query { ping }"
-
-
-@dataclass
-class RunSummary:
-    """Aggregated outcome of one scenario step."""
-
-    users: int
-    duration_seconds: float
-    total: int
-    ok: int
-    errors: Counter[str] = field(default_factory=Counter)
-    latencies_ms: list[float] = field(default_factory=list)
-
-    @property
-    def qps(self) -> float:
-        """Requests per second across the step duration."""
-        return self.total / max(self.duration_seconds, 1e-9)
-
-    @property
-    def hard_error_rate(self) -> float:
-        """Proportion of requests that failed the hard-error classes."""
-        hard = sum(
-            count for kind, count in self.errors.items() if kind in {"http_5xx", "timeout", "connection"}
-        )
-        return hard / max(self.total, 1)
-
-    def percentile(self, p: float) -> float:
-        """Return the ``p``-th latency percentile in milliseconds."""
-        if not self.latencies_ms:
-            return 0.0
-        ordered = sorted(self.latencies_ms)
-        index = min(len(ordered) - 1, max(0, int(math_ceil(len(ordered) * p)) - 1))
-        return ordered[index]
-```
-
-I need math_ceil. Import math. Oops I wrote a bad stub — I referenced math_ceil without importing. Let me write the full file cleanly in one pass. Let me restart and write the complete run.py now, carefully in full.</think>
-
-<｜DSML｜tool_calls>
-<｜DSML｜invoke name="write">
-<｜DSML｜parameter name="content" string="true">"""Hermetic load harness for the governed query pipeline.
-
-Establishes the gateway's **capacity envelope**: a concurrency level at which
-p95 latency, p99 latency, and the hard-error rate stay inside documented
-budgets, plus the resource usage (CPU/RSS) at that level. Because the harness
-runs on an aiosqlite fixture in-process, it is fully reproducible in CI
-(no Postgres, no Auth0, no network); a production-graded run is the same
-harness pointed at a deployed stack (see ``LOAD_TESTING.md``).
-
-The harness patches the RBAC token validator and injects the seeded tenant
-binding so every request rides the exact governed path used in production:
-RBAC middleware -> rate-limit middleware -> GraphQL resolver ->
-TenantServiceProvider -> SqlSafetyChecker -> PolicyEvaluator -> repository
 (read-only SQLite, row cap) -> masking + audit.
 
 Scenarios:
@@ -138,8 +23,9 @@ Scenarios:
   429s to appear (in-memory rate limiter) while the app stays stable.
 
 Budgets (ms) are the accepted thresholds: p95 <= 1000, p99 <= 2000,
-hard-error rate <= 1%. Row-cap/timeout/429 responses are classified and do not
-count as hard errors.
+hard-error rate <= 1%. Hard errors are HTTP 5xx, timeouts, connection
+failures, and internal GraphQL exceptions; row-cap and 429 responses are
+classified and do not count as hard errors.
 
 Exit codes:
     0 - envelope found (normal) or rate limiting validated (attack)
@@ -152,6 +38,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import math
 import os
 import random
@@ -161,12 +48,17 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import httpx
+
+if __package__ in (None, ""):
+    # Bare-script execution (python loadtest/run.py): make the service root
+    # importable so the governed-pipeline modules below resolve.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 P95_BUDGET_MS = 1000.0
 P99_BUDGET_MS = 2000.0
@@ -174,20 +66,20 @@ MAX_HARD_ERROR_RATE = 0.01
 
 STATUSES = ("completed", "pending", "failed", "refunded", "processing")
 EXECUTE_QUERY = """query Exec($sql: String!) {
-  execute_sql_statement(request: { sql_statement: $sql, database_id: "default" })
+  executeSqlStatement(request: { sqlStatement: $sql, databaseId: "default" })
 }"""
 INTROSPECT_QUERY = """query Introspect {
-  introspect_schema(database_id: "default") {
+  introspectSchema(databaseId: "default") {
     tables {
       name
-      schema_name
-      columns { name type nullable is_primary }
-      foreign_keys { column foreign_table foreign_column }
+      schemaName
+      columns { name type nullable isPrimary }
+      foreignKeys { column foreignSchema foreignTable foreignColumn }
     }
   }
 }"""
 COST_QUERY = """query Cost($sql: String!) {
-  estimate_query_cost(sql_statement: $sql, database_id: "default") { score level }
+  estimateQueryCost(sqlStatement: $sql, databaseId: "default") { score level }
 }"""
 PING_QUERY = "query { ping }"
 
@@ -201,8 +93,8 @@ class RunSummary:
 
     users: int
     duration_seconds: float
-    total: int
-    ok: int
+    total: int = 0
+    ok: int = 0
     errors: Counter[str] = field(default_factory=Counter)
     latencies_ms: list[float] = field(default_factory=list)
 
@@ -234,9 +126,20 @@ class RunSummary:
         )
 
 
-def _redact_message(detail: Any) -> str:
-    """Normalize an error detail into a compact classification key."""
-    return type(detail).__name__ if detail is not None else "unknown"
+def _classify_graphql_error(body: dict[str, Any]) -> str:
+    """Classify a GraphQL error response as row-cap (soft) or exception (hard)."""
+    if "errors" in body:
+        text_parts = []
+        for item in body["errors"]:
+            text_parts.append(str(item.get("message", "")))
+            detail = ((item.get("extensions") or {}).get("sqlQueryApi") or {}).get("details")
+            if detail:
+                text_parts.append(str(detail))
+        classified = " ".join(text_parts).lower()
+        if "maximum allowed row limit" in classified:
+            return "row_cap"
+        return "exception"
+    return "ok"
 
 
 class LoadClient:
@@ -267,11 +170,7 @@ class LoadClient:
             body = response.json()
         except ValueError:
             return elapsed_ms, response.status_code, "http_error"
-        if "errors" in body:
-            kinds = {_redact_message(item.get("message", "")) for item in body["errors"]}
-            kind = "row_cap" if "row" in " ".join(kinds).lower() else "exception"
-            return elapsed_ms, response.status_code, kind
-        return elapsed_ms, response.status_code, "ok"
+        return elapsed_ms, response.status_code, _classify_graphql_error(body)
 
 
 def seed_database(db_path: Path, users: int, transactions: int) -> None:
@@ -281,7 +180,10 @@ def seed_database(db_path: Path, users: int, transactions: int) -> None:
         conn.execute("PRAGMA journal_mode=OFF")
         conn.execute("PRAGMA synchronous=OFF")
         conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, email TEXT, org_id TEXT, created_at TEXT)")
-        conn.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY, user_id INTEGER, amount REAL, status TEXT, created_at TEXT)")
+        conn.execute(
+            "CREATE TABLE transactions (id INTEGER PRIMARY KEY, user_id INTEGER, "
+            "amount REAL, status TEXT, created_at TEXT)"
+        )
         conn.execute("CREATE INDEX idx_transactions_user ON transactions (user_id)")
         conn.execute("CREATE INDEX idx_transactions_status ON transactions (status)")
         user_rows = [
@@ -350,20 +252,25 @@ def _fake_validate_access_token(token: str | None) -> dict[str, Any] | None:
     }
 
 
-def build_load_app() -> Any:
+def build_load_app() -> tuple[Any, TenantServiceProvider]:
     """Create the FastAPI application with the seeded resolver and fake auth."""
     import middlewares.rbac_middleware as rbac  # noqa: PLC0415
-    import sql_query_controller as controller  # noqa: PLC0415
+    from routes import sql_query_controller as controller  # noqa: PLC0415
     from app_factory import create_app  # noqa: PLC0415
-    from dependencies.tenant_service_provider import TenantServiceProvider  # noqa: PLC0415
-    from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker  # noqa: PLC0415
+    from dependencies.tenant_service_provider import (
+        TenantServiceProvider,  # noqa: PLC0415
+    )
+    from repositories.sql_validators.sql_safety_checker import (
+        DefaultSqlSafetyChecker,  # noqa: PLC0415
+    )
     from services.policy_engine import PolicyEvaluator  # noqa: PLC0415
     from services.query_gateway import GovernedQueryGateway  # noqa: PLC0415
     from services.tenant_database_resolver import TenantDatabaseResolver  # noqa: PLC0415
 
     resolver = TenantDatabaseResolver.from_environment()
     controller._tenant_database_resolver = resolver
-    controller._tenant_service_provider = TenantServiceProvider(resolver)
+    provider = TenantServiceProvider(resolver)
+    controller._tenant_service_provider = provider
     controller._sql_safety_checker = DefaultSqlSafetyChecker()
     controller._query_gateway = GovernedQueryGateway(
         lambda: controller._tenant_service_provider,
@@ -371,12 +278,11 @@ def build_load_app() -> Any:
         policy_evaluator=PolicyEvaluator.from_environment(),
     )
     rbac.validate_access_token = _fake_validate_access_token  # type: ignore[assignment]
-    return create_app()
+    return create_app(), provider
 
 
 def _client_ips(seed: int, users: int) -> list[str]:
     """Return one distinct client-IP per virtual user."""
-    rng = random.Random(seed)
     return [f"10.{(i * 37) % 255}.{(i * 13) % 255}.{(i * 7) % 255}" for i in range(users)]
 
 
@@ -392,14 +298,13 @@ async def _run_user(
     deadline = time.monotonic() + duration
     while time.monotonic() < deadline:
         payload = rng.choice(payloads)
-        elapsed, status, kind = await client.send(payload, client_ip)
+        elapsed, _, kind = await client.send(payload, client_ip)
         summary.latencies_ms.append(elapsed)
         if kind == "ok":
             summary.ok += 1
         else:
             summary.errors[kind] += 1
         summary.total += 1
-        del status
 
 
 async def _run_attack(
@@ -412,14 +317,13 @@ async def _run_attack(
     client_ip = "203.0.113.9"
     deadline = time.monotonic() + duration
     while time.monotonic() < deadline:
-        elapsed, status, kind = await client.send(payload, client_ip)
+        elapsed, _, kind = await client.send(payload, client_ip)
         summary.latencies_ms.append(elapsed)
         if kind == "ok":
             summary.ok += 1
         else:
             summary.errors[kind] += 1
         summary.total += 1
-        del status
 
 
 async def _sample_resources(interval: float, stop: asyncio.Event) -> tuple[float, float]:
@@ -452,7 +356,6 @@ async def _run_step_scenario_async(
     seed: int,
 ) -> RunSummary:
     """Run the normal scenario at a fixed concurrency and return the summary."""
-    rng = random.Random(seed)
     summary = RunSummary(users=users, duration_seconds=duration)
     workers = [
         _run_user(client, payloads, client_ip, duration, random.Random(seed + i), summary)
@@ -531,11 +434,10 @@ def run_scenario(
     users: int,
     duration: float,
     seeds: int,
-    connection_string: str,
     attack_query: dict[str, Any] | None = None,
 ) -> tuple[list[RunSummary], float, float]:
     """Run load scenario inside a fresh event loop and return summaries + peaks."""
-    app = build_load_app()
+    app, provider = build_load_app()
     transport = httpx.ASGITransport(app=app)
     client = LoadClient(transport)
 
@@ -552,7 +454,8 @@ def run_scenario(
         finally:
             stop.set()
             cpu, rss = await sampler
-        del transport
+            await client.aclose()
+            await provider.close()
         return results, cpu, rss
 
     return asyncio.run(_run())
@@ -577,6 +480,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested scenario; return the process exit code."""
     args = parse_args(argv)
     os.environ.setdefault("ENVIRONMENT", "dev")
+    logging.getLogger("middlewares").setLevel(logging.WARNING)
+    logging.getLogger("config").setLevel(logging.WARNING)
+    logging.getLogger("app_factory").setLevel(logging.WARNING)
+    logging.getLogger("dependencies").setLevel(logging.WARNING)
+    logging.getLogger("strawberry").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
     if args.db:
         db_path = Path(args.db)
     else:
@@ -595,7 +505,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 users=1,
                 duration=args.duration,
                 seeds=args.seed_users,
-                connection_string="",
             )
             attack = steps[0]
             _print_step(attack)
@@ -616,12 +525,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             steps = []
             last_cpu = last_rss = 0.0
             for users in counts:
-                step, cpu, rss = run_scenario(
+                scenario_steps, cpu, rss = run_scenario(
                     scenario="normal",
                     users=users,
                     duration=args.duration,
                     seeds=args.seed_users,
                 )
+                step = scenario_steps[0]
                 _print_step(step)
                 steps.append(step)
                 last_cpu, last_rss = cpu, rss

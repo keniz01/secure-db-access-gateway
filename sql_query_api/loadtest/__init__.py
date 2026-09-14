@@ -1,4 +1,4 @@
-"""Hermetic load testing for the governed query pipeline (issue #144 / M18)."""
+"""Hermetic load testing for the governed query pipeline."""
 
 from __future__ import annotations
 

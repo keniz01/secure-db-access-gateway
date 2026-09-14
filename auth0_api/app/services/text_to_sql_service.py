@@ -156,7 +156,7 @@ class TextToSqlService:
         except ValueError as e:
             # Handle validation errors from sql_query_api
             logger.warning("SQL validation error: %s", e)
-            return {"error": str(e), "sql": result.get("sql") if "result" in locals() else None}
+            return {"error": str(e), "sql": sql if "sql" in locals() else None}
         except Exception as e:
             logger.exception("Unexpected error in text-to-SQL: %s", e)
             return {"error": f"Unexpected error: {str(e)}", "sql": None}
