@@ -35,25 +35,52 @@ async def test_get_greeting_passes_reasoning_disabled(ai_service, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_get_greeting_empty_response(ai_service):
-    """Test greeting generation with empty response."""
+    """A persistently empty response degrades gracefully to None after retries."""
     mock_response = MagicMock()
     mock_response.choices = [MagicMock(message=MagicMock(content=""))]
     ai_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
-    
-    with pytest.raises(AIServiceError, match="Empty response from AI model"):
-        await ai_service.get_greeting("system", "user")
+
+    result = await ai_service.get_greeting("system", "user", retries=1, backoff_base=0.01)
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_get_greeting_retries_empty_response_then_succeeds(ai_service):
+    """An intermittent empty response is retried instead of failing instantly."""
+    empty = MagicMock()
+    empty.choices = [MagicMock(message=MagicMock(content=None, reasoning=None))]
+    ok = MagicMock()
+    ok.choices = [MagicMock(message=MagicMock(content="Hello after retry"))]
+    ai_service.client.chat.completions.create = AsyncMock(side_effect=[empty, ok])
+
+    result = await ai_service.get_greeting("system", "user", retries=2, backoff_base=0.01)
+    assert result == "Hello after retry"
+    assert ai_service.client.chat.completions.create.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_get_greeting_falls_back_to_reasoning(ai_service):
+    """Empty content falls back to the provider's message.reasoning field."""
+    mock_response = MagicMock()
+    mock_response.choices = [
+        MagicMock(message=MagicMock(content=None, reasoning="Reasoned answer here"))
+    ]
+    ai_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    result = await ai_service.get_greeting("system prompt", "user prompt")
+    assert result == "Reasoned answer here"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("choices", [None, []])
 async def test_get_greeting_missing_choices(ai_service, choices):
-    """Test malformed provider responses are reported as empty responses."""
+    """Test malformed provider responses degrade gracefully to None."""
     mock_response = MagicMock()
     mock_response.choices = choices
     ai_service.client.chat.completions.create = AsyncMock(return_value=mock_response)
 
-    with pytest.raises(AIServiceError, match="Empty response from AI model"):
-        await ai_service.get_greeting("system", "user")
+    result = await ai_service.get_greeting("system", "user", retries=1, backoff_base=0.01)
+    assert result is None
 
 @pytest.mark.asyncio
 async def test_generate_embeddings_success(ai_service):
