@@ -64,7 +64,9 @@ class TestTextToSqlRouteConfusedDeputy:
     never a credential the client sent."""
 
     @pytest.mark.asyncio
-    async def test_route_passes_session_token_and_database_id_to_service(self, client) -> None:
+    async def test_route_passes_session_token_and_database_id_to_service(
+        self, client, mock_ai_service
+    ) -> None:
         fake_service = MagicMock()
         fake_service.generate_sql_from_text = AsyncMock(
             return_value={"sql": "SELECT * FROM users", "schema": "schema text"}
@@ -87,7 +89,9 @@ class TestTextToSqlRouteConfusedDeputy:
         assert FORGED_TOKEN not in str(service_kwargs)
 
     @pytest.mark.asyncio
-    async def test_route_surfaces_upstream_denial_without_rows(self, client) -> None:
+    async def test_route_surfaces_upstream_denial_without_rows(
+        self, client, mock_ai_service
+    ) -> None:
         denied = {
             "error": "Unexpected error: Failed to fetch schema: Database is not "
             "available for this organisation.",
@@ -252,7 +256,7 @@ class TestStaleSessions:
 
     def test_server_side_session_ttl_expiry_removes_session(self) -> None:
         session_id = session_store.create_session(
-            {"email": "a@b.com"}, "some-token", ttl_seconds=-1
+            {"email": "a@b.com"}, "sample-value", ttl_seconds=-1
         )
         assert session_store.get_session(session_id) is None
         assert session_id not in session_store._sessions
