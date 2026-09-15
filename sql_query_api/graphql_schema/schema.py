@@ -1,6 +1,14 @@
 import strawberry
-from strawberry.extensions import QueryDepthLimiter
 
-from routes.sql_query_controller import Query
+from routes.sql_query_controller import Query, build_graphql_extensions
 
-schema = strawberry.Schema(query=Query, extensions=[QueryDepthLimiter(max_depth=6)])
+
+def make_schema() -> strawberry.Schema:
+    """
+    Build the Strawberry GraphQL schema.
+
+    The schema is constructed fresh on each call so that environment-dependent
+    extensions (e.g. ``DisableIntrospection``) reflect the current runtime,
+    not the first import.
+    """
+    return strawberry.Schema(query=Query, extensions=build_graphql_extensions())

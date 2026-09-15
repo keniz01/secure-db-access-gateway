@@ -189,6 +189,11 @@ async def auth_callback(request: Request):
         ).model_dump())
 
     # The signed browser cookie carries only this opaque identifier; tokens remain server-side.
+    # Rotate any previously issued server-side session so a stale cookie cannot
+    # keep an orphaned session alive after a fresh login.
+    previous_session_id = request.session.get("session_id")
+    if previous_session_id:
+        revoke_session(previous_session_id)
     request.session.clear()
     request.session["session_id"] = create_session(user, access_token, settings.SESSION_MAX_AGE)
 

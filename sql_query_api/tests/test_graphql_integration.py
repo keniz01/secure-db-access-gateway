@@ -259,8 +259,8 @@ class TestGraphQLExecuteSqlStatement:
         assert "errors" in res
         assert "Failed to execute SQL statement. Please verify your query syntax." in res["errors"][0]["message"]
 
-    def test_execute_sql_error_exposes_sanitized_details(self, client: TestClient) -> None:
-        """Execution errors should surface a sanitized root-cause detail in structured extensions."""
+    def test_execute_sql_error_hides_db_detail_by_default(self, client: TestClient) -> None:
+        """Execution errors must not leak table/column names to browser users by default."""
         gql_query = """
         query ExecuteSql($req: SqlStatementRequest!) {
             executeSqlStatement(request: $req)
@@ -273,9 +273,25 @@ class TestGraphQLExecuteSqlStatement:
         error = res["errors"][0]
         extensions = error.get("extensions", {}).get("sqlQueryApi", {})
         assert extensions.get("code") == "SQL_EXECUTION_ERROR"
-        assert extensions.get("details")
+        assert "definitely_missing_table" not in str(extensions)
+
+    def test_execute_sql_error_detail_opt_in(self, client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Trusted callers can opt in to sanitized root-cause details via env."""
+        monkeypatch.setenv("EXPOSE_DB_ERROR_DETAIL", "1")
+        gql_query = """
+        query ExecuteSql($req: SqlStatementRequest!) {
+            executeSqlStatement(request: $req)
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT * FROM definitely_missing_table"}}
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()
+        error = res["errors"][0]
+        extensions = error.get("extensions", {}).get("sqlQueryApi", {})
+        assert extensions.get("code") == "SQL_EXECUTION_ERROR"
+        assert "definitely_missing_table" in extensions.get("details", "")
         assert "SELECT" not in extensions.get("details", "").upper().split("\n")[0]
-        assert "definitely_missing_table" in extensions["details"]
 
     def test_sanitize_db_error_extracts_caused_by_line(self) -> None:
         from exceptions.sql_statement_execution_exception import SqlStatementExecutionError

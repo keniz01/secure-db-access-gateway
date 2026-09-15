@@ -144,8 +144,9 @@ class TestSqlSafetyCheckerCleanAndValidate:
 
         mock_result = MagicMock()
         mock_result.returns_rows = True
-        mock_result.fetchall.return_value = [
-            MagicMock(_mapping={"email": "alice@example.com", "name": "Alice"}),
+        mock_result.fetchmany.side_effect = [
+            [MagicMock(_mapping={"email": "alice@example.com", "name": "Alice"})],
+            [],
         ]
         conn.execute = AsyncMock(return_value=mock_result)
         engine.connect = AsyncMock(return_value=conn)
@@ -193,9 +194,12 @@ class TestSqlSafetyCheckerCleanAndValidate:
 
         mock_result = MagicMock()
         mock_result.returns_rows = True
-        mock_result.fetchall.return_value = [
-            MagicMock(_mapping={"tenant_id": 1, "name": "Alice"}),
-            MagicMock(_mapping={"tenant_id": 2, "name": "Bob"}),
+        mock_result.fetchmany.side_effect = [
+            [
+                MagicMock(_mapping={"tenant_id": 1, "name": "Alice"}),
+                MagicMock(_mapping={"tenant_id": 2, "name": "Bob"}),
+            ],
+            [],
         ]
         conn.execute = AsyncMock(return_value=mock_result)
         engine.connect = AsyncMock(return_value=conn)

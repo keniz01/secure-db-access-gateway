@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
-from app.auth.session_store import get_session
+from app.auth.session_store import create_session, get_session, revoke_session
 from app.security.csrf import CSRF_COOKIE_NAME
 
 ALLOWED_ORIGIN = "http://localhost:5173"
@@ -199,3 +199,40 @@ async def test_graphql_proxy_forwards_session_access_token(client, mocker):
     assert response.status_code == 200
     mock_client.post.assert_awaited_once()
     assert mock_client.post.await_args.kwargs["headers"]["Authorization"] == "Bearer test-access-token"
+
+
+@pytest.mark.asyncio
+async def test_auth_callback_rotates_previous_server_session(client, mocker):
+    """A fresh login revokes the previously issued server-side session."""
+    old_user = {"id": "test-sub", "email": "test@example.com", "name": "Test User", "org_id": "org-1", "roles": []}
+    old_session_id = create_session(old_user, "old-access-token", ttl_seconds=3600)
+    assert get_session(old_session_id) is not None
+
+    mock_oauth = MagicMock()
+    mock_auth0 = MagicMock()
+    mock_oauth.auth0 = mock_auth0
+    mock_auth0.authorize_access_token = AsyncMock(return_value={
+        "access_token": "new-token",
+        "userinfo": {
+            "sub": "test-sub",
+            "email": "test@example.com",
+            "name": "Test User",
+            "https://app.secure-db-access-gateway.org/tenant_id": "org-1",
+        },
+    })
+
+    mock_session = {"session_id": old_session_id}
+    mocker.patch("starlette.requests.Request.session", new_callable=mocker.PropertyMock, return_value=mock_session)
+
+    with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
+        response = await client.get("/api/auth?code=test-code")
+
+    assert response.status_code == 200
+    # The previous session must be revoked and replaced by a fresh one.
+    assert get_session(old_session_id) is None
+    new_session_id = mock_session.get("session_id")
+    assert new_session_id and new_session_id != old_session_id
+    assert get_session(new_session_id)["access_token"] == "new-token"
+
+    # Clean up so the module-level session store stays hermetic.
+    revoke_session(new_session_id)
