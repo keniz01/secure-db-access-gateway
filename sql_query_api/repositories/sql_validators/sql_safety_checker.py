@@ -6,7 +6,7 @@ from typing import Protocol
 import sqlparse
 from sqlparse import tokens as sql_tokens
 
-from repositories.sql_validators.ast_analyzer import AstSqlAnalyzer
+from repositories.sql_validators.ast_analyzer import FORBIDDEN_FUNCTIONS, AstSqlAnalyzer
 from repositories.sql_validators.rules.advanced_sql_rules import (
     ForbiddenFunctionsRule,
     ForbiddenTableRule,
@@ -104,9 +104,11 @@ class DefaultSqlSafetyChecker:
             #         "expression",
             #     }
             # ),
-            ForbiddenFunctionsRule(
-                forbidden={"pg_sleep", "pg_terminate_backend", "pg_execute_server_program"}
-            ),
+            # The forbidden-function set is the SAME canonical set the AST
+            # analyzer walks with (ast_analyzer.FORBIDDEN_FUNCTIONS), so both
+            # layers enforce exactly the same list — no gap between rule and
+            # analyzer coverage.
+            ForbiddenFunctionsRule(forbidden=FORBIDDEN_FUNCTIONS),
             ForbiddenTableRule(
                 forbidden_prefixes={"pg_", "information_schema"}
             ),
@@ -254,6 +256,11 @@ class DefaultSqlSafetyChecker:
         """
         Check if a given SQL query is a "safe" SELECT statement.
 
+        Fail-closed: any unexpected parser/analyzer exception (deep nesting,
+        malformed quoting, control bytes, …) yields ``False``, never a raise,
+        so a hostile query can neither crash classification nor slip through
+        an unhandled error path.
+
         Args:
             query: The SQL query string to validate.
 
@@ -261,7 +268,18 @@ class DefaultSqlSafetyChecker:
             True if the query is a safe SELECT statement, False otherwise.
 
         """
+        try:
+            return self._is_safe_select_query(query)
+        except Exception:
+            # Fuzz/edge-case inputs must be REJECTED, not raised on. The DB
+            # never sees a query whose classification path raised.
+            return False
+
+    def _is_safe_select_query(self, query: str) -> bool:
         if not query or not query.strip():
+            return False
+
+        if "\x00" in query:
             return False
 
         if len(query) > self.max_query_length:

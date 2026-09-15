@@ -206,6 +206,14 @@ class SqlQueryRepository(ISqlQueryRepository):
 
     async def explain_query_cost(self, sql: str) -> dict[str, Any]:
         """Run an EXPLAIN plan when the backend supports it and summarize the plan cost."""
+        # Every execution path — including EXPLAIN, which runs the user's SQL
+        # against the optimizer — must pass the same safety gate as normal
+        # execution so no unvalidated SQL ever reaches the database.
+        if not self._sql_safety_checker.is_safe_select_query(sql):
+            logging.warning(f"Forbidden SQL statement attempted in EXPLAIN path: {sql}")
+            raise ForbiddenSqlStatementError(
+                "Only simple SELECT statements are allowed."
+            )
         normalized_sql = self._ensure_limit(sql).strip()
         try:
             async with self.get_conn(self._data_schema) as conn:
