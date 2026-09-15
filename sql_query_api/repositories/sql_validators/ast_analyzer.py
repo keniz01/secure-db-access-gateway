@@ -5,7 +5,14 @@ from __future__ import annotations
 import sqlglot
 from sqlglot import exp
 
+# Single source of truth for disallowed functions. Both the AST analyzer and the
+# checker-level ForbiddenFunctionsRule use this set, so a newly added dangerous
+# function cannot be missed by one layer. Entries are bare lowercase names;
+# schema qualification and quoting are normalized away before comparison.
 FORBIDDEN_FUNCTIONS = frozenset({
+    # ------------------------------------------------------------------
+    # File-system access / server control
+    # ------------------------------------------------------------------
     "pg_read_file",
     "pg_read_binary_file",
     "pg_write_file",
@@ -13,6 +20,27 @@ FORBIDDEN_FUNCTIONS = frozenset({
     "pg_file_write",
     "pg_file_rename",
     "pg_file_unlink",
+    "pg_execute_server_program",
+    "pg_terminate_backend",
+    "pg_cancel_backend",
+    # ------------------------------------------------------------------
+    # Delays / resource exhaustion
+    # ------------------------------------------------------------------
+    "pg_sleep",
+    "pg_sleep_for",
+    "pg_sleep_until",
+    # ------------------------------------------------------------------
+    # Advisory session locks (hold pooled connections indefinitely)
+    # ------------------------------------------------------------------
+    "pg_advisory_lock",
+    "pg_advisory_lock_shared",
+    "pg_try_advisory_lock",
+    "pg_try_advisory_lock_shared",
+    "pg_advisory_xact_lock",
+    "pg_advisory_xact_lock_shared",
+    # ------------------------------------------------------------------
+    # dblink: arbitrary server-side outbound connections
+    # ------------------------------------------------------------------
     "dblink",
     "dblink_exec",
     "dblink_connect",
@@ -20,8 +48,19 @@ FORBIDDEN_FUNCTIONS = frozenset({
     "dblink_fetch",
     "dblink_close",
     "dblink_disconnect",
+    # ------------------------------------------------------------------
+    # Large-object import/export/write (lo_get reads remain permitted)
+    # ------------------------------------------------------------------
     "lo_import",
     "lo_export",
+    "lo_create",
+    "lo_unlink",
+    "lo_from_bytea",
+    "lo_put",
+    "lo_truncate",
+    # ------------------------------------------------------------------
+    # XML export side channels
+    # ------------------------------------------------------------------
     "query_to_xml",
     "table_to_xml",
     "cursor_to_xml",
@@ -38,7 +77,26 @@ MUTATION_EXPRESSION_TYPES = (
     exp.Command,
     exp.TruncateTable,
     exp.Merge,
+    # `SELECT ... INTO` implements `CREATE TABLE AS` in PostgreSQL: it creates
+    # a new table, so the statement is a schema mutation even though the root
+    # node is still a Select.
+    exp.Into,
 )
+
+
+def normalize_function_name(name: str | None) -> str:
+    """
+    Normalize a function reference for forbidden-name comparison.
+
+    Strips quoting, keeps only the last dotted component, and lowercases. A
+    forbidden function cannot evade detection by schema qualification
+    (``pg_catalog.pg_read_file``) or quoting (``"pg_read_file"``).
+    """
+    if not name:
+        return ""
+    for quote in ('"', "`", "'"):
+        name = name.replace(quote, "")
+    return name.split(".")[-1].strip().lower()
 
 
 class AstSqlAnalyzer:
@@ -80,9 +138,15 @@ class AstSqlAnalyzer:
             if isinstance(node, MUTATION_EXPRESSION_TYPES):
                 return False
 
+            # Row locks (`FOR UPDATE` / `FOR SHARE` and friends) surface as
+            # `exp.Lock` nodes; they take/queue locks on DB rows and are not
+            # read-only reads.
+            if isinstance(node, exp.Lock):
+                return False
+
             # Disallow dangerous administrative or side-effect functions
             if isinstance(node, (exp.Anonymous, exp.Func)):
-                func_name = (node.name or "").lower()
+                func_name = normalize_function_name(node.name)
                 if func_name in FORBIDDEN_FUNCTIONS:
                     return False
 

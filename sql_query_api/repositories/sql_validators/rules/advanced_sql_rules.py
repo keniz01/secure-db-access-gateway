@@ -10,6 +10,8 @@ import sqlglot
 import sqlparse
 from sqlglot import exp
 
+from repositories.sql_validators.ast_analyzer import normalize_function_name
+
 
 class AllowedNodeTypesRule:
     """
@@ -64,7 +66,7 @@ class ForbiddenFunctionsRule:
             return False
         for node in parsed.walk():
             if isinstance(node, exp.Func):
-                func_name = node.name.lower()
+                func_name = normalize_function_name(node.name)
                 if func_name in self.forbidden:
                     return False
         return True
@@ -72,10 +74,13 @@ class ForbiddenFunctionsRule:
 
 class ForbiddenTableRule:
     """
-    Block reads from system/catalog tables unless explicitly allowed.
+    Block reads from system/catalog tables/schemas unless explicitly allowed.
 
-    Any table name that starts with ``pg_`` or matches ``information_schema``
-    (or a sub-schema thereof) causes the rule to reject.
+    Any table whose schema (``database``/``schema``/``db``) or name starts with
+    ``pg_`` or matches ``information_schema`` causes the rule to reject. The
+    FULLY QUALIFIED name is inspected — not just the bare table name — so
+    ``information_schema.tables`` and quoted/mixed-case ``"pg_catalog"."pg_class"``
+    cannot evade the prefix check the way a bare-name probe would.
     """
 
     def __init__(self, forbidden_prefixes: set[str] | None = None):
@@ -88,9 +93,15 @@ class ForbiddenTableRule:
         except Exception:
             return False
         for node in parsed.walk():
-            if isinstance(node, exp.Table):
-                tbl = str(node.this).lower() if hasattr(node, "this") else str(node.name).lower()
-                for prefix in self.forbidden_prefixes:
-                    if tbl.startswith(prefix):
-                        return False
+            if not isinstance(node, exp.Table):
+                continue
+            parts = [node.catalog, node.db, node.name]
+            parts = [p.replace('"', "").replace("`", "").strip().lower() for p in parts if p]
+            if not parts:
+                continue
+            qualified = ".".join(parts)
+            unqualified = parts[-1]
+            for prefix in self.forbidden_prefixes:
+                if qualified.startswith(prefix) or unqualified.startswith(prefix):
+                    return False
         return True
