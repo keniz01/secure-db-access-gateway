@@ -82,7 +82,9 @@ connection:
 1. runs `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` (all
    transactions, including introspection, are read-only at the engine);
 2. runs `SET ROLE SQL_READONLY_ROLE` when configured (the bare role name is
-   validated against `^[A-Za-z_][A-Za-z0-9_$]*$`).
+   validated against `^[A-Za-z_][A-Za-z0-9_$]*$`);
+3. pushes the per-query budgets as `SET SESSION` (statement and lock timeouts)
+   so they hold across every transaction on the pooled connection.
 
 Provision the dedicated `gateway_readonly_user` role per tenant database with
 `scripts/setup_least_privilege_gateway_role.sql` (idempotent, fail-closed,
@@ -91,6 +93,23 @@ requires an explicit `gateway_password`; grants only `CONNECT` + `USAGE` +
 execution, and attaches `default_transaction_read_only=on`).
 
 `ENVIRONMENT=production` without `SQL_READONLY_ROLE` fails fast at startup for
-PostgreSQL tenants (skipped under `CI`). `scripts/probe-production.sh` (probe
-P5) runs `probe/run.py` against each tenant and fails if any connection is not
-read-only.
+PostgreSQL tenants (skipped under `CI`).
+
+### Database resource controls (production)
+
+The same script attaches **role-level budgets** so the engine — not just the
+app — bounds runaway work, even for a direct psql login:
+
+- `statement_timeout` (default `30s`; keep `>= SQL_QUERY_TIMEOUT_SECONDS`),
+  `lock_timeout` (default `5s`),
+  `idle_in_transaction_session_timeout` (default `10s`);
+- `work_mem` (default `4MB`) and `max_parallel_workers_per_gather`
+  (default `0`) to cap per-operation and parallel-query memory;
+- `CONNECTION LIMIT` (default `20`) to cap role connections per cluster.
+
+All are tunable psql variables (`-v gateway_statement_timeout=...`, etc.) and
+re-verified by the script's fail-closed verification block. The app-side pool is
+bounded per engine by `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` (validated at startup,
+see `dependency_container.pool_settings_from_env`) and must fit under the role's
+connection limit. `scripts/probe-production.sh` (probe P5) fails any tenant with
+a disabled statement/lock/idle timeout or no connection limit.

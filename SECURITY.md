@@ -236,6 +236,35 @@ enforces this at the database engine itself:
   the read-only role, never an owner or superuser account. Clients only ever
   send a logical `database_id`.
 
+### Database-side resource controls
+
+Resource exhaustion is a DoS vector; production bounds it at the database
+engine, not just in the app. The provisioning script
+(`sql_query_api/scripts/setup_least_privilege_gateway_role.sql`) attaches role
+defaults so even a direct login as the gateway role is time- and memory-bounded,
+and its verification block re-checks them on every run:
+
+- **`statement_timeout` (30s default)** — kills runaway statements server-side.
+- **`lock_timeout` (5s default)** — bounds lock-wait time (mirrors
+  `SQL_LOCK_TIMEOUT_SECONDS`).
+- **`idle_in_transaction_session_timeout` (10s default)** — reclaims sessions
+  parked inside an open transaction.
+- **`work_mem` (4MB default)** and **`max_parallel_workers_per_gather`
+  (0 default)** — bound per-operation and parallel-query memory for a
+  predictable footprint.
+- **`CONNECTION LIMIT` on the role (20 default)** — caps how many pooled
+  connections the gateway can hold; the app-side pool
+  (`DB_POOL_SIZE` + `DB_MAX_OVERFLOW` per engine) is validated to be positive
+  and finite at startup and must fit under this limit.
+- The operator probe (P5) fails any tenant whose role has a disabled
+  statement/lock/idle timeout or no connection limit, so an unprovisioned target
+  is flagged before rollout.
+
+The gateway also pushes its per-query budgets (`SQL_QUERY_TIMEOUT_SECONDS`,
+`SQL_LOCK_TIMEOUT_SECONDS`) at session start; the app budget should never be
+looser than the DB budget (keep `SQL_QUERY_TIMEOUT_SECONDS <=
+gateway_statement_timeout`).
+
 ### Key Management Best Practices
 
 1. **Many copies, one authority.** The env file on each host is a *copy*. Keep

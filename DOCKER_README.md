@@ -139,7 +139,11 @@ docker compose up --build
      PostgreSQL superuser to create the dedicated SELECT-only
      `gateway_readonly_user` role (single purpose: `CONNECT` on the database,
      `USAGE` + `SELECT` on the data/metadata schemas, no ownership/DDL/DML,
-     `default_transaction_read_only=on`; fail-closed and idempotent). Use that
+     `default_transaction_read_only=on`; fail-closed and idempotent). The same
+     script attaches the database-side resource controls (statement/lock/
+     idle-in-transaction timeouts, `work_mem`, a `CONNECTION LIMIT`) — tune via
+     `-v gateway_statement_timeout=30s ... -v gateway_connection_limit=20` and
+     keep `gateway_statement_timeout >= SQL_QUERY_TIMEOUT_SECONDS`. Use that
      role's credentials in `TENANT_DATABASES_JSON` and set
      `SQL_READONLY_ROLE=gateway_readonly_user` in the env file — the gateway
      fails fast in production if it is missing.

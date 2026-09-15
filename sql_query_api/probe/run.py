@@ -21,7 +21,7 @@ import argparse
 import asyncio
 import os
 import sys
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit, urlunsplit
 
@@ -45,6 +45,30 @@ def _redact_url(connection_string: str) -> str:
         return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
     except ValueError:
         return connection_string
+
+
+def check_db_side_resource_controls(
+    settings: Mapping[str, object],
+    connection_limit: int | None,
+) -> list[str]:
+    """
+    Return violations when the PostgreSQL role is missing resource controls.
+
+    ``settings`` carries the session values of ``statement_timeout``,
+    ``lock_timeout``, and ``idle_in_transaction_session_timeout`` as reported by
+    ``SHOW`` (PostgreSQL prints ``0`` when a budget is disabled), and
+    ``connection_limit`` is the role's ``rolconnlimit``. The gateway provisions
+    these via ``scripts/setup_least_privilege_gateway_role.sql``; a target that
+    fails this check is not production-ready.
+    """
+    violations: list[str] = []
+    for name in ("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout"):
+        value = settings.get(name)
+        if value is None or str(value).strip().lower() in {"0", "0s", "off", "none", ""}:
+            violations.append(f"{name} is not configured (SHOW {name} = {value!r})")
+    if connection_limit is None or connection_limit <= 0:
+        violations.append("role has no connection limit (rolconnlimit <= 0)")
+    return violations
 
 
 def normalize_connection_string(connection_string: str) -> str:
@@ -96,6 +120,26 @@ async def probe_one(
         try:
             async with engine.begin() as conn:
                 if normalized.startswith(("postgresql:", "postgresql+")):
+                    # DB-side resource controls must already be provisioned on the
+                    # role (setup_least_privilege_gateway_role.sql): statement/lock/
+                    # idle-in-transaction budgets plus a connection limit. SHOW
+                    # prints "0" when a budget is disabled, so check before the
+                    # probe applies its own session settings.
+                    db_settings: dict[str, object] = {}
+                    for name in ("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout"):
+                        row = (await conn.execute(text(f"SHOW {name}"))).one()
+                        db_settings[name] = row[0] if hasattr(row, "__getitem__") else str(row)
+                    conn_limit_row = (
+                        await conn.execute(
+                            text("SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user")
+                        )
+                    ).one()
+                    conn_limit = conn_limit_row[0]
+                    violations = check_db_side_resource_controls(db_settings, conn_limit)
+                    if violations:
+                        raise RuntimeError(
+                            "PostgreSQL resource controls not provisioned: " + "; ".join(violations)
+                        )
                     # Mirror the gateway's PostgreSQL enforcement exactly: session
                     # read-only (covers every transaction), optional SET ROLE to the
                     # dedicated read-only role, then prove the session is read-only.
