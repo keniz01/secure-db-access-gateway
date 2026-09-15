@@ -118,10 +118,19 @@ roadmap acceptance note for #143.
 ## Least-privilege grants (issue #148)
 
 The gateway account only needs read access; the backup/restore tooling runs
-under platform credentials. Document the production grant set with #148:
-`USAGE` on the schema + `SELECT` on tables/views, and nothing else. The
-`--no-owner --no-privileges` dump format also means a restore does not depend
-on a specific role existing on the target cluster.
+under platform credentials.
+
+- Provision the dedicated read-only role with
+  `sql_query_api/scripts/setup_least_privilege_gateway_role.sql`: `CONNECT` on
+  the database, `USAGE` on the schema + `SELECT` on tables/views, and nothing
+  else (no ownership, no `CREATE`/`TEMPORARY`, dangerous functions revoked,
+  `default_transaction_read_only=on`). The gateway also `SET ROLE`s into it
+  (`SQL_READONLY_ROLE`) on every PostgreSQL connection, and `ENVIRONMENT=production`
+  fails fast if it is unset.
+- Re-run the provisioning script after a restore or after schema churn to
+  re-apply grants; it is idempotent and fail-closed on verification.
+- The `--no-owner --no-privileges` dump format means a restore does not depend
+  on a specific role existing on the target cluster.
 
 ## During an incident
 

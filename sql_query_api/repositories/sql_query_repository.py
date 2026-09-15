@@ -18,6 +18,48 @@ from exceptions.sql_statement_execution_exception import SqlStatementExecutionEr
 from repositories.abstract_sql_query_repository import ISqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import SqlSafetyChecker
 
+_READONLY_ROLE_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_$]*$")
+
+
+def validate_readonly_role_name(role_name: str | None) -> str | None:
+    """Validate a configured PostgreSQL role identifier so ``SET ROLE`` is safe.
+
+    Only a bare, unqualified role name is acceptable; anything else (qualified
+    identifiers, string literals, expressions) is rejected before it can reach
+    ``SET ROLE``.
+    """
+    if role_name is None:
+        return None
+    role_name = role_name.strip()
+    if not role_name or not _READONLY_ROLE_PATTERN.fullmatch(role_name):
+        raise ValueError(
+            "SQL_READONLY_ROLE must be a bare PostgreSQL role name (not a "
+            "qualified identifier or a literal)."
+        )
+    return role_name
+
+
+def enforce_readonly_role_guardrail(connection_string: str, *, production: bool) -> None:
+    """Refuse to serve PostgreSQL tenants without a dedicated read-only role.
+
+    ``production`` should already reflect the runtime environment (and should be
+    ``False`` under CI) so hermetic tests and normal local runs are unaffected.
+    This closes the "application compromise obtains write access" blocker: the
+    login session must switch to a SELECT-only role the engine itself enforces.
+    """
+    if not connection_string.startswith("postgresql"):
+        return
+    if not production:
+        return
+    role_name = os.getenv("SQL_READONLY_ROLE", "").strip()
+    if not role_name:
+        raise RuntimeError(
+            "Production PostgreSQL tenants require SQL_READONLY_ROLE: the login "
+            "session must SET ROLE to the dedicated SELECT-only role provisioned "
+            "by scripts/setup_least_privilege_gateway_role.sql."
+        )
+    validate_readonly_role_name(role_name)
+
 
 class SqlQueryRepository(ISqlQueryRepository):
     """Repository that executes governed, read-only SQL against a database."""
@@ -61,7 +103,9 @@ class SqlQueryRepository(ISqlQueryRepository):
         # Lock timeout in seconds (default 5 seconds)
         self._lock_timeout_ms: int = int(float(os.getenv("SQL_LOCK_TIMEOUT_SECONDS", "5")) * 1000)
         # Optional dedicated read‑only role name; if set, connections will SET ROLE to it
-        self._readonly_role: str | None = os.getenv("SQL_READONLY_ROLE") or None
+        self._readonly_role: str | None = validate_readonly_role_name(
+            os.getenv("SQL_READONLY_ROLE") or None
+        )
 
     @property
     def database_target(self) -> str:
@@ -203,8 +247,13 @@ class SqlQueryRepository(ISqlQueryRepository):
             conn: AsyncConnection = await self._engine.connect()
             try:
                 if conn.dialect.name == "postgresql":
-                    # Enforce read‑only transaction
-                    await conn.execute(text("SET TRANSACTION READ ONLY;"))
+                    # Enforce read‑only at the session level so every transaction on
+                    # this connection (including EXPLAIN/introspection) is read-only,
+                    # not just the explicitly opened one.
+                    await conn.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;"))
+                    # Optionally switch to a dedicated read‑only role if configured
+                    if self._readonly_role:
+                        await conn.execute(text(f"SET ROLE {self._readonly_role};"))
                     # Apply statement timeout (already set in __init__)
                     await conn.execute(
                         text(f"SET LOCAL statement_timeout = '{int(self._query_timeout_seconds * 1000)}';")
@@ -214,9 +263,6 @@ class SqlQueryRepository(ISqlQueryRepository):
                     await conn.execute(
                         text(f"SET LOCAL lock_timeout = '{int(self._lock_timeout_ms)}';")
                     )
-                    # Optionally switch to a dedicated read‑only role if configured
-                    if self._readonly_role:
-                        await conn.execute(text(f"SET ROLE {self._readonly_role};"))
                     if schema_name:
                         await conn.execute(text(f"SET search_path TO {schema_name}"))
                 else:

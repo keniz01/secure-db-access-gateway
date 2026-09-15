@@ -73,3 +73,24 @@ for automation, `CLI_ACCESS_TOKEN_FILE`. The CLI uses the same issuer,
 audience, signature, expiry, tenant claim, role, and subject-attribute
 validation as the API before constructing a principal. It does not accept
 locally configured roles or tenant identity as authorization inputs.
+
+### Database read-only enforcement (production)
+
+App-level validation is defense-in-depth, not the boundary. Every PostgreSQL
+connection:
+
+1. runs `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` (all
+   transactions, including introspection, are read-only at the engine);
+2. runs `SET ROLE SQL_READONLY_ROLE` when configured (the bare role name is
+   validated against `^[A-Za-z_][A-Za-z0-9_$]*$`).
+
+Provision the dedicated `gateway_readonly_user` role per tenant database with
+`scripts/setup_least_privilege_gateway_role.sql` (idempotent, fail-closed,
+requires an explicit `gateway_password`; grants only `CONNECT` + `USAGE` +
+`SELECT`, denies ownership/DDL/DML/`CREATE`/`TEMPORARY` and dangerous function
+execution, and attaches `default_transaction_read_only=on`).
+
+`ENVIRONMENT=production` without `SQL_READONLY_ROLE` fails fast at startup for
+PostgreSQL tenants (skipped under `CI`). `scripts/probe-production.sh` (probe
+P5) runs `probe/run.py` against each tenant and fails if any connection is not
+read-only.

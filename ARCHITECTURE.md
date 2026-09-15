@@ -54,7 +54,9 @@ The Secure DB Access Gateway is designed with a microservices-inspired architect
 - One governed query gateway shared by GraphQL, AI/text-to-SQL, and the headless CLI.
 - Read-only SQL safety enforcement (`DefaultSqlSafetyChecker` preventing non-SELECT operations).
 - Automatic `LIMIT` clause injection and input validation.
-- Connection management enforcing read-only driver flags (`SET TRANSACTION READ ONLY`).
+- Connection management enforcing read-only at the session level (`SET SESSION
+  CHARACTERISTICS AS TRANSACTION READ ONLY`) plus `SET ROLE` into a dedicated,
+  database-enforced SELECT-only role (`SQL_READONLY_ROLE`).
 
 ---
 
