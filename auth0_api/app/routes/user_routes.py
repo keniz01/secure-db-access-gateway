@@ -50,23 +50,27 @@ async def fetch_usage_summary(org_id: str | None) -> dict:
         return {"queries_total": 0, "rows_returned_total": 0, "source": "no-org"}
 
     try:
-        prom_query = f'sql_query_total{{org_id="{org_id}"}}'
-        url = f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(prom_query)}"
-        response = httpx.get(url, timeout=5)
-        response.raise_for_status()
-        payload = response.json()
-        result = payload.get("data", {}).get("result", [])
-        queries_total = 0
-        if result:
-            queries_total = int(float(result[0].get("value", [0, 0])[1]))
-        rows_query = f'sql_query_rows_returned_bucket{{org_id="{org_id}"}}'
-        rows_url = f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(rows_query)}"
-        rows_response = httpx.get(rows_url, timeout=5)
-        rows_response.raise_for_status()
-        rows_payload = rows_response.json()
-        row_total = 0
-        for item in rows_payload.get("data", {}).get("result", []):
-            row_total += int(float(item.get("value", [0, 0])[1]))
+        query_url = (
+            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_total{{org_id=\"{org_id}\"}}')}"
+        )
+        rows_url = (
+            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_rows_returned_bucket{{org_id=\"{org_id}\"}}')}"
+        )
+
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(query_url)
+            response.raise_for_status()
+            payload = response.json()
+            result = payload.get("data", {}).get("result", [])
+            queries_total = 0
+            if result:
+                queries_total = int(float(result[0].get("value", [0, 0])[1]))
+            rows_response = await client.get(rows_url)
+            rows_response.raise_for_status()
+            rows_payload = rows_response.json()
+            row_total = 0
+            for item in rows_payload.get("data", {}).get("result", []):
+                row_total += int(float(item.get("value", [0, 0])[1]))
         return {"queries_total": queries_total, "rows_returned_total": row_total, "source": "prometheus"}
     except Exception as exc:  # pragma: no cover - telemetry backends are optional
         logger.warning("Prometheus usage lookup failed for org %s: %s", org_id, exc)

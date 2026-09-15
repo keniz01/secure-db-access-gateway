@@ -106,8 +106,9 @@ class TestQueryResultResourceLimits:
         # Return 6 rows when max is set to 5
         mock_result = MagicMock()
         mock_result.returns_rows = True
-        mock_result.fetchall.return_value = [
-            MagicMock(_mapping={"id": i, "data": f"row-{i}"}) for i in range(6)
+        mock_result.fetchmany.side_effect = [
+            [MagicMock(_mapping={"id": i, "data": f"row-{i}"}) for i in range(6)],
+            [],
         ]
         conn.execute = AsyncMock(return_value=mock_result)
         engine.connect = AsyncMock(return_value=conn)
@@ -130,8 +131,9 @@ class TestQueryResultResourceLimits:
         # Return a payload exceeding byte size
         mock_result = MagicMock()
         mock_result.returns_rows = True
-        mock_result.fetchall.return_value = [
-            MagicMock(_mapping={"id": 1, "blob": "X" * 1000})
+        mock_result.fetchmany.side_effect = [
+            [MagicMock(_mapping={"id": 1, "blob": "X" * 1000})],
+            [],
         ]
         conn.execute = AsyncMock(return_value=mock_result)
         engine.connect = AsyncMock(return_value=conn)

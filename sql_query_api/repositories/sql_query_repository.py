@@ -366,17 +366,20 @@ class SqlQueryRepository(ISqlQueryRepository):
                     )
 
                     if result.returns_rows:
-                        rows: Iterable[Row[Any]] = result.fetchall()
-                        if len(rows) > self._max_row_limit:
-                            raise SqlStatementExecutionError(
-                                f"Query result exceeds the maximum allowed row limit ({self._max_row_limit} rows)."
-                            )
+                        result_dicts: list[dict[str, Any]] = []
+                        while len(result_dicts) <= self._max_row_limit:
+                            batch = list(result.fetchmany(256))
+                            if not batch:
+                                break
+                            for row in batch:
+                                result_dicts.append(dict(row._mapping))
+                                if len(result_dicts) > self._max_row_limit:
+                                    limit_hit = self._max_row_limit
+                                    raise SqlStatementExecutionError(
+                                        f"Query result exceeds the maximum allowed "
+                                        f"row limit ({limit_hit} rows)."
+                                    )
 
-                        result_dicts: list[dict[str, Any]] = [
-                            dict(row._mapping) for row in rows
-                        ]
-
-                        # Check byte size
                         serialized_size = len(json.dumps(result_dicts, default=str).encode("utf-8"))
                         if serialized_size > self._max_result_bytes:
                             raise SqlStatementExecutionError(
@@ -606,11 +609,39 @@ class SqlQueryRepository(ISqlQueryRepository):
         )
 
     def _ensure_limit(self, sql: str) -> str:
-        """Add a default LIMIT 100 if the SQL query doesn't already have a LIMIT clause."""
-        # Case-insensitive check for LIMIT clause
-        if re.search(r'\bLIMIT\s+\d+\b', sql, re.IGNORECASE):
+        """
+        Bound the number of rows a read-only query may return.
+
+        Appends ``LIMIT 100`` when no row cap is present, clamps any explicit
+        ``LIMIT`` above the configured maximum, and rewrites the PostgreSQL
+        ``FETCH FIRST n ROWS ONLY`` alternative syntax into an equivalent
+        (and bounded) ``LIMIT n`` so the budget cannot be widened either way.
+        """
+        sql = sql.rstrip(";").rstrip()
+        default_limit = min(100, self._max_row_limit)
+
+        fetch_first_match = re.search(
+            r"\bFETCH\s+FIRST\s+(\d+)\s+ROWS(?:\s+ONLY)?\b", sql, re.IGNORECASE
+        )
+        if fetch_first_match:
+            requested = min(int(fetch_first_match.group(1)), self._max_row_limit)
+            sql = (
+                sql[: fetch_first_match.start()]
+                + f"LIMIT {requested}"
+                + sql[fetch_first_match.end() :]
+            )
             return sql
-        return f"{sql.rstrip(';')} LIMIT 100"
+
+        if re.search(r"\bLIMIT\s+\d+\b", sql, re.IGNORECASE):
+            return re.sub(
+                r"\bLIMIT\s+(\d+)\b",
+                lambda match: f"LIMIT {min(int(match.group(1)), self._max_row_limit)}",
+                sql,
+                count=1,
+                flags=re.IGNORECASE,
+            )
+
+        return f"{sql} LIMIT {default_limit}"
 
     def _format_schema_rows(self, rows: Iterable[Row[Any]]) -> str:
         """Format fetched rows into a readable schema string."""

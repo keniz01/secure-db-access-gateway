@@ -1,12 +1,13 @@
 import logging as logger
+import os
 import re
 from collections.abc import Callable
 from typing import Any
 
 import strawberry
 from graphql import GraphQLError
-from strawberry.extensions import QueryDepthLimiter
-from strawberry.fastapi import GraphQLRouter
+from shared_secrets import is_environment_production
+from strawberry.extensions import DisableIntrospection, MaxAliasesLimiter, QueryDepthLimiter
 
 from auth import Principal
 from config.app_logger import log_audit_event
@@ -43,6 +44,39 @@ def _sanitize_db_error(exc: Exception) -> str:
         return detail
     # Plain-message errors (timeout, row limit) — return as-is
     return msg.strip()
+
+
+def _should_expose_db_error_detail() -> bool:
+    """
+    Return whether sanitized DB root-cause errors may reach GraphQL callers.
+
+    The sanitized detail can still name tables/columns/constraints. Browser
+    users receive only a generic message unless an operator opts in to
+    surfacing internals (trusted server-to-server callers set
+    ``EXPOSE_DB_ERROR_DETAIL=1``).
+    """
+    return os.getenv("EXPOSE_DB_ERROR_DETAIL", "0").lower() in {"1", "true", "yes"}
+
+
+MAX_GRAPHQL_ALIASES = int(os.getenv("GRAPHQL_MAX_ALIASES", "100"))
+
+
+def build_graphql_extensions() -> list[Any]:
+    """
+    Return the Strawberry schema extensions that bound GraphQL traffic.
+
+    Depth is limited so nested types cannot be walked unboundedly, and the
+    alias limit stops a single request from fanning out into hundreds of
+    independent resolver/DB executions. GraphQL ``__schema``/``__type``
+    introspection is disabled in production to shrink the API surface.
+    """
+    extensions: list[Any] = [
+        QueryDepthLimiter(max_depth=6),
+        MaxAliasesLimiter(max_alias_count=MAX_GRAPHQL_ALIASES),
+    ]
+    if is_environment_production():
+        extensions.append(DisableIntrospection())
+    return extensions
 
 _tenant_database_resolver = TenantDatabaseResolver.from_environment()
 _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
@@ -219,7 +253,10 @@ class Query:
             raise ValueError(str(e)) from e
         except SqlStatementExecutionError as e:
             logger.exception("Error executing SQL")
-            detail = _sanitize_db_error(e)
+            # Root-cause details (which can name tables/columns) go to the
+            # server logs; the structured extension carries only a generic
+            # message unless an operator opts in via EXPOSE_DB_ERROR_DETAIL.
+            detail = _sanitize_db_error(e) if _should_expose_db_error_detail() else ""
             raise GraphQLError(
                 message="Failed to execute SQL statement. Please verify your query syntax.",
                 extensions={
@@ -368,8 +405,8 @@ class Query:
             raise Exception("Failed to introspect database schema.") from None
 
 
-# Create schema and router
-schema = strawberry.Schema(query=Query, extensions=[QueryDepthLimiter(max_depth=6)])
-graphql_app = GraphQLRouter(schema)
-
-router = graphql_app  # Export router for FastAPI
+# ----------------------------------------------------------------------- #
+# Legacy exports ---------------------------------------------------------- #
+# The canonical schema is now built lazily via graphql_schema.schema.make_schema().
+# The controller does not re-export its own copy.
+# ----------------------------------------------------------------------- #

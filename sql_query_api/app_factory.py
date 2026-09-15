@@ -14,8 +14,9 @@ from exceptions.exception_handlers import (
     http_exception_handler,
     validation_exception_handler,
 )
-from graphql_schema.schema import schema
+from graphql_schema.schema import make_schema
 from metrics import get_metrics_payload
+from middlewares.body_size_limit_middleware import BodySizeLimitMiddleware
 from middlewares.correlation_middleware import correlation_id_middleware
 from middlewares.logging_middleware import LoggingMiddleware
 from middlewares.rate_limit_middleware import RateLimitMiddleware
@@ -88,6 +89,7 @@ def setup_custom_middlewares(app: FastAPI) -> None:
     app.middleware("http")(correlation_id_middleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RBACMiddleware)
+    app.add_middleware(BodySizeLimitMiddleware)
 
 
 def setup_exception_handlers(app: FastAPI) -> None:
@@ -119,7 +121,7 @@ def setup_routes(app: FastAPI) -> None:
         )
 
     app.include_router(health_router)
-    app.include_router(GraphQLRouter(schema), prefix="/graphql")
+    app.include_router(GraphQLRouter(make_schema()), prefix="/graphql")
 
 
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:

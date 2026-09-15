@@ -59,14 +59,19 @@ async def test_get_admin_overview(client, authenticated_session):
     """Test the admin overview derives its organisation from the authenticated session."""
     authenticated_session["user"]["org_id"] = "org-admin"
     authenticated_session["user"]["roles"] = ["admin"]
-    with patch("app.routes.user_routes.httpx.get") as mock_get, patch(
-        "app.routes.user_routes.settings.ORG_DB_CONNECTIONS",
-        {"org-admin": "postgres://admin", "org-other": "postgres://other"},
-    ):
-        mock_get.side_effect = [
+    mock_instance = MagicMock()
+    mock_instance.__aenter__.return_value = mock_instance
+    mock_instance.__aexit__ = AsyncMock(return_value=False)
+    mock_instance.get = AsyncMock(
+        side_effect=[
             MagicMock(status_code=200, json=lambda: {"data": {"result": [{"value": [0, "7"]}]}}),
             MagicMock(status_code=200, json=lambda: {"data": {"result": [{"value": [0, "23"]}]}}),
         ]
+    )
+    with patch("app.routes.user_routes.httpx.AsyncClient", return_value=mock_instance), patch(
+        "app.routes.user_routes.settings.ORG_DB_CONNECTIONS",
+        {"org-admin": "postgres://admin", "org-other": "postgres://other"},
+    ):
         response = await client.get("/api/admin/overview?org_id=org-other")
         assert response.status_code == 200
         body = response.json()
@@ -74,7 +79,7 @@ async def test_get_admin_overview(client, authenticated_session):
         assert body["organizations"] == ["org-admin"]
         assert "db_connections" not in body
         assert body["usage"]["queries_total"] == 7
-        assert all("org-admin" in call.args[0] for call in mock_get.call_args_list)
+        assert all("org-admin" in call.args[0] for call in mock_instance.get.call_args_list)
 
 
 @pytest.mark.asyncio
