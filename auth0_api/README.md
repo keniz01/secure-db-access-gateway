@@ -165,6 +165,42 @@ def test_ai_service():
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for complete testing guide.
 
+## 🛡️ CSRF, Cookie & CORS Protection
+
+The Auth0 API is the browser-facing backend-for-frontend: it holds the Auth0
+access token server-side and proxies governed queries to `sql_query_api` (which
+is never browser-reachable and authenticates with a bearer token only).
+
+**Browser session cookies** (`gateway_session` + `csrf_token`):
+- `gateway_session` carries only an opaque session id, signed with
+  `APP_SECRET_KEY`. It is **HttpOnly** (never readable by JS), `SameSite=lax`,
+  and `Secure` when `SESSION_COOKIE_SECURE` is true (auto-forced in
+  production). `SESSION_MAX_AGE` controls the lifetime of both cookies and the
+  server-side session.
+- `csrf_token` is the double-submit CSRF value, readable by JS on purpose so
+  the SPA can echo it (see below).
+
+**CSRF defense in depth** — every state-changing (POST) endpoint
+(`/api/graphql`, `/api/text-to-sql`) must clear all of these layers:
+1. `SameSite=lax` cookies — browsers already refuse to attach the session
+   cookie to cross-site POST submissions.
+2. **Origin/Referer validation** against the same allowlist CORS uses
+   (`app/security/csrf.py`). Requests with the session cookie but no trusted
+   Origin or Referer are rejected with `403 "CSRF protection failed"`.
+3. The `X-Requested-With: XMLHttpRequest` browser marker, sent by the SPA.
+4. A double-submit token: the server binds a random token to the session and
+   stamps it in a `csrf_token` cookie at login; the SPA echoes it as
+   `X-CSRF-Token`, and the server requires **cookie == header == session**.
+
+**CORS review outcome** — `allow_origins` is an explicit allowlist shared with
+the Origin check (never `*`), `allow_credentials=True` is required for cookie
+auth (only paired with concrete origins), and only the minimal methods/headers
+the app uses are allowed (`GET`/`POST`/`OPTIONS`; `Content-Type`,
+`Authorization`, `X-Requested-With`, `X-CSRF-Token`). In production the SPA and
+API share one origin behind nginx, so no preflights occur; the allowlist
+matters for local dev (Vite on :5173 → https://localhost:8443). Add any new SPA
+origin to `CORS_ORIGINS` — it automatically becomes valid for Origin checks too.
+
 ## 🔐 Authentication Flow
 
 1. User clicks login on frontend

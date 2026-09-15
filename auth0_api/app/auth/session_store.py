@@ -13,7 +13,15 @@ _sessions: dict[str, dict[str, Any]] = {}
 
 def create_session(user: dict[str, Any], access_token: str, ttl_seconds: int) -> str:
     session_id = secrets.token_urlsafe(32)
-    _sessions[session_id] = {"user": user, "access_token": access_token, "expires_at": time.time() + ttl_seconds}
+    _sessions[session_id] = {
+        "user": user,
+        "access_token": access_token,
+        # Defense in depth against CSRF: the SPA must echo this token in an
+        # X-CSRF-Token header that matches both the csrf_token cookie and the
+        # server-side value (see app/security/csrf.py).
+        "csrf_token": secrets.token_urlsafe(32),
+        "expires_at": time.time() + ttl_seconds,
+    }
     return session_id
 
 

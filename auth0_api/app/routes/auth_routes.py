@@ -11,7 +11,8 @@ from app.config.logging import get_logger
 from app.auth.oauth import get_oauth_instance
 from app.utils.helpers import derive_frontend_origin, normalize_origin, is_allowed_origin
 from app.schemas.responses import ErrorResponse, UserResponse
-from app.auth.session_store import create_session, revoke_session
+from app.auth.session_store import create_session, get_session, revoke_session
+from app.security.csrf import clear_csrf_cookie, set_csrf_cookie
 
 logger = get_logger(__name__)
 
@@ -193,7 +194,7 @@ async def auth_callback(request: Request):
 
     logger.info("User authenticated: %s (org=%s)", user_info.get('email'), org_id or "none")
 
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_200_OK,
         content={
             "user": UserResponse(
@@ -203,6 +204,10 @@ async def auth_callback(request: Request):
             ).model_dump()
         }
     )
+    # Stamp the double-submit CSRF token next to the session cookie so the SPA
+    # can echo it in X-CSRF-Token on state-changing calls.
+    set_csrf_cookie(response, get_session(request.session.get("session_id")))
+    return response
 
 
 @router.get("/logout")
@@ -229,4 +234,6 @@ async def logout(request: Request):
     logout_redirect = f"{auth0_logout_url}?{urlencode(logout_params)}"
     logger.info("Redirecting to Auth0 logout")
 
-    return RedirectResponse(url=logout_redirect)
+    response = RedirectResponse(url=logout_redirect)
+    clear_csrf_cookie(response)
+    return response

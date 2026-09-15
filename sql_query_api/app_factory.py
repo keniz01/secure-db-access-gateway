@@ -41,10 +41,13 @@ def setup_cors_middleware(app: FastAPI) -> None:
             "http://127.0.0.1:5173",
         ]
 
+    # CORS review: sql_query_api authenticates with a bearer access token, never
+    # browser cookies (the Auth0 API BFF holds the session). It is only reachable
+    # server-to-server, behind nginx, so allow_credentials stays False; the
+    # allowlist is a safety net for explicit browser tooling.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
         expose_headers=["X-Total-Count"],
