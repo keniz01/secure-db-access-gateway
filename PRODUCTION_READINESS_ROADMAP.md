@@ -110,7 +110,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Automate the backup: `scripts/backup-databases.py` (verified `pg_dump` custom-format, rotating retention, per-database pruning) scheduled daily via `.github/workflows/backup.yml`, incident-tagged on failure
 - [x] Provide a safe restore path: `scripts/drills/drill-restore.sh` — validates the archive, restores into a scratch STAGING database, drops it even on failure
 - [ ] Execute the restore drill on a live stack, record measured RTO, and verify a restore from the off-host copy (#143)
-- [ ] Validate read-only access patterns against database-level permissions and least privilege (DB grants for the gateway account not yet documented) (M18 · #148)
+- [x] Validate read-only access patterns against database-level permissions and least privilege (dedicated `gateway_readonly_user` role provisioned via `sql_query_api/scripts/setup_least_privilege_gateway_role.sql`, session-level read-only + `SET ROLE`, production fail-fast; documented in `SECURITY.md` and `BACKUP_DR.md`) (M18 · #148)
 - [ ] Acceptance: DB administrators have a tested (drill-passed) restore plan and least-privilege configuration
 
 ### 3.2 Query safety and performance budgets — DONE

@@ -134,6 +134,15 @@ docker compose up --build
      `./scripts/bootstrap-dev.sh` once (mkcert + installs the local CA) or drop
      in trusted CA certificates / ACME material. `certs/` is gitignored and is
      bind-mounted into nginx.
+   - **Database least privilege (required).** For every tenant database, run
+     `sql_query_api/scripts/setup_least_privilege_gateway_role.sql` as a
+     PostgreSQL superuser to create the dedicated SELECT-only
+     `gateway_readonly_user` role (single purpose: `CONNECT` on the database,
+     `USAGE` + `SELECT` on the data/metadata schemas, no ownership/DDL/DML,
+     `default_transaction_read_only=on`; fail-closed and idempotent). Use that
+     role's credentials in `TENANT_DATABASES_JSON` and set
+     `SQL_READONLY_ROLE=gateway_readonly_user` in the env file — the gateway
+     fails fast in production if it is missing.
 2. Secrets file: `sudo install -m 600 -o deploy -g deploy gateway.env /etc/gateway/gateway.env`
    (copy to the host from your secret manager — the host file is a copy, not
    the backup).

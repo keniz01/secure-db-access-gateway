@@ -200,8 +200,41 @@ docker compose --env-file /etc/gateway/gateway.env up -d --build
 
 The env file supplies every value the services need — Auth0 credentials, the
 session-signing key (`APP_SECRET_KEY`), AI keys, the tenant database mapping
-(`TENANT_DATABASES_JSON`), and the data-access policy
-(`POLICY_POLICIES_JSON`). See `.env.example` for the full list.
+(`TENANT_DATABASES_JSON`), the dedicated database read-only role
+(`SQL_READONLY_ROLE`), and the data-access policy (`POLICY_POLICIES_JSON`). See
+`.env.example` for the full list.
+
+### Database least privilege (defense-in-depth)
+
+The app-level SQL safety layer (SELECT-only validation, auto-LIMIT, read-only
+driver flags) is **not** the last line of defense. Even if it were bypassed, a
+compromised gateway must not be able to write to tenant databases. Production
+enforces this at the database engine itself:
+
+- **Dedicated read-only role.** Provision `gateway_readonly_user` (or an
+  equivalent) per tenant database with
+  `sql_query_api/scripts/setup_least_privilege_gateway_role.sql`. The role holds
+  only `CONNECT` on the database, `USAGE` on the data/metadata schemas, and
+  `SELECT` on their tables/views — no ownership (`NOSUPERUSER NOCREATEDB
+  NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT`), no `CREATE`,
+  no `TEMPORARY`, and explicit revocation of dangerous function execution.
+- **Fail-closed provisioning.** The script has no placeholder password: it
+  aborts if `gateway_password` is missing, verifies all invariants at the end
+  (role flags, schema/table privileges, no ownership, read-only default), and
+  raises on any violation so a misprovisioned role is never left behind. It is
+  idempotent and safe to re-run.
+- **Session enforcement.** Every gateway connection sets
+  `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` and then
+  `SET ROLE <SQL_READONLY_ROLE>`, so the engine enforces read-only for every
+  transaction, including introspection. The role name is validated
+  (`^[A-Za-z_][A-Za-z0-9_$]*$`) before it reaches `SET ROLE`.
+- **Fail fast in production.** `sql_query_api` refuses to start a PostgreSQL
+  tenant connection without `SQL_READONLY_ROLE` configured when
+  `ENVIRONMENT=production` (skipped under `CI`), so production can never serve
+  PostgreSQL tenants with a write-capable login.
+- **Tenant credentials.** Connection strings in `TENANT_DATABASES_JSON` must use
+  the read-only role, never an owner or superuser account. Clients only ever
+  send a logical `database_id`.
 
 ### Key Management Best Practices
 
@@ -284,6 +317,6 @@ For security issues, please report responsibly:
 
 ---
 
-**Last Updated:** August 2026  
-**Security Patch Version:** 1.1.0  
+**Last Updated:** September 2026  
+**Security Patch Version:** 1.2.0  
 **Status:** Development

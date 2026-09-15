@@ -19,14 +19,32 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from repositories.sql_query_repository import validate_readonly_role_name
 from services.tenant_database_resolver import TenantDatabaseConfig, TenantDatabaseResolver
+
+
+def _redact_url(connection_string: str) -> str:
+    """Return a connection string with the password component removed."""
+    try:
+        parts = urlsplit(connection_string)
+        if not parts.username:
+            return connection_string
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        netloc = f"{parts.username}@ {host}".replace(" ", "")
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+    except ValueError:
+        return connection_string
 
 
 def normalize_connection_string(connection_string: str) -> str:
@@ -71,13 +89,24 @@ async def probe_one(
         ProbeResult describing the outcome.
     """
     normalized = normalize_connection_string(connection_string)
+    display_target = _redact_url(connection_string)
 
     async def _attempt() -> None:
         engine = create_async_engine(normalized, echo=False, future=True, pool_pre_ping=True)
         try:
             async with engine.begin() as conn:
                 if normalized.startswith(("postgresql:", "postgresql+")):
-                    await conn.execute(text("SET TRANSACTION READ ONLY;"))
+                    # Mirror the gateway's PostgreSQL enforcement exactly: session
+                    # read-only (covers every transaction), optional SET ROLE to the
+                    # dedicated read-only role, then prove the session is read-only.
+                    await conn.execute(text("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY;"))
+                    role_name = os.getenv("SQL_READONLY_ROLE", "").strip()
+                    if role_name:
+                        await conn.execute(text(f"SET ROLE {validate_readonly_role_name(role_name)};"))
+                    row = (await conn.execute(text("SHOW transaction_read_only"))).one()
+                    value = row[0] if hasattr(row, "__getitem__") else str(row)
+                    if str(value).strip().lower() != "on":
+                        raise RuntimeError("PostgreSQL session is not read-only")
                 await conn.execute(text("SELECT 1"))
         finally:
             await engine.dispose()
@@ -85,9 +114,9 @@ async def probe_one(
     try:
         await asyncio.wait_for(_attempt(), timeout=timeout_seconds)
     except Exception as exc:  # noqa: BLE001 - probe must convert any failure into a result
-        result = ProbeResult(target=connection_string, ok=False, detail=repr(exc))
+        result = ProbeResult(target=display_target, ok=False, detail=repr(exc))
     else:
-        result = ProbeResult(target=connection_string, ok=True)
+        result = ProbeResult(target=display_target, ok=True)
     if reporter is not None:
         reporter(result)
     return result

@@ -5,10 +5,14 @@ from typing import Final
 
 from loguru import logger
 from punq import Container
+from shared_secrets import is_environment_production
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from repositories.abstract_sql_query_repository import ISqlQueryRepository
-from repositories.sql_query_repository import SqlQueryRepository
+from repositories.sql_query_repository import (
+    SqlQueryRepository,
+    enforce_readonly_role_guardrail,
+)
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
 from services.sql_query_service import SqlQueryService
@@ -111,6 +115,12 @@ def setup_container(
                 if "?" in connection_string
                 else f"{connection_string}?mode=ro&uri=true"
             )
+        # Production gate: without a dedicated SELECT-only role the DB engine
+        # itself is powerless to stop a compromised application from writing.
+        enforce_readonly_role_guardrail(
+            connection_string,
+            production=is_environment_production() and not os.getenv("CI"),
+        )
         # Create database engine
         logger.debug("Creating async SQLAlchemy engine...")
         engine_kwargs = {
