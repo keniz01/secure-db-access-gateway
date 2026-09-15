@@ -21,6 +21,35 @@
 --                       Include the gateway metadata namespace (default "meta",
 --                       hosts schema_embeddings) when it exists, e.g.
 --                       -v schemas=music,meta
+--   gateway_statement_timeout    — per-statement duration (default 30s, aligned
+--                       with the gateway's SQL_QUERY_TIMEOUT_SECONDS default; keep
+--                       it >= that env value so the DB budget is never looser
+--                       than the application budget).
+--   gateway_lock_timeout         — lock-wait duration (default 5s).
+--   gateway_idle_in_transaction_session_timeout — idle-in-open-transaction kill
+--                       (default 10s).
+--   gateway_work_mem              — per-sort/hash operation memory budget
+--                       (default 4MB). Tune down on memory-constrained hosts.
+--   gateway_max_parallel_workers_per_gather — parallel-query workers/copy
+--                       (default 0 = bounded/serial, for a predictable memory
+--                       footprint on read-heavy analytics).
+--   gateway_connection_limit      — max concurrent connections for the role
+--                       (default 20). Must exceed the total number of gateway
+--                       engines (primaries + read replicas across tenants)
+--                       pointing at the same PostgreSQL cluster.
+--
+-- Resource-control model:
+--   1. The DATABASE enforces statement_timeout / lock_timeout /
+--      idle_in_transaction_session_timeout / work_mem /
+--      max_parallel_workers_per_gather as role defaults, so even a direct
+--      psql login as the gateway role is bounded.
+--   2. The GATEWAY additionally pushes its per-query budgets (statement and
+--      lock timeouts) at session start; CONNECTION LIMIT on the role caps how
+--      many pooled connections the app (and anything else using the role) can
+--      hold against the cluster.
+--   3. Cluster-level settings (max_connections, shared_buffers,
+--      effective_cache_size, maintenance_work_mem) are reviewed by the operator
+--      — see ARCHITECTURE.md "Async PostgreSQL Pooling & Backpressure".
 --
 -- USAGE (as a PostgreSQL superuser, e.g. 'postgres', against the target DB):
 --   psql -U postgres -d your_database \
@@ -52,37 +81,72 @@
 \warn 'ERROR: gateway_password is required (pass -v gateway_password="<secure password>"); refusing to provision.'
 \quit 1
 \endif
+\if :{?gateway_statement_timeout}
+\else
+  \set gateway_statement_timeout 30s
+\endif
+\if :{?gateway_lock_timeout}
+\else
+  \set gateway_lock_timeout 5s
+\endif
+\if :{?gateway_idle_in_transaction_session_timeout}
+\else
+  \set gateway_idle_in_transaction_session_timeout 10s
+\endif
+\if :{?gateway_work_mem}
+\else
+  \set gateway_work_mem 4MB
+\endif
+\if :{?gateway_max_parallel_workers_per_gather}
+\else
+  \set gateway_max_parallel_workers_per_gather 0
+\endif
+\if :{?gateway_connection_limit}
+\else
+  \set gateway_connection_limit 20
+\endif
 
 -- Hand psql variables to PL/pgSQL as session-local settings.
 SELECT set_config('app.gateway_role', :'gateway_role', false);
 SELECT set_config('app.gateway_password', :'gateway_password', false);
 SELECT set_config('app.schemas', :'schemas', false);
+SELECT set_config('app.gateway_statement_timeout', :'gateway_statement_timeout', false);
+SELECT set_config('app.gateway_lock_timeout', :'gateway_lock_timeout', false);
+SELECT set_config('app.gateway_idle_in_transaction_session_timeout', :'gateway_idle_in_transaction_session_timeout', false);
+SELECT set_config('app.gateway_work_mem', :'gateway_work_mem', false);
+SELECT set_config('app.gateway_max_parallel_workers_per_gather', :'gateway_max_parallel_workers_per_gather', false);
+SELECT set_config('app.gateway_connection_limit', :'gateway_connection_limit', false);
 
 BEGIN;
 
--- 2. Create (or re-harden) the dedicated gateway role with no elevated flags
---    and no password leakage into role attributes beyond the login credential.
+-- 2. Create (or re-harden) the dedicated gateway role with no elevated flags,
+--    no password leakage into role attributes beyond the login credential, and
+--    a hard connection limit (resource bound for the whole cluster).
 DO $do$
 DECLARE
-    gateway_role      text := current_setting('app.gateway_role', true);
-    gateway_password  text := current_setting('app.gateway_password', true);
+    gateway_role            text := current_setting('app.gateway_role', true);
+    gateway_password        text := current_setting('app.gateway_password', true);
+    gateway_connection_limit int := current_setting('app.gateway_connection_limit', true)::int;
 BEGIN
     IF gateway_role IS NULL OR gateway_password IS NULL OR gateway_password = '' THEN
         RAISE EXCEPTION 'gateway_role and a non-empty gateway_password are required';
+    END IF;
+    IF gateway_connection_limit IS NULL OR gateway_connection_limit <= 0 THEN
+        RAISE EXCEPTION 'gateway_connection_limit must be a positive integer';
     END IF;
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = gateway_role) THEN
         EXECUTE format(
             'CREATE ROLE %I WITH LOGIN PASSWORD %L '
             'NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION '
-            'NOBYPASSRLS NOINHERIT',
-            gateway_role, gateway_password
+            'NOBYPASSRLS NOINHERIT CONNECTION LIMIT %s',
+            gateway_role, gateway_password, gateway_connection_limit
         );
     ELSE
         EXECUTE format(
             'ALTER ROLE %I WITH LOGIN PASSWORD %L '
             'NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION '
-            'NOBYPASSRLS NOINHERIT',
-            gateway_role, gateway_password
+            'NOBYPASSRLS NOINHERIT CONNECTION LIMIT %s',
+            gateway_role, gateway_password, gateway_connection_limit
         );
     END IF;
 END
@@ -194,16 +258,28 @@ BEGIN
 END
 $do$;
 
--- 7. Enforce read-only and time budgets at the session level so even a direct
---    psql login as the gateway role cannot start a write transaction.
+-- 7. Enforce read-only, time budgets, memory bounds, and parallelism bounds at
+--    the session level so even a direct psql login as the gateway role is a
+--    well-behaved, resource-bounded read-only client.
 DO $do$
 DECLARE
     gateway_role text := current_setting('app.gateway_role', true);
+    resource_settings text[][] := ARRAY[
+        ARRAY['default_transaction_read_only', 'on'],
+        ARRAY['statement_timeout', current_setting('app.gateway_statement_timeout', true)],
+        ARRAY['lock_timeout', current_setting('app.gateway_lock_timeout', true)],
+        ARRAY['idle_in_transaction_session_timeout', current_setting('app.gateway_idle_in_transaction_session_timeout', true)],
+        ARRAY['work_mem', current_setting('app.gateway_work_mem', true)],
+        ARRAY['max_parallel_workers_per_gather', current_setting('app.gateway_max_parallel_workers_per_gather', true)]
+    ];
+    setting_sub   text[];
 BEGIN
-    EXECUTE format('ALTER ROLE %I SET default_transaction_read_only = on', gateway_role);
-    EXECUTE format('ALTER ROLE %I SET statement_timeout = ''15s''', gateway_role);
-    EXECUTE format('ALTER ROLE %I SET lock_timeout = ''5s''', gateway_role);
-    EXECUTE format('ALTER ROLE %I SET idle_in_transaction_session_timeout = ''10s''', gateway_role);
+    FOREACH setting_sub SLICE 1 IN ARRAY resource_settings LOOP
+        IF setting_sub[2] IS NULL OR setting_sub[2] = '' THEN
+            RAISE EXCEPTION 'resource setting "%" has no value; refusing to provision with an empty GUC', setting_sub[1];
+        END IF;
+        EXECUTE format('ALTER ROLE %I SET %s = %L', gateway_role, setting_sub[1], setting_sub[2]);
+    END LOOP;
 END
 $do$;
 
@@ -218,6 +294,9 @@ DECLARE
     cfg           text;
     owned_objects bigint;
     rel_count     bigint;
+    conn_limit    bigint;
+    guc_name      text;
+    resource_gucs text[] := ARRAY['statement_timeout','lock_timeout','idle_in_transaction_session_timeout','work_mem','max_parallel_workers_per_gather'];
 BEGIN
     SELECT oid INTO role_oid FROM pg_roles WHERE rolname = gateway_role;
     IF role_oid IS NULL THEN
@@ -297,6 +376,28 @@ BEGIN
         violations := violations || 'role is missing default_transaction_read_only=on';
     END IF;
 
+    -- 8h. A connection limit is enforced (resource bound).
+    SELECT rolconnlimit INTO conn_limit FROM pg_roles WHERE oid = role_oid;
+    IF conn_limit IS NULL OR conn_limit <= 0 THEN
+        violations := violations || 'role has no connection limit';
+    END IF;
+
+    -- 8i. Resource GUCs are attached exactly as configured for this run so the
+    --     engine actually enforces the time/memory/parallelism budgets.
+    FOREACH guc_name IN ARRAY resource_gucs LOOP
+        IF NOT EXISTS (
+            SELECT 1
+            FROM unnest((SELECT rolconfig FROM pg_roles WHERE oid = role_oid)) cfg_entry
+            WHERE cfg_entry = guc_name || '=' || current_setting('app.gateway_' || guc_name, true)
+        ) THEN
+            violations := violations || format(
+                'role is missing %s=%s',
+                guc_name,
+                current_setting('app.gateway_' || guc_name, true)
+            );
+        END IF;
+    END LOOP;
+
     IF cardinality(violations) > 0 THEN
         RAISE EXCEPTION 'least-privilege verification failed for role "%": %',
             gateway_role, array_to_string(violations, '; ');
@@ -320,4 +421,12 @@ COMMIT;
 --   # 3) DML denied:
 --   psql "postgresql://gateway_readonly_user:<pw>@<host>/<db>" -c "DELETE FROM <some_table>;"
 --   #    ERROR:  permission denied for table <some_table>
+--
+--   # 4) Resource controls are active:
+--   psql "postgresql://gateway_readonly_user:<pw>@<host>/<db>" \
+--        -c "SHOW statement_timeout; SHOW lock_timeout; SHOW idle_in_transaction_session_timeout; SHOW work_mem; SHOW max_parallel_workers_per_gather;"
+--
+--   # 5) Connection limit is enforced:
+--   psql "postgresql://gateway_readonly_user:<pw>@<host>/<db>" \
+--        -c "SELECT rolconnlimit FROM pg_roles WHERE rolname = current_user;"
 -- ---------------------------------------------------------------------------

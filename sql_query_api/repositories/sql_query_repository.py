@@ -100,8 +100,12 @@ class SqlQueryRepository(ISqlQueryRepository):
             self._query_cost_action = "deny"
 
         # New security‑related configuration
-        # Lock timeout in seconds (default 5 seconds)
+        # Lock timeout in seconds (default 5 seconds), enforced at both the app
+        # session AND the database role (DB-side idle_in_transaction/statement
+        # budgets are provisioned via setup_least_privilege_gateway_role.sql).
         self._lock_timeout_ms: int = int(float(os.getenv("SQL_LOCK_TIMEOUT_SECONDS", "5")) * 1000)
+        if self._lock_timeout_ms <= 0:
+            raise ValueError("SQL_LOCK_TIMEOUT_SECONDS must be greater than zero.")
         # Optional dedicated read‑only role name; if set, connections will SET ROLE to it
         self._readonly_role: str | None = validate_readonly_role_name(
             os.getenv("SQL_READONLY_ROLE") or None
@@ -254,14 +258,16 @@ class SqlQueryRepository(ISqlQueryRepository):
                     # Optionally switch to a dedicated read‑only role if configured
                     if self._readonly_role:
                         await conn.execute(text(f"SET ROLE {self._readonly_role};"))
-                    # Apply statement timeout (already set in __init__)
+                    # Apply timeouts at the SESSION level (not SET LOCAL) so they
+                    # hold across every transaction on this pooled connection,
+                    # even when a caller opens/commits within the get_conn block.
+                    # DB-side (role-level) budgets are the backstop; these app
+                    # budgets only ever tighten the session.
                     await conn.execute(
-                        text(f"SET LOCAL statement_timeout = '{int(self._query_timeout_seconds * 1000)}';")
+                        text(f"SET SESSION statement_timeout = '{int(self._query_timeout_seconds * 1000)}';")
                     )
-                    # Apply lock timeout to avoid long‑running lock waits
-                    # (PostgreSQL lock_timeout is expressed in milliseconds)
                     await conn.execute(
-                        text(f"SET LOCAL lock_timeout = '{int(self._lock_timeout_ms)}';")
+                        text(f"SET SESSION lock_timeout = '{int(self._lock_timeout_ms)}';")
                     )
                     if schema_name:
                         await conn.execute(text(f"SET search_path TO {schema_name}"))

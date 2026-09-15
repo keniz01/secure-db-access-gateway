@@ -127,6 +127,18 @@ Production readiness is achieved only when all open items below are complete and
 - [ ] Enforce audit retention policies (see #60)
 - [ ] Acceptance: data access can be traced and audited without exposing raw SQL or sensitive row data
 
+### 3.4 Database-side resource controls — DONE
+- [x] Configure database-enforced `statement_timeout` (role GUC, 30s default, tunable via `gateway_statement_timeout`)
+- [x] Configure database-enforced `lock_timeout` (role GUC, 5s default, tunable via `gateway_lock_timeout`)
+- [x] Configure database-enforced `idle_in_transaction_session_timeout` (role GUC, 10s default, tunable via `gateway_idle_in_transaction_timeout`)
+- [x] Enforce connection limits on the DB role (`CONNECTION LIMIT`, 20 default, tunable via `gateway_connection_limit`; verified by the provisioning script)
+- [x] Bound application-side connection pools (per-tenant `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`/`DB_POOL_TIMEOUT_SECONDS`/`DB_POOL_RECYCLE_SECONDS`, validated at startup via `pool_settings_from_env`)
+- [x] Review resource-intensive PostgreSQL settings for the gateway role (`work_mem` + `max_parallel_workers_per_gather` role defaults; cluster-level `max_connections`/`shared_buffers`/`effective_cache_size`/`maintenance_work_mem` review documented in `ARCHITECTURE.md`)
+- [x] Probe P5 fails any tenant with disabled statement/lock/idle timeouts or no role connection limit
+- [ ] Carry-over: circuit-breaking or queue backpressure under database overload (from 3.2)
+- [ ] Carry-over: stress-validate the defined budgets under concurrent load (from 3.2)
+- [x] Acceptance: crafted slow/locking/idle queries are bounded at the engine, and a single compromised identity cannot exhaust cluster connections
+
 ---
 
 ## Phase 4: Monitoring, alerts, and operational maturity — **OPEN (largest remaining bucket)**

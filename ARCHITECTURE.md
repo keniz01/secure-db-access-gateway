@@ -170,3 +170,45 @@ Recommended defaults:
 - `DB_POOL_RECYCLE_SECONDS=1800`
 
 These values keep the database connection footprint bounded while allowing short bursts of load as the pool backs up. The code sets `pool_pre_ping=True` to detect stale connections, and the application-level `SQL_QUERY_TIMEOUT_SECONDS` still acts as a safety valve if the database becomes slow or overloaded.
+
+Connection accounting: the pool is **per engine**, and each tenant database gets its
+own engine — with primary and read-replica targets as separate engines. The
+steady-state connections a tenant holds to a cluster are therefore
+`DB_POOL_SIZE + DB_MAX_OVERFLOW` per engine; the total across all engines must
+fit under the gateway role's `CONNECTION LIMIT` (provisioned via
+`gateway_connection_limit`). Pool settings are validated at startup
+(`pool_settings_from_env`), so production fails fast on a non-positive pool
+size/timeout instead of degrading at runtime.
+
+### Database-side resource controls
+
+The database itself enforces per-session budgets for the gateway role, so even a
+direct login as `gateway_readonly_user` (bypassing the app entirely) is a
+time- and memory-bounded read-only client. `setup_least_privilege_gateway_role.sql`
+attaches these as role defaults (tunable via psql variables):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `default_transaction_read_only` | `on` | reject any write at the engine |
+| `statement_timeout` | `30s` | kill runaway statements (keep `>= SQL_QUERY_TIMEOUT_SECONDS`) |
+| `lock_timeout` | `5s` | bound lock-wait time (mirrors `SQL_LOCK_TIMEOUT_SECONDS`) |
+| `idle_in_transaction_session_timeout` | `10s` | reclaim sessions parked in an open transaction |
+| `work_mem` | `4MB` | bound per-sort/hash memory per operation |
+| `max_parallel_workers_per_gather` | `0` | bound parallel-query memory for a predictable footprint |
+
+The provisioning script also enforces a `CONNECTION LIMIT` on the role
+(`gateway_connection_limit`, default 20), and its verification block re-checks
+every GUC and the connection limit so a misprovisioned role is never left in
+place.
+
+Cluster-level review (operator-owned, not scripted because it affects all roles):
+`max_connections`, `shared_buffers`, `effective_cache_size`,
+`maintenance_work_mem`, and `huge_pages` should fit the host's RAM and the
+expected tenant count. Every gateway connection consumes one backend, so
+`max_connections` must exceed the sum of all role connection limits plus
+headroom for admin/backup connections.
+
+The operator probe (`scripts/probe-production.sh` P5) asserts, for every tenant,
+that `statement_timeout`, `lock_timeout`, and
+`idle_in_transaction_session_timeout` are non-zero and that the role carries a
+connection limit — a target that has not been provisioned fails the probe.

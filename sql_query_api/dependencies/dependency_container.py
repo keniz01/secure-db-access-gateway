@@ -56,6 +56,36 @@ def _parse_row_filter(
 
     return row_filter
 
+
+def pool_settings_from_env() -> dict[str, int | float]:
+    """
+    Bound the application-side SQLAlchemy connection pool for PostgreSQL.
+
+    Reads and validates ``DB_POOL_*`` env vars so production fails fast on a
+    misconfigured pool instead of opening an unbounded number of connections.
+    ``pool_size + max_overflow`` is the hard per-engine connection budget and
+    must stay below the role's ``CONNECTION LIMIT`` (see
+    scripts/setup_least_privilege_gateway_role.sql / ARCHITECTURE.md).
+    """
+    pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
+    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+    pool_timeout = float(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30"))
+    pool_recycle = int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800"))
+    if pool_size < 1:
+        raise ValueError("DB_POOL_SIZE must be at least 1.")
+    if max_overflow < 0:
+        raise ValueError("DB_MAX_OVERFLOW must be >= 0.")
+    if pool_timeout <= 0:
+        raise ValueError("DB_POOL_TIMEOUT_SECONDS must be greater than zero.")
+    if pool_recycle < 0:
+        raise ValueError("DB_POOL_RECYCLE_SECONDS must be >= 0.")
+    return {
+        "pool_size": pool_size,
+        "max_overflow": max_overflow,
+        "pool_timeout": pool_timeout,
+        "pool_recycle": pool_recycle,
+    }
+
 # -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
@@ -129,14 +159,7 @@ def setup_container(
             "pool_pre_ping": True,
         }
         if connection_string.startswith("postgresql") or connection_string.startswith("postgresql+asyncpg"):
-            engine_kwargs.update(
-                {
-                    "pool_size": int(os.getenv("DB_POOL_SIZE", "5")),
-                    "max_overflow": int(os.getenv("DB_MAX_OVERFLOW", "10")),
-                    "pool_timeout": float(os.getenv("DB_POOL_TIMEOUT_SECONDS", "30")),
-                    "pool_recycle": int(os.getenv("DB_POOL_RECYCLE_SECONDS", "1800")),
-                }
-            )
+            engine_kwargs.update(pool_settings_from_env())
 
         engine: Final[AsyncEngine] = create_async_engine(connection_string, **engine_kwargs)
 
