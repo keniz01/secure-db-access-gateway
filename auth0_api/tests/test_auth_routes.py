@@ -1,6 +1,10 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from app.auth.session_store import get_session
+from app.security.csrf import CSRF_COOKIE_NAME
+
+ALLOWED_ORIGIN = "http://localhost:5173"
+CSRF_TOKEN = "test-csrf-token"
 
 @pytest.mark.asyncio
 async def test_health_check(client):
@@ -142,8 +146,20 @@ async def test_graphql_proxy_rejects_missing_session(client):
 
 @pytest.mark.asyncio
 async def test_graphql_proxy_rejects_requests_without_csrf_header(client):
-    """Cookie-authenticated GraphQL requests require the browser-client marker."""
-    response = await client.post("/api/graphql", json={"query": "query { ping }"})
+    """Cookie-authenticated GraphQL requests require the double-submit token."""
+    client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
+    with patch(
+        "app.routes.graphql_routes.get_authenticated_session",
+        return_value={
+            "access_token": "test-access-token",
+            "csrf_token": CSRF_TOKEN,
+        },
+    ):
+        response = await client.post(
+            "/api/graphql",
+            json={"query": "query { ping }"},
+            headers={"Origin": ALLOWED_ORIGIN, "X-Requested-With": "XMLHttpRequest"},
+        )
 
     assert response.status_code == 403
     assert response.json()["detail"] == "CSRF protection failed"
@@ -154,7 +170,7 @@ async def test_graphql_proxy_forwards_session_access_token(client, mocker):
     """The SQL API receives the authenticated user's bearer token."""
     mocker.patch(
         "app.routes.graphql_routes.get_authenticated_session",
-        return_value={"access_token": "test-access-token"},
+        return_value={"access_token": "test-access-token", "csrf_token": CSRF_TOKEN},
     )
 
     upstream = MagicMock()
@@ -167,12 +183,15 @@ async def test_graphql_proxy_forwards_session_access_token(client, mocker):
     mock_client.__aexit__ = AsyncMock(return_value=None)
     mock_client.post = AsyncMock(return_value=upstream)
     mocker.patch("app.routes.graphql_routes.httpx.AsyncClient", return_value=mock_client)
+    client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
 
     response = await client.post(
         "/api/graphql",
         content=b'{"query":"query { ping }"}',
         headers={
+            "Origin": ALLOWED_ORIGIN,
             "X-Requested-With": "XMLHttpRequest",
+            "X-CSRF-Token": CSRF_TOKEN,
             "Content-Type": "application/json",
         },
     )

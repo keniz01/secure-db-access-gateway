@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
 from app.config.logging import get_logger
+from app.security.csrf import get_allowed_origins
 
 logger = get_logger(__name__)
 
@@ -15,14 +16,21 @@ def setup_cors_middleware(app: FastAPI):
     """
     Configure CORS middleware with allowed origins.
 
+    CORS review outcome:
+    * allow_origins is an explicit allowlist (never ``*``) shared with CSRF
+      Origin/Referer validation via ``app.security.csrf.get_allowed_origins``.
+    * allow_credentials=True is required because every browser request carries
+      the httpOnly session cookie; credentials are only combined with concrete
+      origins (Starlette rejects ``*`` + credentials).
+    * Methods and headers are kept to the minimal set the API and SPA use.
+    * In production the SPA and the API share one origin behind nginx, so no
+      cross-origin preflights occur; the allowlist exists for local dev mode
+      (Vite on :5173 calling https://localhost:8443).
+
     Args:
         app: FastAPI application instance
     """
-    allowed_origins = list(settings.ALLOWED_ORIGINS)
-
-    # Add derived frontend origin if not already present
-    if settings.REACT_APP_URL not in allowed_origins:
-        allowed_origins.append(settings.REACT_APP_URL)
+    allowed_origins = get_allowed_origins()
 
     logger.info("CORS allowed origins: %s", allowed_origins)
 
@@ -31,7 +39,7 @@ def setup_cors_middleware(app: FastAPI):
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-CSRF-Token"],
         expose_headers=["X-Total-Count"],
         max_age=3600,
     )

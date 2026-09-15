@@ -27,11 +27,22 @@ import pytest
 
 from app.auth import session_store
 from app.config.settings import settings
+from app.security.csrf import CSRF_COOKIE_NAME
 from app.services.text_to_sql_service import TextToSqlService
 
 SESSION_TOKEN = "server-side-session-token"
 FORGED_TOKEN = "attacker-supplied-token"
 SECRET_LIKE = "org-a-secret"
+ALLOWED_ORIGIN = "http://localhost:5173"
+CSRF_TOKEN = "double-submit-token"
+
+
+def _csrf_headers() -> dict:
+    return {
+        "Origin": ALLOWED_ORIGIN,
+        "X-Requested-With": "XMLHttpRequest",
+        "X-CSRF-Token": CSRF_TOKEN,
+    }
 
 
 def _gql_response(payload: dict) -> MagicMock:
@@ -74,12 +85,20 @@ class TestTextToSqlRouteConfusedDeputy:
 
         with patch(
             "app.routes.user_routes.get_authenticated_session",
-            return_value={"user": {"id": "u1"}, "access_token": SESSION_TOKEN},
+            return_value={
+                "user": {"id": "u1"},
+                "access_token": SESSION_TOKEN,
+                "csrf_token": CSRF_TOKEN,
+            },
         ), patch("app.routes.user_routes.TextToSqlService", return_value=fake_service):
+            client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
             response = await client.post(
                 "/api/text-to-sql",
                 json={"query": "list users", "database_id": "finance"},
-                headers={"Authorization": f"Bearer {FORGED_TOKEN}"},
+                headers={
+                    **_csrf_headers(),
+                    "Authorization": f"Bearer {FORGED_TOKEN}",
+                },
             )
 
         assert response.status_code == 200
@@ -102,11 +121,17 @@ class TestTextToSqlRouteConfusedDeputy:
 
         with patch(
             "app.routes.user_routes.get_authenticated_session",
-            return_value={"user": {"id": "u1"}, "access_token": SESSION_TOKEN},
+            return_value={
+                "user": {"id": "u1"},
+                "access_token": SESSION_TOKEN,
+                "csrf_token": CSRF_TOKEN,
+            },
         ), patch("app.routes.user_routes.TextToSqlService", return_value=fake_service):
+            client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
             response = await client.post(
                 "/api/text-to-sql",
                 json={"query": "list users", "database_id": "finance"},
+                headers=_csrf_headers(),
             )
 
         assert response.status_code == 500
@@ -206,15 +231,20 @@ class TestGraphqlProxyConfusedDeputy:
 
         mocker.patch(
             "app.routes.graphql_routes.get_authenticated_session",
-            return_value={"user": {"id": "u1"}, "access_token": SESSION_TOKEN},
+            return_value={
+                "user": {"id": "u1"},
+                "access_token": SESSION_TOKEN,
+                "csrf_token": CSRF_TOKEN,
+            },
         )
         mocker.patch("app.routes.graphql_routes.httpx.AsyncClient", return_value=mock_client)
+        client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
 
         response = await client.post(
             "/api/graphql",
             content=upstream_content,
             headers={
-                "X-Requested-With": "XMLHttpRequest",
+                **_csrf_headers(),
                 "Authorization": f"Bearer {FORGED_TOKEN}",
                 "Content-Type": "application/json",
             },
@@ -229,8 +259,20 @@ class TestGraphqlProxyConfusedDeputy:
         assert forward_kwargs["content"] == upstream_content
 
     @pytest.mark.asyncio
-    async def test_proxy_requires_csrf_header(self, client, authenticated_session) -> None:
-        response = await client.post("/api/graphql", content=b'{"query":"query{ping}"}')
+    async def test_proxy_requires_csrf_header(self, client, mocker) -> None:
+        mocker.patch(
+            "app.routes.graphql_routes.get_authenticated_session",
+            return_value={
+                "user": {"id": "u1"},
+                "access_token": SESSION_TOKEN,
+                "csrf_token": CSRF_TOKEN,
+            },
+        )
+        response = await client.post(
+            "/api/graphql",
+            content=b'{"query":"query{ping}"}',
+            headers={"Origin": ALLOWED_ORIGIN, "X-Requested-With": "XMLHttpRequest"},
+        )
         assert response.status_code == 403
         assert "CSRF protection failed" in response.json()["detail"]
 

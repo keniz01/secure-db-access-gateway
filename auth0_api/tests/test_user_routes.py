@@ -1,5 +1,9 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from app.security.csrf import CSRF_COOKIE_NAME
+
+ALLOWED_ORIGIN = "http://localhost:5173"
+CSRF_TOKEN = "test-csrf-token"
 
 @pytest.mark.asyncio
 async def test_get_user_authenticated(client, authenticated_session):
@@ -96,26 +100,58 @@ async def test_get_admin_overview_rejects_non_admin(client, authenticated_sessio
     assert response.json()["detail"] == "Administrator role required"
 
 @pytest.mark.asyncio
-async def test_text_to_sql_authenticated(client, authenticated_session, mock_ai_service):
-    """Test text-to-sql endpoint when authenticated."""
-    # Mock TextToSqlService.generate_sql_from_text indirectly via dependencies
+async def test_text_to_sql_authenticated(client, mock_ai_service):
+    """Test text-to-sql endpoint when authenticated and CSRF-safe."""
     mock_result = {
         "sql": "SELECT * FROM users",
         "schema": "test schema"
     }
-    
-    with patch("app.routes.user_routes.TextToSqlService") as mock_service_class:
+
+    with patch("app.routes.user_routes.TextToSqlService") as mock_service_class, patch(
+        "app.routes.user_routes.get_authenticated_session",
+        return_value={
+            "user": {"id": "u1"},
+            "access_token": "test-access-token",
+            "csrf_token": CSRF_TOKEN,
+        },
+    ):
         mock_service = mock_service_class.return_value
         mock_service.generate_sql_from_text = AsyncMock(return_value=mock_result)
-        
-        response = await client.post("/api/text-to-sql", json={"query": "get all users"})
+
+        client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
+        response = await client.post(
+            "/api/text-to-sql",
+            json={"query": "get all users"},
+            headers={
+                "Origin": ALLOWED_ORIGIN,
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRF-Token": CSRF_TOKEN,
+            },
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["sql"] == "SELECT * FROM users"
 
 @pytest.mark.asyncio
-async def test_text_to_sql_validation_error(client, authenticated_session, mock_ai_service):
+async def test_text_to_sql_validation_error(client, mock_ai_service):
     """Test text-to-sql endpoint with empty query."""
-    response = await client.post("/api/text-to-sql", json={"query": ""})
+    with patch(
+        "app.routes.user_routes.get_authenticated_session",
+        return_value={
+            "user": {"id": "u1"},
+            "access_token": "test-access-token",
+            "csrf_token": CSRF_TOKEN,
+        },
+    ):
+        client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
+        response = await client.post(
+            "/api/text-to-sql",
+            json={"query": ""},
+            headers={
+                "Origin": ALLOWED_ORIGIN,
+                "X-Requested-With": "XMLHttpRequest",
+                "X-CSRF-Token": CSRF_TOKEN,
+            },
+        )
     assert response.status_code == 400
     assert "Query cannot be empty" in response.json()["detail"]

@@ -14,6 +14,7 @@ from app.services.ai_service import get_ai_service
 from app.services.text_to_sql_service import TextToSqlService
 from app.schemas.responses import UserResponse, DashboardResponse, ErrorResponse
 from app.auth.session_store import get_session
+from app.security.csrf import csrf_failure_reason
 
 logger = get_logger(__name__)
 
@@ -232,6 +233,16 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
             content=ErrorResponse(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Not authenticated"
+            ).model_dump()
+        )
+
+    reason = csrf_failure_reason(request, session)
+    if reason:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=ErrorResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=reason
             ).model_dump()
         )
 
