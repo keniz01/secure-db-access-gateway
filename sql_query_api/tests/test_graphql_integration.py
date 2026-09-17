@@ -508,6 +508,44 @@ class TestGraphQLExecuteSqlStatementWithPresentation:
         assert res["rows"][0]["name"] == "The Beatles"
         assert res["presentation"] is None
 
+    def test_chart_decision_maps_through_graphql_enum(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = self._FakePresentationService(
+            PresentationDecision(
+                format="chart",
+                content="Order volume by department.",
+                reason="grouped category + measure",
+            )
+        )
+        monkeypatch.setattr(sql_query_controller, "_presentation_service", fake)
+
+        gql_query = """
+        query ExecSql($req: SqlStatementRequest!) {
+            executeSqlStatementWithPresentation(request: $req) {
+                rows
+                presentation { format content reason }
+            }
+        }
+        """
+        variables = {
+            "req": {
+                "sqlStatement": "SELECT genre, COUNT(*) AS track_count FROM artist GROUP BY genre ORDER BY genre ASC",
+                "question": "How many artists per genre?",
+            }
+        }
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        body = res["data"]["executeSqlStatementWithPresentation"]
+        assert body["presentation"]["format"] == "CHART"
+        assert body["presentation"]["content"] == "Order volume by department."
+        assert body["rows"] == [
+            {"genre": "Jazz", "track_count": 1},
+            {"genre": "Rock", "track_count": 1},
+        ]
+
 
 class TestSecurityHeadersMiddleware:
     def test_security_headers_present(self, client: TestClient) -> None:

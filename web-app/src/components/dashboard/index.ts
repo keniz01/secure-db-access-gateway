@@ -7,4 +7,5 @@ export { ResultsTable } from './ResultsTable';
 export { ResultRenderer } from './ResultRenderer';
 export { ParagraphRenderer } from './ParagraphRenderer';
 export { ListRenderer } from './ListRenderer';
+export { ChartRenderer } from './ChartRenderer';
 export { SchemaBrowser } from './SchemaBrowser';

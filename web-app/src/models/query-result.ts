@@ -1,4 +1,4 @@
-export type PresentationFormat = 'paragraph' | 'list' | 'table';
+export type PresentationFormat = 'paragraph' | 'list' | 'chart' | 'table';
 
 export interface PresentationDecision {
   format: PresentationFormat;

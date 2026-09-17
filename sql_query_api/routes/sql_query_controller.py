@@ -123,6 +123,7 @@ class PresentationFormat(Enum):
 
     PARAGRAPH = "paragraph"
     LIST = "list"
+    CHART = "chart"
     TABLE = "table"
 
 
@@ -336,9 +337,10 @@ class Query:
         Execute a governed SELECT statement and plan how to display its result.
 
         The authoritative, post-policy rows are always returned in ``rows``,
-        unchanged. ``presentation`` is an LLM-chosen hint (paragraph/list/table)
-        and is ``null`` whenever planning is disabled or unsafe — callers must
-        fall back to the table renderer in that case.
+        unchanged. ``presentation`` is an LLM-chosen hint
+        (paragraph/list/chart/table) and is ``null`` whenever planning is
+        disabled or unsafe — callers must fall back to the table renderer in
+        that case.
         """
         rows = await Query._execute_governed(info, request)
         try:
