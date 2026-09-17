@@ -1,5 +1,5 @@
 import { DEFAULT_DATABASE_ID, SQL_GRAPHQL_BASE_URL } from '../configs/url-config';
-import type { QueryResult } from '../models/query-result';
+import type { PresentationDecision, PresentationFormat, QueryResult } from '../models/query-result';
 import apiClient from './api-client';
 
 interface GraphQLRequest {
@@ -40,6 +40,21 @@ interface IntrospectSchemaResponse {
   };
   errors?: Array<{ message: string }>;
 }
+
+const SUPPORTED_FORMATS: PresentationFormat[] = ['paragraph', 'list', 'chart', 'table'];
+
+const normalizePresentation = (
+  presentation: PresentationDecision | null | undefined
+): PresentationDecision | null => {
+  if (!presentation) {
+    return null;
+  }
+  const lower = presentation.format?.toLowerCase?.() ?? 'table';
+  const format = SUPPORTED_FORMATS.includes(lower as PresentationFormat)
+    ? (lower as PresentationFormat)
+    : 'table';
+  return { ...presentation, format };
+};
 
 export const graphqlApi = {
   fetchSchema: async (databaseId: string = DEFAULT_DATABASE_ID): Promise<SchemaTable[]> => {
@@ -145,7 +160,7 @@ export const graphqlApi = {
 
       return {
         rows: Array.isArray(result.rows) ? result.rows : [],
-        presentation: result.presentation ?? null,
+        presentation: normalizePresentation(result.presentation),
       };
     } catch (error) {
       const message =

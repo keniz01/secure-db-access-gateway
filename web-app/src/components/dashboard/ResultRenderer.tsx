@@ -4,6 +4,7 @@ import { ChartRenderer } from './ChartRenderer';
 import { ListRenderer } from './ListRenderer';
 import { ParagraphRenderer } from './ParagraphRenderer';
 import { ResultsTable } from './ResultsTable';
+import { SummaryCard } from './SummaryCard';
 
 interface ResultRendererProps {
   result: QueryResult;
@@ -13,7 +14,13 @@ const FORMAT_LABELS: Record<string, string> = {
   paragraph: 'Summary',
   list: 'List summary',
   chart: 'Chart',
+  table: 'Summary',
 };
+
+// Small/scalar results are fully answered by the AI summary sentence; echoing
+// the same data back in a table below it is redundant. Show one or the other,
+// with the table still one click away.
+const MAX_SUMMARY_ONLY_ROWS = 2;
 
 export const ResultRenderer = ({ result }: ResultRendererProps): React.JSX.Element => {
   const [tableView, setTableView] = useState(false);
@@ -24,18 +31,14 @@ export const ResultRenderer = ({ result }: ResultRendererProps): React.JSX.Eleme
 
   const isText = format === 'paragraph' || format === 'list';
   const isChart = format === 'chart';
+  const summaryOnlyTable =
+    format === 'table' && Boolean(content) && result.rows.length <= MAX_SUMMARY_ONLY_ROWS;
+  const isSummaryOnly = isText || isChart || summaryOnlyTable;
   const label = FORMAT_LABELS[format] ?? 'Presentation';
-  const showPresentation = !tableView && (isText || isChart);
-  const hasToggle = isText || isChart;
+  const showPresentation = !tableView && isSummaryOnly;
+  const hasToggle = isSummaryOnly;
 
-  const summaryBanner = content ? (
-    <div className="bg-indigo-50 border-l-4 border-indigo-400 p-4 rounded-lg">
-      <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700 mb-1">
-        AI summary
-      </p>
-      <p className="text-gray-800 leading-relaxed">{content}</p>
-    </div>
-  ) : null;
+  const summaryBanner = content ? <SummaryCard content={content} /> : null;
 
   return (
     <div className="space-y-4">
@@ -70,10 +73,12 @@ export const ResultRenderer = ({ result }: ResultRendererProps): React.JSX.Eleme
         </div>
       )}
 
+      {showPresentation && summaryOnlyTable && summaryBanner}
+
       {!showPresentation && (
         <div className="space-y-4">
           {summaryBanner}
-          <ResultsTable data={result.rows} columnLabels={decision?.columnLabels} />
+          <ResultsTable data={result.rows} />
         </div>
       )}
     </div>

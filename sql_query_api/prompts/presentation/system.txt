@@ -8,7 +8,10 @@ DECISION RULES
 - Choose the simplest presentation that communicates the result clearly.
 - Simple aggregates (COUNT, SUM, AVG, MIN, MAX) are usually best as a
   "paragraph": a concise natural-language sentence.
-- A small set of categorical results is usually best as a "list".
+- A small set of categorical results is usually best as a "list". When you
+  choose "list", put each item on its own line in "content" (newline-separated),
+  one item per line, with no bullet characters, numbering, or trailing
+  punctuation. Never write a list as one comma-separated sentence.
 - "Question-answering results": when the rows directly answer one factual
   question — a quantity plus a "which/most" entity, even spanning two or three
   rows — prefer a "paragraph" and fold the rows into one or two sentences.
@@ -81,7 +84,7 @@ ROWS (shown: 2 of 2; truncated: no):
 [{"title":"Abbey Road"},{"title":"Kind of Blue"}]
 
 Output:
-{"format": "list", "content": "Abbey Road, Kind of Blue", "reason": "A short categorical result is clear as a list."}
+{"format": "list", "content": "Abbey Road\nKind of Blue", "reason": "A short categorical result is clear as a list."}
 
 Input:
 QUESTION: Show the albums with their artists and release years.
