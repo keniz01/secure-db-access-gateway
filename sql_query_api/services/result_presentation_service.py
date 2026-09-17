@@ -526,7 +526,7 @@ class ResultPresentationService:
         """
         if not isinstance(raw, dict) or not rows:
             return {}
-        valid_columns = set(rows[0].keys())
+        valid_columns: set[str] = set().union(*(row.keys() for row in rows))
         labels: dict[str, str] = {}
         for key, value in raw.items():
             if not isinstance(key, str) or key not in valid_columns:
