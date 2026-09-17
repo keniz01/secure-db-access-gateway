@@ -4,4 +4,7 @@ export { QueryInput } from './QueryInput';
 export { NaturalLanguageInput } from './NaturalLanguageInput';
 export { QueryResults } from './QueryResults';
 export { ResultsTable } from './ResultsTable';
+export { ResultRenderer } from './ResultRenderer';
+export { ParagraphRenderer } from './ParagraphRenderer';
+export { ListRenderer } from './ListRenderer';
 export { SchemaBrowser } from './SchemaBrowser';

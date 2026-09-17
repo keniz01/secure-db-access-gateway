@@ -55,10 +55,17 @@ test.describe('E2E Smoke Test: Login -> Run Query -> View Results', () => {
           contentType: 'application/json',
           body: JSON.stringify({
             data: {
-              executeSqlStatement: [
-                { id: 101, name: 'Abbey Road', artist: 'The Beatles', release_year: 1969 },
-                { id: 102, name: 'Kind of Blue', artist: 'Miles Davis', release_year: 1959 },
-              ],
+              executeSqlStatementWithPresentation: {
+                rows: [
+                  { id: 101, name: 'Abbey Road', artist: 'The Beatles', release_year: 1969 },
+                  { id: 102, name: 'Kind of Blue', artist: 'Miles Davis', release_year: 1959 },
+                ],
+                presentation: {
+                  format: 'table',
+                  content: null,
+                  reason: 'multi-column relational data',
+                },
+              },
             },
           }),
         });

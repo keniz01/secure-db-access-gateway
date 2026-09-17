@@ -3,7 +3,7 @@ The statement must be answers-only: return ONLY the SQL, no explanations, no com
 
 MANDATORY OUTPUT RULES:
 - Return EXACTLY ONE SQL statement. Never split a question into multiple statements separated by semicolons.
-- The statement MUST start with SELECT and be a read-only query (no INSERT/UPDATE/DELETE/DDL, no pg_sleep or similar functions).
+- The statement MUST be a read-only query (no INSERT/UPDATE/DELETE/DDL, no pg_sleep or similar functions). It must be SELECT or a read-only WITH ... SELECT. The gateway accepts CTEs.
 - Strictly only use table and column names defined in the context. Use table and column aliases throughout.
 - Do not use "--" comments or "/* */" comments.
 - EACH alias you use MUST be declared: every lowercase prefix like "a." or "ar." in the SELECT list, WHERE clause, JOIN conditions, or scalar subqueries must be a table alias declared in a FROM or JOIN clause of that SQL block. Never reference an alias that you did not declare.
@@ -19,8 +19,9 @@ GUIDELINES:
 - Use simple queries when appropriate - single-table queries do NOT require JOINs
 - For questions asking about "unique", "distinct", or "different" values, use COUNT(DISTINCT column_name)
 - Scalar subqueries (a subquery returning a single column inside the SELECT list) ARE allowed for multi-part questions; keep them read-only.
-- The statement must still BEGIN with the word SELECT - never start with WITH, so avoid CTEs.
-- Multi-part questions (e.g. "… and which …") must be answered in ONE statement using scalar subqueries or aggregate-friendly joins - never as multiple statements.
+- CTEs (WITH ...) and window functions ARE allowed for read-only analytics, and you may start a statement with WITH when it reads clearly.
+- Multi-part questions (e.g. "… and which …") must be answered in ONE statement - never as multiple statements.
+- To answer a "how many ... and which ... most/largest" question, prefer ONE statement with window functions: build a per-item aggregate (COUNT + GROUP BY), wrap it with COUNT(*) OVER () AS album_count and MAX(agg) OVER () AS max_track_count over the filtered rows, then SELECT ... WHERE the winning rows. Ties are acceptable. Fall back to a correlated scalar subquery only when a window-function form would be awkward.
 - For existence checks ("is there", "does exist"), use: SELECT 1 FROM table WHERE condition LIMIT 1; or SELECT COUNT(*) > 0 AS exists FROM table WHERE condition;
 - For text searches (matching names, titles, etc.), use name/title columns (e.g., label_name, artist_name, title), NOT ID columns (e.g., label_id, artist_id)
 - Columns ending in "_id" are identifiers/foreign keys - use them for JOINs, not for text matching
@@ -73,13 +74,26 @@ INNER JOIN album al ON al.album_id = tr.album_id
 WHERE al.title ILIKE 'Soca Xplosion 2007';
 
 Question: How many albums does the artist 'Mavado' have, and which album has the most tracks?
-Context: album: album_id, title, release_year, total_tracks, artist_id
-artist: artist_id, artist_name
-SQL: SELECT COUNT(al.album_id) AS album_count,
-       (SELECT a2.title FROM album a2 WHERE a2.artist_id = ar.artist_id ORDER BY a2.total_tracks DESC LIMIT 1) AS album_with_most_tracks
-FROM artist ar
-INNER JOIN album al ON al.artist_id = ar.artist_id
-WHERE ar.artist_name ILIKE 'Mavado';
+Context: artist: artist_id, artist_name
+album: album_id, title, release_year, artist_id
+track: track_id, title, duration, position, album_id
+SQL: WITH album_tracks AS (
+       SELECT a.album_id, a.title, a.artist_id,
+              COUNT(t.track_id) AS track_count
+       FROM album a
+       LEFT JOIN track t ON t.album_id = a.album_id
+       GROUP BY a.album_id, a.title, a.artist_id
+     ),
+     mavado_albums AS (
+       SELECT at.*, COUNT(*) OVER () AS album_count,
+              MAX(track_count) OVER () AS max_track_count
+       FROM album_tracks at
+       INNER JOIN artist ar ON ar.artist_id = at.artist_id
+       WHERE ar.artist_name ILIKE 'Mavado'
+     )
+SELECT album_count, title AS album_with_most_tracks, track_count
+FROM mavado_albums
+WHERE track_count = max_track_count;
 
 Question: For the artist 'Buju Banton', how many tracks are longer than 4 minutes and what is the latest album year?
 Context: track: track_id, title, duration, position, album_id, artist_id
@@ -96,11 +110,14 @@ AND tr.duration > 240;
 Question: Which label has the most albums, and how many albums does that label have?
 Context: album: album_id, title, release_date, label_id
 record_label: label_id, label_name
-SQL: SELECT (SELECT rl2.label_name FROM record_label rl2 WHERE rl2.label_id = ag.label_id) AS top_label,
-       ag.album_count
-FROM (SELECT l.label_id, COUNT(a.album_id) AS album_count
-      FROM album a
-      INNER JOIN record_label l ON l.label_id = a.label_id
-      GROUP BY l.label_id
-      ORDER BY COUNT(a.album_id) DESC
-      LIMIT 1) ag;
+SQL: WITH label_counts AS (
+       SELECT l.label_name,
+              COUNT(a.album_id) AS album_count,
+              MAX(COUNT(a.album_id)) OVER () AS max_album_count
+       FROM album a
+       INNER JOIN record_label l ON l.label_id = a.label_id
+       GROUP BY l.label_name
+     )
+SELECT label_name AS top_label, album_count
+FROM label_counts
+WHERE album_count = max_album_count;

@@ -58,6 +58,9 @@ services:
     environment:
       SQL_DATA_SCHEMA: ${SQL_DATA_SCHEMA:-music}
       SQL_QUERY_COST_THRESHOLD: ${SQL_QUERY_COST_THRESHOLD:-16}
+      SQL_PRESENTATION_ENABLED: ${SQL_PRESENTATION_ENABLED:-true}
+      AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+      AI_DISABLE_REASONING: ${AI_DISABLE_REASONING:-true}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,https://localhost:5173,https://localhost:8443}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: sql-query-api

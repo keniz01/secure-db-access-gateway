@@ -11,6 +11,7 @@ from auth import Principal
 from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from routes import sql_query_controller
+from services.result_presentation_service import PresentationDecision
 from services.sql_query_service import SqlQueryService
 from services.tenant_database_resolver import TenantDatabaseConfig
 
@@ -407,6 +408,105 @@ class TestGraphQLIntrospectSchema:
         assert "id" in col_names
         assert "name" in col_names
         assert "genre" in col_names
+
+
+class TestGraphQLExecuteSqlStatementWithPresentation:
+    """The optional LLM-chosen presentation wrapper keeps the raw rows authoritative."""
+
+    class _FakePresentationService:
+        def __init__(self, decision: PresentationDecision | None) -> None:
+            self.decision = decision
+            self.calls: list[dict[str, Any]] = []
+
+        async def decide(
+            self, *, question: str | None, sql: str, rows: list[dict[str, Any]]
+        ) -> PresentationDecision | None:
+            self.calls.append({"question": question, "sql": sql, "rows": rows})
+            return self.decision
+
+    def test_paragraph_decision_is_returned_with_raw_rows(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake = self._FakePresentationService(
+            PresentationDecision(format="paragraph", content="There are 2 artists.", reason="single scalar aggregate")
+        )
+        monkeypatch.setattr(sql_query_controller, "_presentation_service", fake)
+
+        gql_query = """
+        query ExecSql($req: SqlStatementRequest!) {
+            executeSqlStatementWithPresentation(request: $req) {
+                rows
+                presentation { format content reason }
+            }
+        }
+        """
+        variables = {
+            "req": {
+                "sqlStatement": "SELECT COUNT(*) AS artist_count FROM artist",
+                "question": "How many artists are there?",
+            }
+        }
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        body = res["data"]["executeSqlStatementWithPresentation"]
+        assert body["rows"] == [{"artist_count": 2}]
+        assert body["presentation"] == {
+            "format": "PARAGRAPH",
+            "content": "There are 2 artists.",
+            "reason": "single scalar aggregate",
+        }
+        assert fake.calls[0]["question"] == "How many artists are there?"
+        assert fake.calls[0]["rows"] == [{"artist_count": 2}]
+
+    def test_presentation_null_falls_back_to_raw_rows(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            sql_query_controller,
+            "_presentation_service",
+            self._FakePresentationService(None),
+        )
+        gql_query = """
+        query ExecSql($req: SqlStatementRequest!) {
+            executeSqlStatementWithPresentation(request: $req) {
+                rows
+                presentation { format content reason }
+            }
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT id, name, genre FROM artist ORDER BY id ASC"}}
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        body = response.json()["data"]["executeSqlStatementWithPresentation"]
+        assert body["rows"][0] == {"id": 1, "name": "The Beatles", "genre": "Rock"}
+        assert body["presentation"] is None
+
+    def test_presentation_planner_error_never_blocks_rows(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        class _BoomService:
+            async def decide(
+                self, *, question: str | None, sql: str, rows: list[dict[str, Any]]
+            ) -> PresentationDecision | None:
+                raise RuntimeError("planner exploded")
+
+        monkeypatch.setattr(sql_query_controller, "_presentation_service", _BoomService())
+        gql_query = """
+        query ExecSql($req: SqlStatementRequest!) {
+            executeSqlStatementWithPresentation(request: $req) {
+                rows
+                presentation { format }
+            }
+        }
+        """
+        variables = {"req": {"sqlStatement": "SELECT id, name FROM artist ORDER BY id ASC"}}
+        response = client.post("/graphql", json={"query": gql_query, "variables": variables}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()["data"]["executeSqlStatementWithPresentation"]
+        assert res["rows"][0]["name"] == "The Beatles"
+        assert res["presentation"] is None
 
 
 class TestSecurityHeadersMiddleware:

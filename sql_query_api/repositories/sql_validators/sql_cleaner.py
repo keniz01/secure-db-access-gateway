@@ -9,8 +9,14 @@ This module handles cleaning of SQL queries that may contain:
 """
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+# A read-only analytical query may legitimately begin with WITH (CTE). The
+# gateway validates contents with the SQL safety checker, so a leading WITH is
+# not a signal that the query needs a "SELECT *" prefix.
+_WITH_PREFIX_RE = re.compile(r"^WITH\b", re.IGNORECASE)
 
 
 def clean_sql(sql: str) -> str:
@@ -59,7 +65,7 @@ def clean_sql(sql: str) -> str:
         sql = "S" + sql
         sql_upper = sql.upper().strip()
 
-    # Step 4: Ensure SQL starts with SELECT (case-insensitive check)
+    # Step 4: Ensure SQL starts with SELECT or a WITH ... SELECT analytic query.
     if not sql_upper.startswith("SELECT"):
         # Try to find SELECT in the first few words
         words = sql.split()
@@ -67,6 +73,10 @@ def clean_sql(sql: str) -> str:
             sql = "SELECT " + " ".join(words[1:])
             logger.warning("Fixed 'ELECT' to 'SELECT'")
             sql_upper = sql.upper().strip()
+        elif _WITH_PREFIX_RE.match(sql_upper):
+            # A read-only CTE (WITH ... SELECT) is accepted; the safety checker
+            # still validates the full statement afterwards.
+            logger.debug("SQL begins with WITH; leaving it untouched")
         elif not sql_upper.startswith("SELECT"):
             # If it doesn't start with SELECT at all, attempt to fix
             logger.warning("SQL does not start with SELECT, attempting to fix...")
@@ -80,8 +90,8 @@ def clean_sql(sql: str) -> str:
                     logger.warning("Prepended 'SELECT *' to SQL query")
                     sql_upper = sql.upper().strip()
 
-    # Step 5: Final validation - ensure it starts with SELECT after cleaning
-    if not sql_upper.startswith("SELECT"):
+    # Step 5: Final validation - ensure it starts with SELECT or WITH after cleaning
+    if not (sql_upper.startswith("SELECT") or _WITH_PREFIX_RE.match(sql_upper)):
         raise ValueError(
             f"SQL query does not start with SELECT after cleaning: {sql[:100]}"
         )
