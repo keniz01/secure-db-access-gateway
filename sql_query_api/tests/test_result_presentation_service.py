@@ -116,6 +116,85 @@ class TestFormatSelection:
         assert decision.format == "list"
         assert decision.content == "Rock, Jazz, Funk"
 
+    async def test_table_with_summary_content_is_accepted(self):
+        rows = [
+            {"department": "Electronics", "order_count": 412},
+            {"department": "Apparel", "order_count": 318},
+        ]
+        response = _llm_response(
+            {
+                "format": "table",
+                "content": "2 departments are shown; Electronics leads with 412 orders.",
+                "reason": "relational data with an interpreting summary",
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            question="How many orders per department?",
+            sql="SELECT department, COUNT(*) AS order_count FROM orders GROUP BY department",
+            rows=rows,
+        )
+        assert decision is not None
+        assert decision.format == "table"
+        assert decision.content == "2 departments are shown; Electronics leads with 412 orders."
+
+    async def test_table_summary_with_invented_number_is_rejected(self):
+        response = _llm_response(
+            {
+                "format": "table",
+                "content": "1,000 departments total across the org.",
+                "reason": "summary",
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT department FROM departments",
+            rows=[{"department": "Electronics"}, {"department": "Apparel"}],
+        )
+        assert decision.format == "table"
+        assert decision.content is None
+
+    async def test_chart_plan_for_grouped_numeric_rows(self):
+        rows = [
+            {"department": "Electronics", "order_count": 412},
+            {"department": "Apparel", "order_count": 318},
+            {"department": "Grocery", "order_count": 290},
+        ]
+        response = _llm_response(
+            {"format": "chart", "content": "Order volume by department.", "reason": "grouped category + measure"}
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            question="How many orders does each department have?",
+            sql="SELECT department, COUNT(*) AS order_count FROM orders GROUP BY department",
+            rows=rows,
+        )
+        assert decision is not None
+        assert decision.format == "chart"
+        assert decision.content == "Order volume by department."
+
+    async def test_chart_plan_without_numeric_column_falls_back_to_table(self):
+        response = _llm_response({"format": "chart", "content": "", "reason": "wants a chart"})
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT name, email FROM customers LIMIT 5",
+            rows=[{"name": "Ada", "email": "ada@example.com"}],
+        )
+        assert decision is not None
+        assert decision.format == "table"
+
+    async def test_chart_caption_with_invented_number_is_rejected(self):
+        response = _llm_response(
+            {"format": "chart", "content": "412 is the top figure, 999 the rest.", "reason": "caption"}
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT department, COUNT(*) AS order_count FROM orders GROUP BY department",
+            rows=[{"department": "Electronics", "order_count": 412}],
+        )
+        assert decision.format == "table"
+        assert decision.content is None
+
 
 class TestPayloadBounding:
     async def test_large_result_set_bounds_llm_payload(self):
@@ -241,7 +320,9 @@ class TestGracefulFallback:
         assert decision.format == "paragraph"
 
     async def test_unsupported_format_falls_back_to_table(self):
-        service = _service(lambda *a: _llm_response({"format": "chart", "content": "", "reason": "would need chart"}))
+        service = _service(
+            lambda *a: _llm_response({"format": "heatmap", "content": "", "reason": "would need heatmap"})
+        )
         decision = await service.decide(sql="SELECT ts, value FROM metrics", rows=[{"ts": "2024-01-01", "value": 12}])
         assert decision is not None
         assert decision.format == "table"

@@ -15,10 +15,14 @@ DECISION RULES
   A related directive may appear at the end of some inputs telling you the rows
   answer a single factual question; follow it unless the rows clearly show
   unrelated records.
+- A "chart" suits grouped/summary data with one textual category column plus
+  one or more numeric measure columns (e.g. count by department, revenue by
+  month). Only choose it when the ROWS clearly support plotting; otherwise
+  choose "table".
 - Detailed multi-row / multi-column relational data must remain a "table".
-- Time-series or numerical data may warrant a "chart" ONLY when a chart
-  renderer is available. No chart renderer is available here, so choose
-  "table" for such data.
+- "table" may carry an optional concise summary in "content" (one or two
+  sentences that help interpret the rows, e.g. what the user is looking at).
+  Omit "content" when nothing useful can be said.
 - When in doubt, choose "table". A table is always correct.
 
 DATA INTEGRITY (MANDATORY)
@@ -27,6 +31,8 @@ DATA INTEGRITY (MANDATORY)
   the input. Do not introduce counts, sums, percentages, or any figure that is
   not literally present in the ROWS data.
 - If you cannot prove a statement from the ROWS data, do not write it.
+- The "content" field NEVER replaces the data — the UI always shows the ROWS
+  alongside it.
 
 OUTPUT FORMAT
 Return exactly one JSON object and nothing else — no markdown fences, no extra
@@ -34,8 +40,8 @@ prose, no explanation outside the JSON.
 
 Schema:
 {
-  "format": "paragraph" | "list" | "table",
-  "content": string,          // required for "paragraph"; optional hint for "list"; empty for "table"
+  "format": "paragraph" | "list" | "chart" | "table",
+  "content": string,          // required for "paragraph"; optional summary/caption for the others
   "reason": string            // one short sentence explaining the choice
 }
 
@@ -78,7 +84,20 @@ ROWS (shown: 25 of 25; truncated: no):
 [{"id":1,"title":"Abbey Road","artist":"The Beatles","release_year":1969}, ...]
 
 Output:
-{"format": "table", "content": "", "reason": "Multi-column relational data stays readable as a table."}
+{"format": "table", "content": "Inspect 25 albums with their artists and release years.", "reason": "Multi-column relational data stays readable as a table, with a short interpreting summary."}
+
+Input:
+QUESTION: How many orders does each department have?
+SQL:
+SELECT department, COUNT(*) AS order_count FROM orders GROUP BY department ORDER BY order_count DESC
+COLUMNS:
+ - name: department, type: string, nullable: no
+ - name: order_count, type: integer, nullable: no
+ROWS (shown: 5 of 5; truncated: no):
+[{"department":"Electronics","order_count":412},{"department":"Apparel","order_count":318},{"department":"Grocery","order_count":290},{"department":"Books","order_count":156},{"department":"Sports","order_count":108}]
+
+Output:
+{"format": "chart", "content": "Order volume by department.", "reason": "A grouped category + numeric measure reads well as a chart."}
 
 Input:
 QUESTION: How many albums does Capleton have and which album has the most tracks?

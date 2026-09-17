@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 _PRESENTATION_PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts" / "presentation"
 _PRESENTATION_SYSTEM_PROMPT_PATH = _PRESENTATION_PROMPT_DIR / "system.txt"
 
-SUPPORTED_FORMATS: frozenset[str] = frozenset({"paragraph", "list", "table"})
+SUPPORTED_FORMATS: frozenset[str] = frozenset({"paragraph", "list", "chart", "table"})
 
 _INTEGER_TOKEN_RE = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _DENSE_INTEGER_RE = re.compile(r"\d[\d,]*")
@@ -75,9 +75,9 @@ class PresentationDecision:
     A validated presentation decision for a query result.
 
     ``format`` is one of ``SUPPORTED_FORMATS``. ``content`` carries the
-    natural-language wording for ``paragraph`` (and optionally ``list``);
-    it is always ``None`` for ``table`` so generated text can never be a
-    substitute for raw data.
+    natural-language wording: required for ``paragraph``, and an optional
+    summary/caption for ``list``, ``chart``, and ``table``. It is never a
+    substitute for the authoritative ``rows``.
     """
 
     format: str
@@ -480,16 +480,29 @@ class ResultPresentationService:
             if not isinstance(raw_content, str) or not raw_content.strip():
                 raise _InvalidDecisionError("paragraph requires non-empty 'content'")
             content = raw_content.strip()
-            if not self._integers_fit(content, rows):
-                raise _InvalidDecisionError("paragraph content invents values not present in the result")
-        elif fmt == "list":
+        else:
             raw_content = data.get("content")
             if isinstance(raw_content, str) and raw_content.strip():
                 content = raw_content.strip()
-        # table: content is deliberately dropped so generated text can never
-        # replace the authoritative rows.
+
+        if fmt == "chart" and not self._has_numeric_column(rows):
+            raise _InvalidDecisionError("'chart' plan has no numeric column to plot")
+
+        if content and not self._integers_fit(content, rows):
+            raise _InvalidDecisionError("content invents values not present in the result")
 
         return PresentationDecision(format=fmt, content=content, reason=reason)
+
+    @staticmethod
+    def _has_numeric_column(rows: list[dict[str, Any]]) -> bool:
+        """Return whether any row (excluding booleans) contains a number."""
+        for row in rows:
+            for value in row.values():
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (int, float)):
+                    return True
+        return False
 
     @staticmethod
     def _parse_json_object(text: str) -> dict[str, Any]:
@@ -517,10 +530,12 @@ class ResultPresentationService:
     @classmethod
     def _integers_fit(cls, content: str, rows: list[dict[str, Any]]) -> bool:
         """
-        Reject paragraph wording that invents numbers absent from the data.
+        Reject wording that invents numbers absent from the data.
 
         Only integer-like tokens are guard-checked (e.g. counts, sums, years);
         decimal tokens are ignored to avoid false positives from re-formatting.
+        The number of rows shown is itself a fact of the result, so an integer
+        equal to the row count is also permitted (e.g. "2 departments").
         """
         tokens = _INTEGER_TOKEN_RE.findall(content)
         integer_tokens = {
@@ -531,7 +546,7 @@ class ResultPresentationService:
         if not integer_tokens:
             return True
 
-        allowed = set()
+        allowed = {str(len(rows))}
         for row in rows:
             for value in row.values():
                 allowed.update(cls._numeric_forms(value))
