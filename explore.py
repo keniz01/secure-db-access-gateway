@@ -13,10 +13,22 @@ import io
 import urllib.request
 from typing import Dict, Any, List, Tuple, Optional
 
-# Auto-re-execute using the virtualenv python if we're not already in it
+# Auto-re-execute using the virtualenv python if we're not already in it.
+# Guarded so importing this file as a module (e.g. under pytest) is inert:
+# only the CLI entrypoint may replace its own process with os.execv.
 current_dir = os.path.dirname(os.path.abspath(__file__))
-venv_python = os.path.join(current_dir, "sql_query_api", ".venv", "bin", "python")
-if os.path.exists(venv_python) and sys.executable != venv_python:
+venv_dir = os.path.join(current_dir, "sql_query_api", ".venv")
+venv_python = os.path.join(venv_dir, "bin", "python")
+if (
+    __name__ == "__main__"
+    and os.path.exists(venv_python)
+    and os.environ.get("EXPLORE_REEXEC_GUARD") != "1"
+    and not (
+        os.path.abspath(os.path.realpath(sys.prefix))
+        == os.path.abspath(os.path.realpath(venv_dir))
+    )
+):
+    os.environ["EXPLORE_REEXEC_GUARD"] = "1"
     os.execv(venv_python, [venv_python] + sys.argv)
 
 # Now we are running under the virtualenv (or system python if no virtualenv exists), so dependencies are available.
