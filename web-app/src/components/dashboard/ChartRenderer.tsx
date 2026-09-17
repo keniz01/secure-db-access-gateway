@@ -107,7 +107,7 @@ export const ChartRenderer = ({ data }: ChartRendererProps): React.JSX.Element =
             const y = baseline - barHeight;
             return (
               <rect
-                key={`${category}-${entry.name}`}
+                key={`${categoryIndex}-${entry.name}`}
                 x={x}
                 y={y}
                 width={Math.max(1, barWidth - 2)}
@@ -123,7 +123,7 @@ export const ChartRenderer = ({ data }: ChartRendererProps): React.JSX.Element =
 
         {categories.map((category, categoryIndex) => (
           <text
-            key={category}
+            key={categoryIndex}
             x={PADDING.left + categoryIndex * groupWidth + groupWidth / 2}
             y={baseline + 16}
             className="fill-gray-600"
