@@ -1,7 +1,8 @@
-import { ResultsTable } from './ResultsTable';
+import type { QueryResult } from '../../models/query-result';
+import { ResultRenderer } from './ResultRenderer';
 
 interface QueryResultsProps {
-  results: Record<string, unknown>[] | null;
+  results: QueryResult | null;
   error: string | null;
   isExecuting: boolean;
 }
@@ -23,13 +24,13 @@ export const QueryResults = ({ results, error, isExecuting }: QueryResultsProps)
       )}
 
       {/* No Results */}
-      {(!hasError && results === null && !isCurrentlyExecuting ? (
+      {(!hasError && results === null && !isCurrentlyExecuting) && (
         <div className="text-center py-12">
           <p className="text-gray-500 text-lg">
             No results yet. Execute a SQL query to see results here.
           </p>
         </div>
-      ) : null) as React.JSX.Element | null}
+      )}
 
       {/* Loading State */}
       {isExecuting && (
@@ -41,23 +42,7 @@ export const QueryResults = ({ results, error, isExecuting }: QueryResultsProps)
 
       {/* Results Display */}
       {results && !error && !isExecuting && (
-        <div className="overflow-x-auto">
-          {typeof results === 'string' ? (
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <pre className="font-mono text-sm text-gray-800 whitespace-pre-wrap break-words">
-                {results}
-              </pre>
-            </div>
-          ) : Array.isArray(results) && results.length > 0 ? (
-            <ResultsTable data={results} />
-          ) : (
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <pre className="font-mono text-sm text-gray-800 whitespace-pre-wrap break-words">
-                {JSON.stringify(results, null, 2)}
-              </pre>
-            </div>
-          )}
-        </div>
+        <ResultRenderer result={results} />
       )}
     </div>
   );

@@ -4,6 +4,7 @@ import { dashboardApi } from '../services/dashboard-api';
 import { graphqlApi } from '../services/graphql-api';
 import { textToSqlApi } from '../services/text-to-sql-api';
 import useAuth from '../hooks/use-auth';
+import type { QueryResult } from '../models/query-result';
 import {
   DashboardHeader,
   UserInfoCard,
@@ -12,13 +13,6 @@ import {
   QueryResults,
   SchemaBrowser
 } from './dashboard/index';
-
-interface GraphQLResponse {
-  data?: {
-    executeSqlStatement?: unknown;
-  };
-  errors?: Array<{ message: string }>;
-}
 
 type QueryMode = 'sql' | 'natural';
 
@@ -35,7 +29,7 @@ export const Dashboard = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   
   // Shared state
-  const [queryResults, setQueryResults] = useState<Record<string, unknown>[] | null>(null);
+  const [queryResults, setQueryResults] = useState<QueryResult | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
 
@@ -68,11 +62,9 @@ export const Dashboard = () => {
     setQueryResults(null);
 
     try {
-      const response = await graphqlApi.executeSqlQuery(sqlQuery) as GraphQLResponse;
-      if (response.data?.executeSqlStatement) {
-        setQueryResults(response.data.executeSqlStatement as Record<string, unknown>[]);
-      } else if (response.errors) {
-        setQueryError(response.errors[0]?.message || 'Query execution failed');
+      const result = await graphqlApi.executeSqlQuery(sqlQuery);
+      if (result.presentation || result.rows.length > 0) {
+        setQueryResults(result);
       } else {
         setQueryError('No data returned from query');
       }
@@ -136,12 +128,10 @@ export const Dashboard = () => {
     setQueryResults(null);
 
     try {
-      // Execute the generated SQL using the existing GraphQL API
-      const response = await graphqlApi.executeSqlQuery(generatedSql) as GraphQLResponse;
-      if (response.data?.executeSqlStatement) {
-        setQueryResults(response.data.executeSqlStatement as Record<string, unknown>[]);
-      } else if (response.errors) {
-        setQueryError(response.errors[0]?.message || 'Query execution failed');
+      // Execute the generated SQL on behalf of the natural-language question
+      const result = await graphqlApi.executeSqlQuery(generatedSql, undefined, naturalLanguageQuery);
+      if (result.presentation || result.rows.length > 0) {
+        setQueryResults(result);
       } else {
         setQueryError('No data returned from query');
       }

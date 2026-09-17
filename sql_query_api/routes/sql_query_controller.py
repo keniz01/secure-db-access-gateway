@@ -2,6 +2,7 @@ import logging as logger
 import os
 import re
 from collections.abc import Callable
+from enum import Enum
 from typing import Any
 
 import strawberry
@@ -17,6 +18,10 @@ from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyCheck
 from services.abstract_sql_query_service import ISqlQueryService
 from services.policy_engine import PolicyEvaluator
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from services.result_presentation_service import (
+    PresentationDecision as PresentationDecisionValue,
+)
+from services.result_presentation_service import ResultPresentationService
 from services.tenant_database_resolver import (
     TenantDatabaseConfig,
     TenantDatabaseResolutionError,
@@ -90,6 +95,7 @@ _query_gateway = GovernedQueryGateway(
     audit=lambda event_type, **payload: log_audit_event(event_type, **payload),
     policy_evaluator=PolicyEvaluator.from_environment(),
 )
+_presentation_service = ResultPresentationService.from_environment()
 
 
 # Strawberry input type for the query
@@ -99,6 +105,7 @@ class SqlStatementRequest:
 
     sql_statement: str = ""
     database_id: str = "default"
+    question: str = ""
 
 
 # JSON scalar for dynamic result sets
@@ -108,6 +115,32 @@ class JSON:
 
     serialize: Callable[[Any], Any] = staticmethod(lambda value: value)
     parse_value: Callable[[Any], Any] = staticmethod(lambda value: value)
+
+
+@strawberry.enum(description="How a query result may be presented to the user")
+class PresentationFormat(Enum):
+    """Supported presentation formats for a governed query result."""
+
+    PARAGRAPH = "paragraph"
+    LIST = "list"
+    TABLE = "table"
+
+
+@strawberry.type
+class PresentationDecision:
+    """LLM-chosen presentation decision for a query result."""
+
+    format: PresentationFormat
+    content: str | None = None
+    reason: str | None = None
+
+
+@strawberry.type
+class QueryResult:
+    """A governed query result with the authoritative rows intact."""
+
+    rows: list[JSON]
+    presentation: PresentationDecision | None = None
 
 
 # Schema Info type for getTableSchema (vector-embedding-based) response
@@ -224,11 +257,11 @@ class Query:
             reason=cost.get("reason", "basic select"),
         )
 
-    @strawberry.field(description="Executes a SQL SELECT statement")
-    async def execute_sql_statement(self, info: strawberry.Info, request: SqlStatementRequest) -> list[JSON]:
-        """Execute a governed SELECT statement and return its rows."""
+    @staticmethod
+    async def _execute_governed(info: strawberry.Info, request: SqlStatementRequest) -> list[dict[str, Any]]:
+        """Run the standard governed pipeline (validate, policy, execute, mask)."""
         sql = request.sql_statement.strip()
-        principal, binding, service = Query._request_context(info, request.database_id)
+        principal, binding, _ = Query._request_context(info, request.database_id)
 
         # Input validation: Check if SQL is empty
         if not sql:
@@ -270,6 +303,54 @@ class Query:
             logger.exception("Error executing SQL")
             # Don't expose internal error details to client
             raise Exception("Failed to execute SQL statement. Please verify your query syntax.") from None
+
+    @strawberry.field(description="Executes a SQL SELECT statement")
+    async def execute_sql_statement(self, info: strawberry.Info, request: SqlStatementRequest) -> list[JSON]:
+        """Execute a governed SELECT statement and return its rows."""
+        return await Query._execute_governed(info, request)
+
+    @staticmethod
+    def _decision_to_graphql(decision: PresentationDecisionValue | None) -> PresentationDecision | None:
+        """Map a validated service decision to its GraphQL representation."""
+        if decision is None:
+            return None
+        try:
+            return PresentationDecision(
+                format=PresentationFormat[decision.format.upper()],
+                content=decision.content,
+                reason=decision.reason,
+            )
+        except KeyError:
+            logger.warning("Presentation planner returned unsupported format %r; ignoring", decision.format)
+            return None
+
+    @strawberry.field(
+        description="Executes a governed SELECT and returns both the raw rows and an LLM-chosen presentation decision"
+    )
+    async def execute_sql_statement_with_presentation(
+        self,
+        info: strawberry.Info,
+        request: SqlStatementRequest,
+    ) -> QueryResult:
+        """
+        Execute a governed SELECT statement and plan how to display its result.
+
+        The authoritative, post-policy rows are always returned in ``rows``,
+        unchanged. ``presentation`` is an LLM-chosen hint (paragraph/list/table)
+        and is ``null`` whenever planning is disabled or unsafe — callers must
+        fall back to the table renderer in that case.
+        """
+        rows = await Query._execute_governed(info, request)
+        try:
+            decision = await _presentation_service.decide(
+                question=request.question.strip() or None,
+                sql=request.sql_statement.strip(),
+                rows=rows,
+            )
+        except Exception:
+            logger.exception("Presentation planning failed; falling back to raw table")
+            decision = None
+        return QueryResult(rows=rows, presentation=Query._decision_to_graphql(decision))
 
     @strawberry.field(description="Explain policy enforcement without executing SQL")
     def simulate_policy(

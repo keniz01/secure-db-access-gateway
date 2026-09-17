@@ -12,6 +12,10 @@ name: Production Health Probe
 #   DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PORT(optional),
 #   DEPLOY_DIR(optional, default /opt/secure-db-access-gateway),
 #   GATEWAY_ENV_FILE(optional, default /etc/gateway/gateway.env)
+#
+# The scheduled probe is gated on the PROBE_ENABLED=true secret. Until the app
+# goes live, unset it (or 'false') so scheduled runs short-circuit at the gate
+# and do NOT open incident issues.
 
 on:
   schedule:
@@ -34,8 +38,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Gate on live flag
+        id: gate
+        env:
+          PROBE_ENABLED: ${{ secrets.PROBE_ENABLED }}
+        run: |
+          if [ "$PROBE_ENABLED" = "true" ]; then
+            echo "gate: probe enabled"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "gate: probe disabled (set the PROBE_ENABLED=true secret once the app is live)"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run probe over SSH
         id: probe
+        if: steps.gate.outputs.enabled == 'true'
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -68,7 +86,7 @@ jobs:
           printf '%s\n' "$output"
 
       - name: Open or close incident issue
-        if: always()
+        if: always() && steps.gate.outputs.enabled == 'true'
         uses: actions/github-script@v7
         with:
           script: |

@@ -1,4 +1,5 @@
 import { DEFAULT_DATABASE_ID, SQL_GRAPHQL_BASE_URL } from '../configs/url-config';
+import type { QueryResult } from '../models/query-result';
 import apiClient from './api-client';
 
 interface GraphQLRequest {
@@ -96,21 +97,33 @@ export const graphqlApi = {
 
   executeSqlQuery: async (
     sqlStatement: string,
-    databaseId: string = DEFAULT_DATABASE_ID
-  ): Promise<GraphQLResponse> => {
+    databaseId: string = DEFAULT_DATABASE_ID,
+    question?: string
+  ): Promise<QueryResult> => {
     const graphql_query = `
-      query GetSqlData($sql: String!, $databaseId: String!) {
-        executeSqlStatement(request: { sqlStatement: $sql, databaseId: $databaseId })
+      query GetSqlData($sql: String!, $databaseId: String!, $question: String = "") {
+        executeSqlStatementWithPresentation(
+          request: { sqlStatement: $sql, databaseId: $databaseId, question: $question }
+        ) {
+          rows
+          presentation {
+            format
+            content
+            reason
+          }
+        }
       }
     `;
 
     const payload: GraphQLRequest = {
       query: graphql_query,
-      variables: { sql: sqlStatement, databaseId },
+      variables: { sql: sqlStatement, databaseId, question },
     };
 
     try {
-      const response = await apiClient.post<GraphQLResponse>(
+      const response = await apiClient.post<
+        GraphQLResponse & { data?: { executeSqlStatementWithPresentation?: QueryResult } }
+      >(
         SQL_GRAPHQL_BASE_URL,
         payload,
         {
@@ -124,7 +137,15 @@ export const graphqlApi = {
         throw new Error(response.data.errors[0]?.message || 'GraphQL error');
       }
 
-      return response.data;
+      const result = response.data.data?.executeSqlStatementWithPresentation;
+      if (!result) {
+        throw new Error('No data returned from query');
+      }
+
+      return {
+        rows: Array.isArray(result.rows) ? result.rows : [],
+        presentation: result.presentation ?? null,
+      };
     } catch (error) {
       const message =
         (error as Error & { response?: { data?: { errors?: Array<{ message: string }> } } }).response?.data?.errors?.[0]?.message ||

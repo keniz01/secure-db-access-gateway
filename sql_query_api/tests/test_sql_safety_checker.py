@@ -75,6 +75,55 @@ class TestSqlSafetyCheckerAllowsAnalyticalSubqueriesAndCTEs:
         assert checker.is_safe_select_query(query) is True
 
 
+class TestCleanAndValidateAcceptsReadOnlyCTEs:
+    """Read-only CTE/window queries survive cleaning and pass validation."""
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            (
+                "WITH album_tracks AS ("
+                " SELECT a.album_id, a.title, a.artist_id, COUNT(t.track_id) AS track_count"
+                " FROM album a LEFT JOIN track t ON t.album_id = a.album_id"
+                " GROUP BY a.album_id, a.title, a.artist_id"
+                "),"
+                " mavado_albums AS ("
+                " SELECT at.*, COUNT(*) OVER () AS album_count,"
+                "        MAX(track_count) OVER () AS max_track_count"
+                " FROM album_tracks at INNER JOIN artist ar ON ar.artist_id = at.artist_id"
+                " WHERE ar.artist_name ILIKE 'Mavado'"
+                ")"
+                " SELECT album_count, title AS album_with_most_tracks, track_count"
+                " FROM mavado_albums WHERE track_count = max_track_count"
+            ),
+            (
+                "WITH label_counts AS ("
+                " SELECT l.label_name, COUNT(a.album_id) AS album_count,"
+                "        MAX(COUNT(a.album_id)) OVER () AS max_album_count"
+                " FROM album a INNER JOIN record_label l ON l.label_id = a.label_id"
+                " GROUP BY l.label_name"
+                ")"
+                " SELECT label_name AS top_label, album_count"
+                " FROM label_counts WHERE album_count = max_album_count"
+            ),
+        ],
+    )
+    def test_read_only_cte_window_queries_are_validated(self, checker, query) -> None:
+        assert checker.clean_and_validate_sql(query) == query
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "WITH d AS (DELETE FROM tracks RETURNING *) SELECT * FROM d",
+            "WITH u AS (UPDATE tracks SET title = 'x' RETURNING *) SELECT * FROM u",
+            "WITH i AS (INSERT INTO track VALUES (1) RETURNING *) SELECT * FROM i",
+        ],
+    )
+    def test_mutating_ctes_are_rejected_after_cleaning(self, checker, query) -> None:
+        with pytest.raises(ValueError):
+            checker.clean_and_validate_sql(query)
+
+
 class TestSqlSafetyCheckerRejectedCommentsAndMultiStatements:
     """Comments and multi-statement inputs remain blocked."""
 
