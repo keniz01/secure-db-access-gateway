@@ -1,15 +1,33 @@
 import { useState, useMemo } from 'react';
-import { resolveColumnLabel } from '../../utils/column-labels';
+import { humanizeColumn } from '../../utils/column-labels';
 
 interface ResultsTableProps {
   data: Record<string, unknown>[];
   rowsPerPage?: number;
-  columnLabels?: Record<string, string> | null;
 }
 
 const ROWS_PER_PAGE = 15;
 
-export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE, columnLabels }: ResultsTableProps) => {
+// An array cell (e.g. array_agg) is unreadable as a single comma-joined blob;
+// cap the per-line items so a pathological cell cannot blow out the layout.
+const MAX_ARRAY_CELL_ITEMS = 25;
+
+const formatCellValue = (val: unknown): string => {
+  if (val !== null && val !== undefined && typeof val === 'object' && !Array.isArray(val)) {
+    return JSON.stringify(val);
+  }
+  return String(val ?? '');
+};
+
+const formatArrayCell = (items: unknown[]): { shown: string[]; hidden: number } => {
+  const shown = items.slice(0, MAX_ARRAY_CELL_ITEMS).map((item) => String(item));
+  return { shown, hidden: items.length - shown.length };
+};
+
+const addWrapHints = (value: string): string =>
+  value.length > 40 ? value.replace(/,(?=[^ ])/g, ',\u200B') : value;
+
+export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE }: ResultsTableProps) => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const columns = useMemo(() => {
@@ -51,7 +69,7 @@ export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE, columnLabels }
                   key={key}
                   className="px-4 py-3 text-left text-sm font-semibold text-gray-700"
                 >
-                  {resolveColumnLabel(key, columnLabels)}
+                  {humanizeColumn(key)}
                 </th>
               ))}
             </tr>
@@ -64,14 +82,36 @@ export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE, columnLabels }
                   (startIndex + idx) % 2 === 0 ? 'bg-white' : 'bg-gray-50'
                 }`}
               >
-                {Object.values(row).map((val: unknown, valIdx: number) => (
-                  <td
-                    key={valIdx}
-                    className="px-4 py-3 text-sm text-gray-700 font-mono"
-                  >
-                    {val !== null && val !== undefined ? String(val) : 'NULL'}
-                  </td>
-                ))}
+                {Object.values(row).map((val: unknown, valIdx: number) => {
+                  const isNull = val === null || val === undefined;
+                  const isArray = Array.isArray(val);
+                  const { shown, hidden } = isArray
+                    ? formatArrayCell(val as unknown[])
+                    : { shown: [], hidden: 0 };
+                  return (
+                    <td
+                      key={valIdx}
+                      className="px-4 py-3 text-sm text-gray-700 font-mono whitespace-pre-wrap break-words align-top"
+                    >
+                      {isNull ? (
+                        <span className="text-gray-400 italic">NULL</span>
+                      ) : isArray ? (
+                        <>
+                          {shown.map((item, itemIdx) => (
+                            <span key={itemIdx} className="block whitespace-normal break-words">
+                              {item}
+                            </span>
+                          ))}
+                          {hidden > 0 && (
+                            <span className="block text-gray-400 italic">… {hidden} more</span>
+                          )}
+                        </>
+                      ) : (
+                        addWrapHints(formatCellValue(val))
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
