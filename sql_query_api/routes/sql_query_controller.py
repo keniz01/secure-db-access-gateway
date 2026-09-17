@@ -134,6 +134,7 @@ class PresentationDecision:
     format: PresentationFormat
     content: str | None = None
     reason: str | None = None
+    column_labels: JSON | None = None
 
 
 @strawberry.type
@@ -320,6 +321,7 @@ class Query:
                 format=PresentationFormat[decision.format.upper()],
                 content=decision.content,
                 reason=decision.reason,
+                column_labels=decision.column_labels or None,
             )
         except KeyError:
             logger.warning("Presentation planner returned unsupported format %r; ignoring", decision.format)

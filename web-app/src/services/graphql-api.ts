@@ -110,6 +110,7 @@ export const graphqlApi = {
             format
             content
             reason
+            columnLabels
           }
         }
       }

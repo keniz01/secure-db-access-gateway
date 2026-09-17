@@ -18,6 +18,8 @@ Safety rules enforced here (in addition to the prompt):
   - The payload is capped (max sample rows, max cell length, max total bytes).
   - A numeric guard rejects paragraph wording that invents values that are not
     present in the actual result rows.
+  - Column-label hints are restricted to real result columns and are display
+    metadata only; the rows themselves are never rewritten.
 """
 
 import asyncio
@@ -26,7 +28,7 @@ import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,8 @@ _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 # A result that directly answers one factual question can be a few rows wide.
 _MAX_QUESTION_ANSWER_ROWS = 3
+# Human-readable column labels are presentation metadata; keep them short.
+_MAX_COLUMN_LABEL_CHARS = 60
 _SUMMARY_COLUMN_PATTERN = re.compile(
     r"(^|[^a-z])(count|qty|quantity|total|sum|avg|average|min|max|most|num|number)([^a-z]|$)",
     re.IGNORECASE,
@@ -76,17 +80,25 @@ class PresentationDecision:
 
     ``format`` is one of ``SUPPORTED_FORMATS``. ``content`` carries the
     natural-language wording: required for ``paragraph``, and an optional
-    summary/caption for ``list``, ``chart``, and ``table``. It is never a
-    substitute for the authoritative ``rows``.
+    summary/caption for ``list``, ``chart``, and ``table``. ``column_labels``
+    maps raw result column names to short human-readable headers; it is
+    presentation metadata only and never a substitute for the authoritative
+    ``rows``.
     """
 
     format: str
     content: str | None = None
     reason: str | None = None
+    column_labels: dict[str, str] = field(default_factory=dict)
 
-    def as_dict(self) -> dict[str, str | None]:
+    def as_dict(self) -> dict[str, Any]:
         """Return the decision as a plain dictionary for transport."""
-        return {"format": self.format, "content": self.content, "reason": self.reason}
+        return {
+            "format": self.format,
+            "content": self.content,
+            "reason": self.reason,
+            "column_labels": dict(self.column_labels),
+        }
 
 
 class ResultPresentationService:
@@ -491,7 +503,45 @@ class ResultPresentationService:
         if content and not self._integers_fit(content, rows):
             raise _InvalidDecisionError("content invents values not present in the result")
 
-        return PresentationDecision(format=fmt, content=content, reason=reason)
+        column_labels = self._validated_column_labels(data.get("column_labels"), rows=rows)
+
+        return PresentationDecision(
+            format=fmt,
+            content=content,
+            reason=reason,
+            column_labels=column_labels,
+        )
+
+    @classmethod
+    def _validated_column_labels(
+        cls, raw: object, *, rows: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        """
+        Keep only labels that name a real result column and are safe to display.
+
+        Labels are a display hint, so anything unexpected (unknown columns,
+        non-string or control-laden values, over-long text) is dropped rather
+        than failing the whole decision. The raw column names remain the keys;
+        the UI falls back to a deterministic humanization when a label is absent.
+        """
+        if not isinstance(raw, dict) or not rows:
+            return {}
+        valid_columns: set[str] = set().union(*(row.keys() for row in rows))
+        labels: dict[str, str] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or key not in valid_columns:
+                continue
+            if not isinstance(value, str):
+                continue
+            cleaned = "".join(
+                ch if ch.isprintable() else (" " if ch.isspace() else "")
+                for ch in value
+            )
+            cleaned = " ".join(cleaned.split())
+            if not cleaned:
+                continue
+            labels[key] = cleaned[:_MAX_COLUMN_LABEL_CHARS]
+        return labels
 
     @staticmethod
     def _has_numeric_column(rows: list[dict[str, Any]]) -> bool:
