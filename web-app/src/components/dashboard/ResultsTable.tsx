@@ -1,13 +1,15 @@
 import { useState, useMemo } from 'react';
+import { resolveColumnLabel } from '../../utils/column-labels';
 
 interface ResultsTableProps {
   data: Record<string, unknown>[];
   rowsPerPage?: number;
+  columnLabels?: Record<string, string> | null;
 }
 
 const ROWS_PER_PAGE = 15;
 
-export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE }: ResultsTableProps) => {
+export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE, columnLabels }: ResultsTableProps) => {
   const [currentPage, setCurrentPage] = useState(1);
 
   const columns = useMemo(() => {
@@ -49,7 +51,7 @@ export const ResultsTable = ({ data, rowsPerPage = ROWS_PER_PAGE }: ResultsTable
                   key={key}
                   className="px-4 py-3 text-left text-sm font-semibold text-gray-700"
                 >
-                  {key}
+                  {resolveColumnLabel(key, columnLabels)}
                 </th>
               ))}
             </tr>

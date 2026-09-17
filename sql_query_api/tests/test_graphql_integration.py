@@ -516,6 +516,7 @@ class TestGraphQLExecuteSqlStatementWithPresentation:
                 format="chart",
                 content="Order volume by department.",
                 reason="grouped category + measure",
+                column_labels={"genre": "Genre", "track_count": "Artist Count"},
             )
         )
         monkeypatch.setattr(sql_query_controller, "_presentation_service", fake)
@@ -524,7 +525,7 @@ class TestGraphQLExecuteSqlStatementWithPresentation:
         query ExecSql($req: SqlStatementRequest!) {
             executeSqlStatementWithPresentation(request: $req) {
                 rows
-                presentation { format content reason }
+                presentation { format content reason columnLabels }
             }
         }
         """
@@ -541,6 +542,10 @@ class TestGraphQLExecuteSqlStatementWithPresentation:
         body = res["data"]["executeSqlStatementWithPresentation"]
         assert body["presentation"]["format"] == "CHART"
         assert body["presentation"]["content"] == "Order volume by department."
+        assert body["presentation"]["columnLabels"] == {
+            "genre": "Genre",
+            "track_count": "Artist Count",
+        }
         assert body["rows"] == [
             {"genre": "Jazz", "track_count": 1},
             {"genre": "Rock", "track_count": 1},

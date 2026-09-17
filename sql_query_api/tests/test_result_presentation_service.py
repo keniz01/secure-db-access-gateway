@@ -196,6 +196,109 @@ class TestFormatSelection:
         assert decision.content is None
 
 
+class TestColumnLabels:
+    async def test_labels_for_real_columns_are_returned(self):
+        response = _llm_response(
+            {
+                "format": "table",
+                "reason": "opaque column names",
+                "column_labels": {
+                    "track_id": "Track ID",
+                    "duration": "Duration (ms)",
+                    "label_id": "Record Label",
+                },
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT track_id, title, duration, label_id FROM tracks",
+            rows=[
+                {
+                    "track_id": 101,
+                    "title": "Intro",
+                    "duration": 184000,
+                    "label_id": 2,
+                }
+            ],
+        )
+        assert decision is not None
+        assert decision.column_labels == {
+            "track_id": "Track ID",
+            "duration": "Duration (ms)",
+            "label_id": "Record Label",
+        }
+
+    async def test_unknown_and_invalid_labels_are_dropped(self):
+        response = _llm_response(
+            {
+                "format": "table",
+                "reason": "mixed validity",
+                "column_labels": {
+                    "title": "Title",
+                    "invented_column": "Made Up",
+                    "track_id": 42,
+                    "album_id": "   ",
+                },
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT track_id, title FROM tracks",
+            rows=[{"track_id": 1, "title": "Intro"}],
+        )
+        assert decision is not None
+        assert decision.column_labels == {"title": "Title"}
+
+    async def test_labels_collapse_control_characters_and_truncate(self):
+        long_label = "A very long descriptive header that should not be allowed to exceed the limit"
+        response = _llm_response(
+            {
+                "format": "table",
+                "reason": "hygiene",
+                "column_labels": {
+                    "title": "Title\n\tWith   Spacing",
+                    "track_id": long_label,
+                },
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT track_id, title FROM tracks",
+            rows=[{"track_id": 1, "title": "Intro"}],
+        )
+        assert decision is not None
+        assert decision.column_labels["title"] == "Title With Spacing"
+        assert len(decision.column_labels["track_id"]) <= 60
+
+    async def test_labels_default_to_empty_when_absent(self):
+        response = _llm_response({"format": "table", "reason": "no labels needed"})
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT id, name FROM artist",
+            rows=[{"id": 1, "name": "The Beatles"}],
+        )
+        assert decision is not None
+        assert decision.column_labels == {}
+
+    async def test_labels_carry_through_chart_format(self):
+        response = _llm_response(
+            {
+                "format": "chart",
+                "content": "Order volume by department.",
+                "reason": "category + measure",
+                "column_labels": {"order_count": "Orders"},
+            }
+        )
+        service = _service(lambda *a: response)
+        decision = await service.decide(
+            sql="SELECT department, COUNT(*) AS order_count FROM orders GROUP BY department",
+            rows=[{"department": "Electronics", "order_count": 412}],
+        )
+        assert decision is not None
+        assert decision.format == "chart"
+        assert decision.column_labels == {"order_count": "Orders"}
+
+
 class TestPayloadBounding:
     async def test_large_result_set_bounds_llm_payload(self):
         rows = [{"id": i, "name": f"value-{i}", "blob": "x" * 500} for i in range(1, 201)]

@@ -25,6 +25,17 @@ DECISION RULES
   Omit "content" when nothing useful can be said.
 - When in doubt, choose "table". A table is always correct.
 
+COLUMN LABELS
+- "column_labels" is optional. Use it to replace raw snake_case, abbreviated,
+  or encoded column names with short human-readable headers (for example
+  "track_id" -> "Track ID", "duration" -> "Duration", "label_id" -> "Record Label",
+  "release_year" -> "Release Year").
+- Keys MUST be exact column names copied from the COLUMNS section. Never invent,
+  rename, or add columns.
+- Values must be short plain text (a few words). Do not put data values or
+  numbers from the ROWS into a label.
+- Omit "column_labels" entirely when the column names are already readable.
+
 DATA INTEGRITY (MANDATORY)
 - NEVER invent, guess, round, reformat incorrectly, or alter any value.
 - Every fact in "content" must be derived exclusively from the ROWS section of
@@ -42,7 +53,8 @@ Schema:
 {
   "format": "paragraph" | "list" | "chart" | "table",
   "content": string,          // required for "paragraph"; optional summary/caption for the others
-  "reason": string            // one short sentence explaining the choice
+  "reason": string,           // one short sentence explaining the choice
+  "column_labels": { "<column name>": "<human-readable label>" }  // optional; omit if unnecessary
 }
 
 EXAMPLES
@@ -84,7 +96,25 @@ ROWS (shown: 25 of 25; truncated: no):
 [{"id":1,"title":"Abbey Road","artist":"The Beatles","release_year":1969}, ...]
 
 Output:
-{"format": "table", "content": "Inspect 25 albums with their artists and release years.", "reason": "Multi-column relational data stays readable as a table, with a short interpreting summary."}
+{"format": "table", "content": "Inspect 25 albums with their artists and release years.", "column_labels": {"id": "ID", "title": "Title", "artist": "Artist", "release_year": "Release Year"}, "reason": "Multi-column relational data stays readable as a table, with a short interpreting summary."}
+
+Input:
+QUESTION: Show the tracks on this album.
+SQL:
+SELECT track_id, title, duration, position, genre_id, label_id, release_year FROM tracks WHERE album_id = 12 ORDER BY position ASC
+COLUMNS:
+ - name: track_id, type: integer, nullable: no
+ - name: title, type: string, nullable: no
+ - name: duration, type: integer, nullable: no
+ - name: position, type: integer, nullable: no
+ - name: genre_id, type: integer, nullable: no
+ - name: label_id, type: integer, nullable: no
+ - name: release_year, type: integer, nullable: no
+ROWS (shown: 3 of 3; truncated: no):
+[{"track_id":101,"title":"Intro","duration":184000,"position":1,"genre_id":4,"label_id":2,"release_year":1998}, ...]
+
+Output:
+{"format": "table", "column_labels": {"track_id": "Track ID", "title": "Title", "duration": "Duration (ms)", "position": "Track No.", "genre_id": "Genre", "label_id": "Record Label", "release_year": "Release Year"}, "reason": "Relational track data stays a table; opaque id columns get human-readable headers."}
 
 Input:
 QUESTION: How many orders does each department have?

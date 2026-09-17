@@ -64,6 +64,7 @@ test.describe('E2E Smoke Test: Login -> Run Query -> View Results', () => {
                   format: 'table',
                   content: null,
                   reason: 'multi-column relational data',
+                  columnLabels: { release_year: 'Release Year' },
                 },
               },
             },
@@ -110,5 +111,10 @@ test.describe('E2E Smoke Test: Login -> Run Query -> View Results', () => {
     await expect(page.getByText('Kind of Blue')).toBeVisible();
     await expect(page.getByText('Miles Davis')).toBeVisible();
     await expect(page.getByText('1969')).toBeVisible();
+
+    // Column headers use LLM labels with a deterministic fallback for the rest
+    await expect(page.getByRole('columnheader', { name: 'Release Year' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'ID' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: 'Artist' })).toBeVisible();
   });
 });

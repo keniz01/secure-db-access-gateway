@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
+import { resolveColumnLabel } from '../../utils/column-labels';
 
 interface ChartRendererProps {
   data: Record<string, unknown>[];
+  columnLabels?: Record<string, string> | null;
 }
 
 const MAX_CATEGORIES = 24;
@@ -16,6 +18,7 @@ const isNumeric = (value: unknown): value is number =>
 
 interface ChartSeries {
   name: string;
+  label: string;
   values: number[];
 }
 
@@ -26,7 +29,10 @@ interface ChartModel {
   truncated: boolean;
 }
 
-const buildModel = (data: Record<string, unknown>[]): ChartModel | null => {
+const buildModel = (
+  data: Record<string, unknown>[],
+  columnLabels?: Record<string, string> | null
+): ChartModel | null => {
   if (data.length === 0) return null;
 
   const columns = Object.keys(data[0]);
@@ -42,6 +48,7 @@ const buildModel = (data: Record<string, unknown>[]): ChartModel | null => {
   );
   const series = numericColumns.map((name) => ({
     name,
+    label: resolveColumnLabel(name, columnLabels),
     values: rows.map((row) => (isNumeric(row[name]) ? (row[name] as number) : 0)),
   }));
   const maxValue = Math.max(1, ...series.flatMap((entry) => entry.values));
@@ -49,8 +56,8 @@ const buildModel = (data: Record<string, unknown>[]): ChartModel | null => {
   return { categories, series, maxValue, truncated: data.length > rows.length };
 };
 
-export const ChartRenderer = ({ data }: ChartRendererProps): React.JSX.Element => {
-  const model = useMemo(() => buildModel(data), [data]);
+export const ChartRenderer = ({ data, columnLabels }: ChartRendererProps): React.JSX.Element => {
+  const model = useMemo(() => buildModel(data, columnLabels), [data, columnLabels]);
 
   if (!model) {
     return (
@@ -115,7 +122,7 @@ export const ChartRenderer = ({ data }: ChartRendererProps): React.JSX.Element =
                 fill={BAR_COLORS[seriesIndex % BAR_COLORS.length]}
                 rx={2}
               >
-                <title>{`${category} — ${entry.name}: ${value}`}</title>
+                <title>{`${category} — ${entry.label}: ${value}`}</title>
               </rect>
             );
           })
@@ -145,7 +152,7 @@ export const ChartRenderer = ({ data }: ChartRendererProps): React.JSX.Element =
               rx={2}
             />
             <text x={16} className="fill-gray-700" fontSize={12}>
-              {entry.name}
+              {entry.label}
             </text>
           </g>
         ))}

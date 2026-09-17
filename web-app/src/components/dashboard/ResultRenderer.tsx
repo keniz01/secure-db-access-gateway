@@ -66,14 +66,14 @@ export const ResultRenderer = ({ result }: ResultRendererProps): React.JSX.Eleme
       {showPresentation && isChart && (
         <div className="space-y-4">
           {summaryBanner}
-          <ChartRenderer data={result.rows} />
+          <ChartRenderer data={result.rows} columnLabels={decision?.columnLabels} />
         </div>
       )}
 
       {!showPresentation && (
         <div className="space-y-4">
           {summaryBanner}
-          <ResultsTable data={result.rows} />
+          <ResultsTable data={result.rows} columnLabels={decision?.columnLabels} />
         </div>
       )}
     </div>
