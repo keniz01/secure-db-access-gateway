@@ -92,22 +92,22 @@ def setup_correlation_middleware(app: FastAPI):
 
         try:
             response: Response = await call_next(request)
+
+            process_time = (time.perf_counter() - start_time) * 1000
+            logger.info(
+                f"[{correlation_id}] 📤 {request.method} {request.url.path} | "
+                f"{response.status_code} | {process_time:.2f}ms"
+            )
+
+            response.headers["X-Correlation-ID"] = correlation_id
+            response.headers["X-Request-ID"] = correlation_id
+            return response
         except Exception as exc:
             logger.exception(f"[{correlation_id}] ❌ Error during request: {exc}")
             raise
         finally:
             # Never leak this request's correlation ID into later (background) tasks.
             reset_current_correlation_id(token)
-
-        process_time = (time.perf_counter() - start_time) * 1000
-        logger.info(
-            f"[{correlation_id}] 📤 {request.method} {request.url.path} | "
-            f"{response.status_code} | {process_time:.2f}ms"
-        )
-
-        response.headers["X-Correlation-ID"] = correlation_id
-        response.headers["X-Request-ID"] = correlation_id
-        return response
 
 
 def setup_session_middleware(app: FastAPI):

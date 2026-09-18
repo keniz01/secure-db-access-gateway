@@ -46,6 +46,29 @@ async def test_preserve_incoming_x_request_id(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_unsafe_correlation_id_rejected(client) -> None:
+    """Correlation headers containing characters outside the allow-list are ignored."""
+    response = await client.get("/healthz", headers={"X-Correlation-ID": "<script>alert(1)</script>"})
+    assert response.status_code == 200
+    cid = response.headers.get("x-correlation-id")
+    assert cid is not None
+    assert cid != "<script>alert(1)</script>"
+    uuid.UUID(cid)
+
+
+@pytest.mark.asyncio
+async def test_oversized_correlation_id_rejected(client) -> None:
+    """Correlation headers longer than 128 characters are ignored."""
+    oversized = "x" * 200
+    response = await client.get("/healthz", headers={"X-Correlation-ID": oversized})
+    assert response.status_code == 200
+    cid = response.headers.get("x-correlation-id")
+    assert cid is not None
+    assert cid != oversized
+    uuid.UUID(cid)
+
+
+@pytest.mark.asyncio
 async def test_graphql_proxy_propagates_correlation_headers(client, mocker) -> None:
     """The GraphQL BFF proxy forwards correlation headers to sql_query_api."""
     mock_upstream = MagicMock()

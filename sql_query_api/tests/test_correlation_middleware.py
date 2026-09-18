@@ -50,6 +50,27 @@ def test_preserve_incoming_x_request_id(client: TestClient) -> None:
     assert response.headers.get("x-request-id") == test_id
 
 
+def test_unsafe_correlation_id_rejected(client: TestClient) -> None:
+    """Correlation headers containing characters outside the allow-list are ignored."""
+    response = client.get("/healthz", headers={"X-Correlation-ID": "<script>alert(1)</script>"})
+    assert response.status_code == 200
+    cid = response.headers.get("x-correlation-id")
+    assert cid is not None
+    assert cid != "<script>alert(1)</script>"
+    uuid.UUID(cid)
+
+
+def test_oversized_correlation_id_rejected(client: TestClient) -> None:
+    """Correlation headers longer than 128 characters are ignored."""
+    oversized = "x" * 200
+    response = client.get("/healthz", headers={"X-Correlation-ID": oversized})
+    assert response.status_code == 200
+    cid = response.headers.get("x-correlation-id")
+    assert cid is not None
+    assert cid != oversized
+    uuid.UUID(cid)
+
+
 def test_log_audit_event_includes_correlation_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """log_audit_event includes the correlation_id in the structured event."""
     test_cid = "audit-cid-789"

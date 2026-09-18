@@ -46,6 +46,23 @@ async def correlation_id_middleware(
     # Process request
     try:
         response: Response = await call_next(request)
+
+        # Measure execution time
+        execution_time = time.perf_counter() - start_time
+
+        # Add headers
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Request-ID"] = correlation_id
+        response.headers["X-Execution-Time"] = f"{execution_time:.4f}s"
+        response.headers["X-Query-Status"] = "Success"
+
+        # Log the request/response summary while the context still carries the ID
+        logger.info(
+            f"[{correlation_id}] {request.method} {request.url.path} "
+            f"completed in {execution_time:.4f}s with status {response.status_code}"
+        )
+
+        return response
     except Exception as e:
         response = Response(content=f"Internal server error: {str(e)}", status_code=500)
         response.headers["X-Query-Status"] = "Error"
@@ -56,20 +73,3 @@ async def correlation_id_middleware(
     finally:
         # Never leak this request's correlation ID into later (background) tasks.
         reset_current_correlation_id(token)
-
-    # Measure execution time
-    execution_time = time.perf_counter() - start_time
-
-    # Add headers
-    response.headers["X-Correlation-ID"] = correlation_id
-    response.headers["X-Request-ID"] = correlation_id
-    response.headers["X-Execution-Time"] = f"{execution_time:.4f}s"
-    response.headers["X-Query-Status"] = "Success"
-
-    # Log the request/response summary
-    logger.info(
-        f"[{correlation_id}] {request.method} {request.url.path} "
-        f"completed in {execution_time:.4f}s with status {response.status_code}"
-    )
-
-    return response
