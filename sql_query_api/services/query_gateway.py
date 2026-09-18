@@ -20,6 +20,7 @@ from services.policy_engine import (
     apply_row_restrictions,
     mask_rows,
     referenced_columns,
+    rewrite_masked_columns,
     tables_touched,
 )
 from services.tenant_database_resolver import TenantDatabaseConfig
@@ -84,31 +85,43 @@ class GovernedQueryGateway:
                         database_id=binding.database_id, reason=decision.reason,
                         policy_ids=list(decision.policy_ids))
             raise PermissionError(decision.reason)
-        cleaned_sql = apply_row_restrictions(cleaned_sql, decision.row_restrictions, request.principal)
+
+        # Row scoping is injected per-SELECT at the AST level so every branch,
+        # subquery, and CTE that reads the affected tables is constrained.
+        restricted_sql = apply_row_restrictions(
+            cleaned_sql, decision.row_restrictions, request.principal
+        )
+        # Masked columns are nulled before execution so their values (and any
+        # derivative computed from them) can never reach the result rows.
+        execution_sql = rewrite_masked_columns(restricted_sql, decision.masked_columns)
         started_at = time.perf_counter()
-        query_hash = hashlib.sha256(cleaned_sql.encode("utf-8")).hexdigest()
+        query_hash = hashlib.sha256(execution_sql.encode("utf-8")).hexdigest()
         audit_payload: dict[str, Any] = {
             "user": request.principal.email,
             "org_id": request.principal.org_id,
             "database_id": binding.database_id,
             "database_target": getattr(service.repository, "database_target", "primary"),
             "query_hash": query_hash,
-            "tables_touched": tables_touched(cleaned_sql),
+            "tables_touched": tables_touched(execution_sql),
         }
         if os.getenv("AUDIT_LOG_RAW_SQL", "").strip().lower() in {"true", "1", "yes"}:
-            audit_payload["query"] = cleaned_sql
+            audit_payload["query"] = execution_sql
 
         self._audit(
             "sql_query",
             **audit_payload,
         )
-        result = await service.execute_sql_statement(cleaned_sql, request.params)
+        result = await service.execute_sql_statement(execution_sql, request.params)
         observe_query(
             org_id=request.principal.org_id,
             row_count=len(result),
             duration_seconds=time.perf_counter() - started_at,
         )
-        return mask_rows(result, decision.masked_columns, cleaned_sql)
+        # Name-based post-masking remains as defense-in-depth for star
+        # projections (SELECT *), which the AST rewrite cannot expand. The
+        # pre-rewrite statement is used for alias tracing so derived values
+        # are still nulled even when the source column was already removed.
+        return mask_rows(result, decision.masked_columns, restricted_sql)
 
     def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
         """Evaluate the policy decision for a request against the given statement."""

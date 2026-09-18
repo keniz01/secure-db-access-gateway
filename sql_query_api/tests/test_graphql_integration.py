@@ -11,6 +11,7 @@ from auth import Principal
 from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from routes import sql_query_controller
+from services.policy_engine import Policy, PolicyEvaluator
 from services.result_presentation_service import PresentationDecision
 from services.sql_query_service import SqlQueryService
 from services.tenant_database_resolver import TenantDatabaseConfig
@@ -408,6 +409,63 @@ class TestGraphQLIntrospectSchema:
         assert "id" in col_names
         assert "name" in col_names
         assert "genre" in col_names
+
+
+class TestGraphQLIntrospectSchemaPolicyGating:
+    """Schema introspection must not reveal tables/columns a policy denies."""
+
+    def test_introspect_hides_denied_tables_and_columns(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        restricted = PolicyEvaluator(
+            [
+                Policy(
+                    id="artist-only",
+                    effect="allow",
+                    org_id="org-42",
+                    database_id="default",
+                    table="artist",
+                    columns={"id", "name"},
+                )
+            ]
+        )
+        monkeypatch.setattr(sql_query_controller, "_policy_evaluator", restricted)
+        gql_query = """
+        query {
+            introspectSchema {
+                tables { name columns { name } }
+            }
+        }
+        """
+        response = client.post("/graphql", json={"query": gql_query}, headers=auth_headers())
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        tables = {t["name"]: t for t in res["data"]["introspectSchema"]["tables"]}
+        assert set(tables) == {"artist"}
+        col_names = [c["name"] for c in tables["artist"]["columns"]]
+        assert "id" in col_names
+        assert "name" in col_names
+        assert "genre" not in col_names
+        assert "track" not in tables
+
+    def test_introspect_unrestricted_when_evaluator_disabled(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            sql_query_controller, "_policy_evaluator", PolicyEvaluator(enabled=False)
+        )
+        response = client.post(
+            "/graphql",
+            json={"query": "query { introspectSchema { tables { name } } }"},
+            headers=auth_headers(),
+        )
+        assert response.status_code == 200
+        res = response.json()
+        assert "errors" not in res
+        names = {t["name"] for t in res["data"]["introspectSchema"]["tables"]}
+        assert "artist" in names
+        assert "track" in names
 
 
 class TestGraphQLExecuteSqlStatementWithPresentation:
