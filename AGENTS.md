@@ -15,7 +15,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - SQL API tests: `python -m pytest` — hermetic, uses aiosqlite (`tests/conftest.py` sets `TENANT_DATABASES_JSON`), no DB or service required.
 - Auth0 API tests: `python -m pytest`.
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
-- CI (`.github/workflows/ci.yml`) = SQL pytest + bandit + pip-audit, auth0 pytest, web lint/typecheck/e2e/build. Security gates (bandit/pip-audit) only run on `sql_query_api`.
+- CI (`.github/workflows/ci.yml`) = SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`.
 
 ## Ruff is diff-aware only
 
