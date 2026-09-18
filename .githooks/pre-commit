@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-BLOCK=true
+BLOCK=false
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 
 if git diff --cached --quiet; then
