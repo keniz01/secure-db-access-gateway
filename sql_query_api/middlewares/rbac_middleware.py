@@ -5,6 +5,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from auth import build_principal_from_claims, extract_bearer_token, validate_access_token
+from config.app_logger import log_audit_event
 
 
 class RBACMiddleware:
@@ -39,6 +40,7 @@ class RBACMiddleware:
             token = extract_bearer_token(request)
             claims: dict[str, Any] | None = validate_access_token(token) if token else None
             if claims is None:
+                log_audit_event("auth_failed", reason="missing_or_invalid_bearer_token", path=request.url.path)
                 response = JSONResponse(
                     status_code=401,
                     content={"detail": "Authentication required."},
@@ -48,6 +50,7 @@ class RBACMiddleware:
 
             principal = build_principal_from_claims(claims)
             if principal is None:
+                log_audit_event("auth_failed", reason="principal_from_claims_failed", path=request.url.path)
                 response = JSONResponse(
                     status_code=401,
                     content={"detail": "Authentication required."},
@@ -58,8 +61,9 @@ class RBACMiddleware:
             request.state.principal = principal
 
             if principal.role not in self.ALLOWED_ROLES:
+                log_audit_event("auth_failed", reason="unauthorized_role", role=principal.role, path=request.url.path)
                 response = JSONResponse(
-                    status_code=403,
+                    status_code=40,
                     content={"detail": "Forbidden: user role is not authorized to access this API."},
                 )
                 await response(scope, receive, send)

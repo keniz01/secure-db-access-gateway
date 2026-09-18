@@ -12,7 +12,7 @@ Backend services each have their own `pyproject.toml` and `.venv` (Python 3.12).
 
 Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/bin/python`):
 
-- SQL API tests: `python -m pytest` — hermetic, uses aiosqlite (`tests/conftest.py` sets `TENANT_DATABASES_JSON`), no DB or service required.
+- SQL API tests: `python -m pytest` — hermetic, uses aiosqlite (`tests/conftest.py` sets `TENANT_DATABASES_JSON`), no external DB or services required.
 - Auth0 API tests: `python -m pytest`.
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
 - CI (`.github/workflows/ci.yml`) = SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`.
@@ -24,15 +24,8 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 ## Commit review gate
 
-- A blocking pre-commit hook runs an opencode code-review before every commit
-  (source: `.githooks/pre-commit`, installed to `.git/hooks/pre-commit`).
-  It runs `opencode run --command code-review -m ${REVIEW_MODEL:-opencode/muse-spark-1.2-contributor-free}`
-  (skill: `.opencode/skills/code-review/`, read-only agent: `.opencode/agent/code-reviewer.md`)
-  against the staged diff and requires a y/N approval when run interactively;
-  in non-interactive contexts the review runs, its report is printed, and the
-  commit proceeds. Override the review model with `REVIEW_MODEL=` (e.g. `opencode/big-pickle`).
-- Toggle to advisory with `BLOCK=false` in `.githooks/pre-commit`; uninstall with
-  `rm .git/hooks/pre-commit`.
+- A blocking pre-commit hook runs an opencode code-review before every commit (source: `.githooks/pre-commit`, installed to `.git/hooks/pre-commit`). It runs `opencode run --command code-review -m ${REVIEW_MODEL:-opencode/muse-spark-1.2-contributor-free}` (skill: `.opencode/skills/code-review/`, read-only agent: `.opencode/agent/code-reviewer.md`) against the staged diff and requires a y/N approval when run interactively; in non-interactive contexts the review runs, its report is printed, and the commit proceeds. Override the review model with `REVIEW_MODEL=` (e.g. `opencode/big-pickle`).
+- Toggle to advisory with `BLOCK=false` in `.githooks/pre-commit`; uninstall with `rm .git/hooks/pre-commit`.
 
 ## Env & config gotchas
 
@@ -41,10 +34,51 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - Every token must carry the trusted tenant claim `https://app.secure-db-access-gateway.org/tenant_id`; RBAC middleware enforces it.
 - Secrets come only from env vars (or a `*_FILE` path injected by an orchestrator). Real values live in a single gitignored env file — `.env` for dev (copied from `.env.example` by `scripts/bootstrap-dev.sh`), `/etc/gateway/gateway.env` on a host (manual provisioning) — and are read via the shared `read_secret` loader. There is no `secrets/` directory and no encrypted secret files. Never hardcode credentials.
 
-## Don't regress these design constraints
+### SQL safety & query execution
 
 - `sql_query_api` is strictly SELECT-only. Any new query path must go through the governed pipeline (safety/AST validation, tenant resolution, auto-LIMIT, read-only transaction flags, masking, audit) — see `services/query_gateway.py` and `middlewares/rbac_middleware.py`.
-- Auth is httpOnly-cookie JWT; `localStorage` may hold only the `app_jwt_exists` flag. Don't add JS-visible token storage.
+- `clean_sql()` in `sql_cleaner.py` may prepend `SELECT * ` if the cleaned query doesn't start with SELECT but contains FROM/JOIN — beware widening scans.
+- The GraphQL `SqlStatementRequest.database_id` defaults to `"default"` — verify this is a valid database_id for the org; otherwise tenant resolution may succeed unexpectedly.
+- Cost threshold defaults to score 16 → deny (`SQL_QUERY_COST_THRESHOLD`); row limit default 5000 (`SQL_QUERY_MAX_ROW_LIMIT`); result size limit default 5MB (`SQL_QUERY_MAX_RESULT_BYTES`); query timeout default 30s (`SQL_QUERY_TIMEOUT_SECONDS`).
+- GraphQL introspection (`__schema`/`__type`) is disabled in production via `DisableIntrospection` extension; always-on in dev.
+- `EXPOSE_DB_ERROR_DETAIL=1` env var allows detailed DB error names/columns to reach GraphQL callers; default is `0` (generic messages only).
+- `AUDIT_LOG_RAW_SQL=true` includes the executed SQL in audit payloads; disable in production to avoid log leakage.
+- `SQL_READONLY_ROLE` must be configured in production PostgreSQL tenants; enforces `SET ROLE` to a dedicated SELECT-only role at connection time.
+
+### Nginx / Docker
+
+- Rate limits: `api_limit` (60r/m burst 20), `auth_limit` (5r/m burst 3 for login/auth/logout). IP-based only; no per-user granularity.
+- `/nginx-health` on port 80 (plaintext) is the only open HTTP endpoint; it just returns `OK`.
+- HSTS, X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security all enforced.
+- Correlation ID headers (`X-Correlation-ID`, `X-Request-ID`) are charset/length-validated at the nginx boundary; spoofable headers (`X-User-*`, `X-Org-*`, `X-Tenant-*`) are stripped by both nginx and RBAC middleware.
+
+### DoS / resource exhaustion
+
+- GraphQL depth limiter: max depth 6; alias limiter: max 100 aliases.
+- Introspection disabled in production — but `get_table_schema` and `introspect_schema` remain available to authenticated users; no per-query rate limiting beyond nginx IP limits.
+- Query cost, timeout, and row/byte limits are the primary DB-enforced DoS guards.
+
+### Audit logging
+
+- `log_audit_event` is called for: `sql_query`, `schema_embedding_lookup`, `schema_introspection`, `auth_failed`, `tenant_resolution_failed`, `sql_query_started`, `sql_validation_failed`, `simulate_policy_evaluated`.
+- Audit payload includes `user`, `org_id`, `database_id`, `query_hash`, `tables_touched`, `reason`, `decision_allowed`, `decision_reason`.
+- Raw SQL included in audit when `AUDIT_LOG_RAW_SQL=true` — disable in production.
+- Security-relevant events (auth failures, tenant resolution failures, policy evaluation) are now attributable via structured logging.
+- Policy denies and `permission_error` events may not all be logged — verify coverage if audit compliance is required.
+- **Fixes applied**: Added `log_audit_event` calls in `sql_query_api/middlewares/rbac_middleware.py` (auth failures), `sql_query_api/routes/sql_query_controller.py` (tenant resolution, query validation, simulate_policy).
+
+### Dependency / supply-chain risk
+
+- Python deps managed with `uv`/`uv.lock`; CI runs `pip-audit` and `bandit` on `sql_query_api`.
+- Node deps audited via `npm audit` in web-app CI.
+- Each service has its own `.venv` and `pyproject.toml`; no shared runtime deps beyond auth0 pyramid.
+
+### What to never regress
+
+- `sql_query_api` is strictly SELECT-only through the governed pipeline.
+- Auth is httpOnly-cookie JWT; `localStorage` may hold only the `app_jwt_exists` flag.
 - Root `explore.py` is a local headless operator CLI that bypasses the multi-tenant gateway (it re-execs inside `sql_query_api/.venv` and requires a validated access token). It is NOT a governed access path.
+- `TENANT_DATABASES_JSON` is required at startup — no fallback.
+- `ENVIRONMENT=dev` is needed for local development; production defaults to strict enforcement.
 
 Deeper context: `ARCHITECTURE.md`, `SECURITY.md`, `GEMINI.md` (AI/CLI guardrails), per-service `README.md`.
