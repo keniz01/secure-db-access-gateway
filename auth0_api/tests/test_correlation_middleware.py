@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 from app.config.logging import (
     CorrelationIdFilter,
-    get_current_correlation_id,
     set_current_correlation_id,
 )
 from app.services.text_to_sql_service import TextToSqlService

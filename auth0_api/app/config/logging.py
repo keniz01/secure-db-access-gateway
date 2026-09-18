@@ -4,9 +4,19 @@ Logging configuration for the Auth0 API application.
 
 import contextvars
 import logging
+import re
 from .settings import settings
 
 _correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="N/A")
+
+_CORRELATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def sanitize_correlation_id(value: str | None) -> str | None:
+    """Return ``value`` when it is a safe correlation ID, otherwise ``None``."""
+    if value is not None and _CORRELATION_ID_PATTERN.fullmatch(value):
+        return value
+    return None
 
 
 def get_current_correlation_id() -> str:
@@ -14,9 +24,14 @@ def get_current_correlation_id() -> str:
     return _correlation_id_ctx.get()
 
 
-def set_current_correlation_id(correlation_id: str) -> None:
-    """Set the correlation ID for the current context."""
-    _correlation_id_ctx.set(correlation_id)
+def set_current_correlation_id(correlation_id: str) -> contextvars.Token[str]:
+    """Set the correlation ID for the current context; returns a reset token."""
+    return _correlation_id_ctx.set(correlation_id)
+
+
+def reset_current_correlation_id(token: contextvars.Token[str]) -> None:
+    """Restore the correlation ID context to the value it had before ``set``."""
+    _correlation_id_ctx.reset(token)
 
 
 class CorrelationIdFilter(logging.Filter):

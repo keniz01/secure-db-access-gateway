@@ -1,11 +1,15 @@
-import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response
 
-from config.app_logger import set_current_correlation_id
+from config.app_logger import (
+    logger,
+    reset_current_correlation_id,
+    sanitize_correlation_id,
+    set_current_correlation_id,
+)
 
 try:
     from opentelemetry import trace
@@ -22,15 +26,17 @@ async def correlation_id_middleware(
     """
     start_time = time.perf_counter()
 
-    # Get correlation ID from state, headers, or create a new one
+    # Get correlation ID from state, headers, or create a new one. Client-supplied
+    # header values are only trusted when they match a strict charset, preventing
+    # log/response header injection and oversized values.
     correlation_id = (
         getattr(getattr(request, "state", None), "correlation_id", None)
-        or request.headers.get("X-Correlation-ID")
-        or request.headers.get("X-Request-ID")
+        or sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
+        or sanitize_correlation_id(request.headers.get("X-Request-ID"))
         or str(uuid.uuid4())
     )
     request.state.correlation_id = correlation_id  # store for later use
-    set_current_correlation_id(correlation_id)
+    token = set_current_correlation_id(correlation_id)
 
     if trace is not None:
         current_span = trace.get_current_span()
@@ -45,8 +51,11 @@ async def correlation_id_middleware(
         response.headers["X-Query-Status"] = "Error"
         response.headers["X-Correlation-ID"] = correlation_id
         response.headers["X-Request-ID"] = correlation_id
-        logging.exception(f"[{correlation_id}] Unhandled exception: {e}")
+        logger.exception(f"[{correlation_id}] Unhandled exception: {e}")
         return response
+    finally:
+        # Never leak this request's correlation ID into later (background) tasks.
+        reset_current_correlation_id(token)
 
     # Measure execution time
     execution_time = time.perf_counter() - start_time
@@ -58,7 +67,7 @@ async def correlation_id_middleware(
     response.headers["X-Query-Status"] = "Success"
 
     # Log the request/response summary
-    logging.info(
+    logger.info(
         f"[{correlation_id}] {request.method} {request.url.path} "
         f"completed in {execution_time:.4f}s with status {response.status_code}"
     )

@@ -2,14 +2,14 @@
 
 import json
 import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app_factory import create_app
 from config.app_logger import (
-    get_current_correlation_id,
-    set_current_correlation_id,
     log_audit_event,
+    set_current_correlation_id,
 )
 
 

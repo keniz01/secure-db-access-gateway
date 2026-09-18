@@ -1,11 +1,17 @@
 import time
+from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
-from app.config.logging import get_logger, set_current_correlation_id
+from app.config.logging import (
+    get_logger,
+    reset_current_correlation_id,
+    sanitize_correlation_id,
+    set_current_correlation_id,
+)
 from app.security.csrf import get_allowed_origins
 
 logger = get_logger(__name__)
@@ -52,7 +58,9 @@ def setup_cors_middleware(app: FastAPI):
     
     # Security headers middleware
     @app.middleware("http")
-    async def add_security_headers(request: Request, call_next):
+    async def add_security_headers(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
@@ -66,14 +74,18 @@ def setup_correlation_middleware(app: FastAPI):
     Configure correlation ID middleware to trace requests across services.
     """
     @app.middleware("http")
-    async def correlation_id_middleware(request: Request, call_next):
+    async def correlation_id_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        # Client-supplied values are only trusted when they match a strict
+        # charset, preventing log/response header injection and oversized values.
         correlation_id = (
-            request.headers.get("X-Correlation-ID")
-            or request.headers.get("X-Request-ID")
+            sanitize_correlation_id(request.headers.get("X-Correlation-ID"))
+            or sanitize_correlation_id(request.headers.get("X-Request-ID"))
             or str(uuid4())
         )
-        set_current_correlation_id(correlation_id)
         request.state.correlation_id = correlation_id
+        token = set_current_correlation_id(correlation_id)
 
         start_time = time.perf_counter()
         logger.info(f"[{correlation_id}] 📥 {request.method} {request.url.path}")
@@ -83,6 +95,9 @@ def setup_correlation_middleware(app: FastAPI):
         except Exception as exc:
             logger.exception(f"[{correlation_id}] ❌ Error during request: {exc}")
             raise
+        finally:
+            # Never leak this request's correlation ID into later (background) tasks.
+            reset_current_correlation_id(token)
 
         process_time = (time.perf_counter() - start_time) * 1000
         logger.info(
