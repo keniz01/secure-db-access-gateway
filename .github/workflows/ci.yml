@@ -182,6 +182,11 @@ jobs:
           cd web-app
           npm ci
 
+      - name: Run npm audit (dependency vulnerability gate)
+        run: |
+          cd web-app
+          npm audit
+
       - name: Run lint
         run: |
           cd web-app

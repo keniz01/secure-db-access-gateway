@@ -8,7 +8,7 @@ The architecture, governed query pipeline, and core security controls are **impl
 
 Verified facts as of today:
 
-- **All backend tests pass**: SQL Query API `126 passed`, Auth0 API `60 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web lint/typecheck/build + Playwright e2e on every PR.
+- **All backend tests pass**: SQL Query API `126 passed`, Auth0 API `60 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint/typecheck/build + Playwright e2e on every PR.
 - **SQL safety check is fixed and pinned**: `sqlglot>=30.0.0,<31` (pyproject.toml), strict AST read-only analysis with bypass tests (`pg_read_file`, `dblink_connect`, `pg_write_file`, aliases/derived expressions).
 - **Read-only is enforced at every layer**: `SET TRANSACTION READ ONLY` for PostgreSQL (`repositories/sql_query_repository.py:207`), SQLite forced to `mode=ro` (both in connection-string enforcement and startup validation in `dependencies/dependency_container.py:104`), and the governed pipeline applies safety/AST validation, tenant resolution, auto-LIMIT, masking, and audit.
 - **Identity/tenant hardening shipped**: authenticated `Principal` is the sole identity source, `X-User-*`/`X-Org-Id`/`X-Tenant-Id` headers are cleared at the nginx edge and never trusted, tenant claim is required, cookie is HttpOnly/Secure/SameSite via env. Spoofing + cross-tenant regression suites pass.
@@ -72,7 +72,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Ensure no secrets are committed to the repository or generated files (gitleaks + shared-secrets scans run in CI)
 - [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no `secrets/` dir, no encrypted files)
 - [x] Add secret rotation procedure and emergency response guidance (`SECURITY.md`)
-- [ ] Carry-over: npm audit is not yet a gating check in CI (Python side is; frontend lint/typecheck/build/e2e are)
+- [x] Carry-over: npm audit is now a gating check in CI (Python side was already gated; frontend covered too)
 
 ---
 
@@ -171,7 +171,7 @@ Production readiness is achieved only when all open items below are complete and
 ## Phase 5: Release management and compliance gate — **OPEN**
 
 ### 5.1 CI/CD pipeline hardening — DONE (carry-overs noted)
-- [x] Require all backend tests, frontend build, lint, and security scans in PR checks (SQL tests + bandit + pip-audit, auth0 tests, web lint/typecheck/build/e2e)
+- [x] Require all backend tests, frontend build, lint, and security scans in PR checks (SQL tests + bandit + pip-audit, auth0 tests, web npm audit + lint/typecheck/build/e2e)
 - [x] Add deployment gate checks for production branch/tag (deploy workflow triggers on `v*` tags with image-tag rollback)
 - [x] Validate rollback steps and version pinning for all infrastructure and application dependencies (image-tag pinned rollback over SSH)
 - [ ] Carry-over: artifact provenance / signed release verification (not required for self-hosted)
@@ -209,7 +209,7 @@ Production readiness is achieved only when all open items below are complete and
 | 7 | DB-level least-privilege grants (gateway account) | Security | Yes | M18 · #148 |
 | 8 | Correlation IDs across services | Ops | Yes | M18 · #147 |
 | 9 | WAF, in-app lockout, graceful degradation | Security | No | M18 · #150/#151/#149 |
-| 10 | npm audit gate in CI; artifact provenance | CI/CD | No | M18 · #152 (provenance waived: self-hosted registry) |
+| 10 | npm audit gate in CI (done); artifact provenance (waived: self-hosted registry) | CI/CD | No | M18 · #152 |
 | 11 | Circuit breaker / backpressure under DB overload | Ops | No | M18 · #149 |
 | 12 | MCP server + agent identity + regression suite | Product | No | M14 · #62/#63/#66 |
 | 13 | JIT access + approval workflow | Product | No | M15 · #67/#68 |
@@ -255,7 +255,7 @@ Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#
 
 ### Tier 3 — Carry-over hardening to fold into the above
 
-- Gate `npm audit` in CI (1.3) and decide on artifact provenance (5.1).
+- Decide on artifact provenance for releases (5.1; waived: self-hosted registry).
 - WAF-class L7 filtering (2.3), in-app account lockout (1.2), graceful-degradation/circuit-breaker behavior (2.2/3.2).
 
 ---
