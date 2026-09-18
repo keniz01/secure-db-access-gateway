@@ -67,10 +67,11 @@ $C restart <service>
 # Rollback = re-run with the previous vX.Y.Z (or edge) tag. See DOCKER_README.
 ```
 
-Time-correlation trick: all logs go to `docker logs`; `otel-lgtm` (Grafana)
-aggregates traces/metrics/logs when reachable. Start every investigation with
-the **start timestamp of the first symptom** so you can line up nginx access
-logs, API logs, and audit events at the same instant.
+Correlation tracking: all services propagate `X-Correlation-ID` and `X-Request-ID`.
+Nginx logs requests with `cid="<correlation_id>"`, while `auth0_api` and `sql_query_api`
+log with `[CID=<correlation_id>]` / `CID=<correlation_id>` and attach correlation IDs
+to audit events and trace spans. You can trace an entire request flow across nginx,
+auth0_api, and sql_query_api with `grep "<correlation_id>"` or `$C logs | grep "<correlation_id>"`.
 
 ## Automation (issue #142 / M18)
 
@@ -429,8 +430,7 @@ spots listed here, but the follow-up items still need building:
 - **Auth0 outage is invisible to `/readyz`**; the probe's P6 hits the Auth0
   JWKS/authorization-server endpoint. Until in-app alerting is built, an Auth0
   outage shows up as an `incident:probe` issue (see R1).
-- **No correlation IDs across services yet** (issue #147) — time-correlate via
-  wall-clock timestamps in logs until then.
+- **Correlation IDs across services** (#147) — all services propagate `X-Correlation-ID` / `X-Request-ID` across Nginx, auth0_api, and sql_query_api and attach them to structured logs and audit events.
 - **Backup/restore (#143)**: dumps are documented + automated + drill-shaped
   (`BACKUP_DR.md`, `scripts/backup-databases.py`, `drill-restore.sh`), but the
   restore drill has not been executed on a live stack, no off-host copy is

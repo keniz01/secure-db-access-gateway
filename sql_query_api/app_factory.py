@@ -50,8 +50,14 @@ def setup_cors_middleware(app: FastAPI) -> None:
         CORSMiddleware,
         allow_origins=origins,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-        expose_headers=["X-Total-Count"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "X-Correlation-ID",
+            "X-Request-ID",
+        ],
+        expose_headers=["X-Total-Count", "X-Correlation-ID", "X-Request-ID"],
         max_age=3600,
     )
 
@@ -81,15 +87,20 @@ def setup_custom_middlewares(app: FastAPI) -> None:
     """
     Add logging, correlation, rate-limit, and RBAC middlewares.
 
+    Middleware runs in reverse registration order (last registered executes
+    first), so the correlation middleware is registered last: it must run
+    outermost so every request — including rate-limit/RBAC/body-size
+    rejections and their audit entries — carries a correlation ID.
+
     Args:
         app: FastAPI application instance.
 
     """
     app.add_middleware(LoggingMiddleware)
-    app.middleware("http")(correlation_id_middleware)
     app.add_middleware(RateLimitMiddleware)
     app.add_middleware(RBACMiddleware)
     app.add_middleware(BodySizeLimitMiddleware)
+    app.middleware("http")(correlation_id_middleware)
 
 
 def setup_exception_handlers(app: FastAPI) -> None:

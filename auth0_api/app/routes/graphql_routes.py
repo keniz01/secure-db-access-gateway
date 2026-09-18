@@ -4,6 +4,7 @@ import httpx
 from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse, Response
 
+from app.config.logging import get_current_correlation_id
 from app.config.settings import settings
 from app.routes.user_routes import get_authenticated_session
 from app.schemas.responses import ErrorResponse
@@ -28,13 +29,19 @@ async def proxy_graphql(request: Request):
             status_code=status.HTTP_403_FORBIDDEN, detail=reason
         ).model_dump())
 
+    cid = getattr(getattr(request, "state", None), "correlation_id", None) or get_current_correlation_id()
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": request.headers.get("content-type", "application/json"),
+    }
+    if cid and cid != "N/A":
+        headers["X-Correlation-ID"] = cid
+        headers["X-Request-ID"] = cid
+
     async with httpx.AsyncClient(timeout=30) as client:
         upstream = await client.post(
             settings.SQL_QUERY_API_URL,
             content=await request.body(),
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": request.headers.get("content-type", "application/json"),
-            },
+            headers=headers,
         )
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))

@@ -16,6 +16,17 @@ const apiClient = axios.create({
   withCredentials: true  // Automatically send httpOnly cookies
 });
 
+function generateCorrelationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 // Add security headers. Identity and authorization are derived server-side from
 // validated Auth0 claims; caller-supplied X-User-* headers are never trusted.
 // The double-submit CSRF token (set by the backend as a non-HttpOnly cookie on
@@ -23,6 +34,9 @@ const apiClient = axios.create({
 // state-changing calls without a cookie==header==session token match.
 apiClient.interceptors.request.use((config) => {
   config.headers['X-Requested-With'] = 'XMLHttpRequest';
+  const correlationId = generateCorrelationId();
+  config.headers['X-Correlation-ID'] = correlationId;
+  config.headers['X-Request-ID'] = correlationId;
   const csrfToken = readCookie(CSRF_COOKIE);
   if (csrfToken) {
     config.headers['X-CSRF-Token'] = csrfToken;

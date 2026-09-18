@@ -147,7 +147,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Validate Grafana/Loki/Tempo/OTel stack in a real deployment (otel-lgtm wired into compose; `/metrics` + `/healthz` + `/readyz` endpoints live)
 - [ ] Add dashboards for service availability, DB latency, auth failures, GraphQL failure rates, and error budgets (GitHub M18 · #76)
 - [ ] Add alert thresholds for critical endpoints and infrastructure services (M18 · #76)
-- [ ] Ensure correlation IDs and structured logs are emitted consistently across services (structured logs yes; correlation IDs no) (M18 · #147)
+- [x] Ensure correlation IDs and structured logs are emitted consistently across services (M18 · #147)
 - [ ] Acceptance: operators can diagnose failures without manual log searching
 
 ### 4.2 Incident response and runbooks — IN PROGRESS (M18 · #142 → `RUNBOOKS.md`)
@@ -207,7 +207,7 @@ Production readiness is achieved only when all open items below are complete and
 | 5 | Formal security review + threat model + sign-off | Security | Yes | M18 · #145 |
 | 6 | Launch checklist completion | Process | Yes | M18 · #146 |
 | 7 | DB-level least-privilege grants (gateway account) | Security | Yes | M18 · #148 |
-| 8 | Correlation IDs across services | Ops | No | M18 · #147 |
+| 8 | Correlation IDs across services | Ops | Yes | M18 · #147 |
 | 9 | WAF, in-app lockout, graceful degradation | Security | No | M18 · #150/#151/#149 |
 | 10 | npm audit gate in CI; artifact provenance | CI/CD | No | M18 · #152 (provenance waived: self-hosted registry) |
 | 11 | Circuit breaker / backpressure under DB overload | Ops | No | M18 · #149 |
