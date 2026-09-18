@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response
 
+from config.app_logger import set_current_correlation_id
+
 try:
     from opentelemetry import trace
 except ImportError:  # pragma: no cover
@@ -20,9 +22,15 @@ async def correlation_id_middleware(
     """
     start_time = time.perf_counter()
 
-    # Get correlation ID from request or create a new one
-    correlation_id = request.headers.get("X-Correlation-ID", str(uuid.uuid4()))
+    # Get correlation ID from state, headers, or create a new one
+    correlation_id = (
+        getattr(getattr(request, "state", None), "correlation_id", None)
+        or request.headers.get("X-Correlation-ID")
+        or request.headers.get("X-Request-ID")
+        or str(uuid.uuid4())
+    )
     request.state.correlation_id = correlation_id  # store for later use
+    set_current_correlation_id(correlation_id)
 
     if trace is not None:
         current_span = trace.get_current_span()
@@ -35,13 +43,17 @@ async def correlation_id_middleware(
     except Exception as e:
         response = Response(content=f"Internal server error: {str(e)}", status_code=500)
         response.headers["X-Query-Status"] = "Error"
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Request-ID"] = correlation_id
         logging.exception(f"[{correlation_id}] Unhandled exception: {e}")
+        return response
 
     # Measure execution time
     execution_time = time.perf_counter() - start_time
 
     # Add headers
     response.headers["X-Correlation-ID"] = correlation_id
+    response.headers["X-Request-ID"] = correlation_id
     response.headers["X-Execution-Time"] = f"{execution_time:.4f}s"
     response.headers["X-Query-Status"] = "Success"
 

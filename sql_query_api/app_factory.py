@@ -50,8 +50,14 @@ def setup_cors_middleware(app: FastAPI) -> None:
         CORSMiddleware,
         allow_origins=origins,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
-        expose_headers=["X-Total-Count"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "X-Correlation-ID",
+            "X-Request-ID",
+        ],
+        expose_headers=["X-Total-Count", "X-Correlation-ID", "X-Request-ID"],
         max_age=3600,
     )
 

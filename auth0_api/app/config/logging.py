@@ -2,16 +2,54 @@
 Logging configuration for the Auth0 API application.
 """
 
+import contextvars
 import logging
 from .settings import settings
+
+_correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="N/A")
+
+
+def get_current_correlation_id() -> str:
+    """Retrieve the correlation ID for the current context."""
+    return _correlation_id_ctx.get()
+
+
+def set_current_correlation_id(correlation_id: str) -> None:
+    """Set the correlation ID for the current context."""
+    _correlation_id_ctx.set(correlation_id)
+
+
+class CorrelationIdFilter(logging.Filter):
+    """Attach the current correlation ID to each log record."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "correlation_id"):
+            record.correlation_id = get_current_correlation_id()
+        return True
 
 
 def configure_logging():
     """Configure logging for the application."""
-    logging.basicConfig(
-        level=settings.LOG_LEVEL,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    root_logger = logging.getLogger()
+    root_logger.setLevel(settings.LOG_LEVEL)
+
+    if not any(isinstance(f, CorrelationIdFilter) for f in root_logger.filters):
+        root_logger.addFilter(CorrelationIdFilter())
+
+    handler = logging.StreamHandler()
+    handler.addFilter(CorrelationIdFilter())
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s [CID=%(correlation_id)s] [%(name)s] %(message)s")
     )
+
+    if not root_logger.handlers:
+        root_logger.addHandler(handler)
+    else:
+        for h in root_logger.handlers:
+            h.addFilter(CorrelationIdFilter())
+            h.setFormatter(
+                logging.Formatter("%(asctime)s %(levelname)s [CID=%(correlation_id)s] [%(name)s] %(message)s")
+            )
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -24,4 +62,7 @@ def get_logger(name: str) -> logging.Logger:
     Returns:
         Logger instance
     """
-    return logging.getLogger(name)
+    logger = logging.getLogger(name)
+    if not any(isinstance(f, CorrelationIdFilter) for f in logger.filters):
+        logger.addFilter(CorrelationIdFilter())
+    return logger

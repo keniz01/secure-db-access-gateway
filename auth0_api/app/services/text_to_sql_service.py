@@ -8,7 +8,7 @@ import httpx
 import sqlglot
 from sqlglot import exp
 from app.config.settings import settings
-from app.config.logging import get_logger
+from app.config.logging import get_logger, get_current_correlation_id
 from app.services.ai_service import AIService
 from app.exceptions.handlers import AIServiceError
 from prompts.registry import load_prompt, render_prompt
@@ -378,6 +378,10 @@ class TextToSqlService:
         headers = {"Content-Type": "application/json"}
         if access_token:
             headers["Authorization"] = f"Bearer {access_token}"
+        cid = get_current_correlation_id()
+        if cid and cid != "N/A":
+            headers["X-Correlation-ID"] = cid
+            headers["X-Request-ID"] = cid
         return headers
 
 
