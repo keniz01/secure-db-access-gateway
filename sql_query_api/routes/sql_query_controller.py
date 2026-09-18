@@ -16,7 +16,7 @@ from dependencies.tenant_service_provider import TenantServiceProvider
 from exceptions.sql_statement_execution_exception import SqlStatementExecutionError
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
-from services.policy_engine import PolicyEvaluator
+from services.policy_engine import EffectiveAccess, PolicyEvaluator
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
 from services.result_presentation_service import (
     PresentationDecision as PresentationDecisionValue,
@@ -83,17 +83,51 @@ def build_graphql_extensions() -> list[Any]:
         extensions.append(DisableIntrospection())
     return extensions
 
+
+def _filter_schema_text_by_access(schema_text: str, access: EffectiveAccess) -> str:
+    """
+    Prune the embedding-derived ``getTableSchema`` text to the principal's view.
+
+    The text uses one line per table (``name:``) followed by indented column
+    lines (``  column: description``). Tables and columns the principal cannot
+    read are dropped so a text-to-SQL model never learns about — or proposes
+    queries against — denied schema objects.
+    """
+    if access.unrestricted or not schema_text or not schema_text.strip():
+        return schema_text
+
+    lines: list[str] = []
+    current_table: str | None = None
+    for raw_line in schema_text.splitlines():
+        if not raw_line.strip():
+            continue
+        if not raw_line.startswith((" ", "\t")):
+            candidate = raw_line.rstrip(":").strip()
+            current_table = candidate if access.table_accessible(candidate) else None
+            if current_table is not None:
+                lines.append(raw_line)
+            continue
+        if current_table is None:
+            continue
+        column_match = re.match(r"^\s+([^:]+):", raw_line)
+        if column_match and not access.column_accessible(current_table, column_match.group(1).strip()):
+            continue
+        lines.append(raw_line)
+    return "\n".join(lines)
+
+
 _tenant_database_resolver = TenantDatabaseResolver.from_environment()
 _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
 # Kept as an inert test fixture attribute for older callers; it is never used
 # to execute requests.
 _sql_query_service: ISqlQueryService | None = None
 _sql_safety_checker = DefaultSqlSafetyChecker()
+_policy_evaluator = PolicyEvaluator.from_environment()
 _query_gateway = GovernedQueryGateway(
     lambda: _tenant_service_provider,
     _sql_safety_checker,
     audit=lambda event_type, **payload: log_audit_event(event_type, **payload),
-    policy_evaluator=PolicyEvaluator.from_environment(),
+    policy_evaluator=_policy_evaluator,
 )
 _presentation_service = ResultPresentationService.from_environment()
 
@@ -421,7 +455,10 @@ class Query:
             )
             logger.info("Fetching table schema with embeddings (dimensions=%d)", len(embeddings))
             result: dict[str, Any] = await service.get_table_schema(embeddings)
-            schema_text = result.get("schema", "")
+            schema_text = _filter_schema_text_by_access(
+                result.get("schema", ""),
+                _policy_evaluator.effective_access(principal, binding.database_id),
+            )
             return SchemaInfo(schema=schema_text)
         except Exception:
             logger.exception("Error fetching table schema")
@@ -445,18 +482,16 @@ class Query:
         """
         try:
             principal, binding, service = Query._request_context(info, database_id)
-            log_audit_event(
-                "schema_introspection",
-                user=principal.email,
-                org_id=principal.org_id,
-                database_id=binding.database_id,
-            )
             logger.info("Introspecting database schema")
             result: dict[str, Any] = await service.introspect_schema()
             raw_tables: list[dict[str, Any]] = result.get("tables", [])
+            access = _policy_evaluator.effective_access(principal, binding.database_id)
 
             tables: list[TableInfo] = []
             for t in raw_tables:
+                table_name = str(t.get("name", ""))
+                if not access.table_accessible(table_name):
+                    continue
                 columns = [
                     ColumnInfo(
                         name=c["name"],
@@ -465,6 +500,7 @@ class Query:
                         is_primary=c["is_primary"],
                     )
                     for c in t.get("columns", [])
+                    if access.column_accessible(table_name, c["name"])
                 ]
                 fks = [
                     ForeignKeyInfo(
@@ -474,16 +510,27 @@ class Query:
                         foreign_column=fk["foreign_column"],
                     )
                     for fk in t.get("foreign_keys", [])
+                    if access.column_accessible(table_name, fk["column"])
+                    and access.table_accessible(fk["foreign_table"])
+                    and access.column_accessible(fk["foreign_table"], fk["foreign_column"])
                 ]
                 tables.append(
                     TableInfo(
-                        name=t["name"],
+                        name=table_name,
                         schema_name=t["schema_name"],
                         columns=columns,
                         foreign_keys=fks,
                     )
                 )
 
+            log_audit_event(
+                "schema_introspection",
+                user=principal.email,
+                org_id=principal.org_id,
+                database_id=binding.database_id,
+                tables_viewed=len(tables),
+                policy_restricted=not access.unrestricted,
+            )
             return DatabaseSchemaInfo(tables=tables)
         except Exception:
             logger.exception("Error introspecting database schema")

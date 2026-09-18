@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,9 +12,13 @@ from fastapi.testclient import TestClient
 from app_factory import create_app
 from auth import Principal
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
+from routes.sql_query_controller import _filter_schema_text_by_access
 from services.policy_engine import (
+    Policy,
+    PolicyEvaluator,
     apply_row_restrictions,
     mask_rows,
+    rewrite_masked_columns,
 )
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
 from services.tenant_database_resolver import (
@@ -114,6 +119,26 @@ class TestAdversarialRowPolicy:
         with pytest.raises(PermissionError, match="Required subject attribute 'dept' is absent"):
             apply_row_restrictions(sql, {"dept": "dept"}, unprivileged_principal)
 
+    def test_row_restriction_cannot_be_detached_from_union_branches(self, principal: Principal) -> None:
+        """A trailing WHERE binds to the last UNION branch only; every branch must be scoped."""
+        sql = "SELECT * FROM employees e UNION SELECT * FROM employees x"
+        restricted = apply_row_restrictions(sql, {"tenant_id": "tenant_id"}, principal)
+        # A root-level WHERE would only constrain the final branch and let the
+        # first branch read every tenant's rows.
+        assert restricted.count("tenant_id = 'tenant-a'") == 2
+        first, second = restricted.split("UNION", 1)
+        assert "e.tenant_id = 'tenant-a'" in first
+        assert "x.tenant_id = 'tenant-a'" in second
+
+    def test_row_restriction_scope_is_applied_inside_derived_tables(self, principal: Principal) -> None:
+        """Physical tables hidden inside subqueries must still be constrained."""
+        sql = "WITH x AS (SELECT * FROM employees) SELECT * FROM x"
+        restricted = apply_row_restrictions(sql, {"tenant_id": "tenant_id"}, principal)
+        assert "employees.tenant_id = 'tenant-a'" in restricted
+
+    def test_row_restriction_leaves_unrestricted_sql_unchanged(self, principal: Principal) -> None:
+        assert apply_row_restrictions("SELECT 1", {}, principal) == "SELECT 1"
+
 
 # =====================================================================
 # 3. Adversarial Column Masking Bypass Attempts
@@ -135,6 +160,33 @@ class TestAdversarialColumnMasking:
         masked = mask_rows(rows, frozenset({"ssn"}), sql=sql)
         assert masked[0]["obfuscated_ssn"] is None
         assert masked[0]["name"] == "Alice"
+
+    def test_masked_columns_nulled_at_source_for_aggregates(self) -> None:
+        """Aggregates over a masked column must compute over NULL so the value cannot leak."""
+        rewritten = rewrite_masked_columns(
+            "SELECT dept, sum(salary), avg(salary) FROM employees GROUP BY dept",
+            frozenset({"salary"}),
+        )
+        assert "SUM(NULL)" in rewritten
+        assert "AVG(NULL)" in rewritten
+
+    def test_masked_columns_nulled_at_source_across_rebinding_aliases(self) -> None:
+        """Masking must survive derived-table and implicit alias rebinding."""
+        for sql in (
+            "SELECT s FROM (SELECT salary AS s FROM employees) x",
+            "SELECT salary s FROM employees",
+            "SELECT (SELECT salary FROM employees LIMIT 1) AS s",
+        ):
+            rewritten = rewrite_masked_columns(sql, frozenset({"salary"}))
+            # 'salary' may only survive as an output header (NULL AS salary),
+            # never as a real column reference, so it must be preceded by AS.
+            assert re.search(r"\bsalary\b", rewritten.replace("AS salary", "")) is None
+
+    def test_masked_columns_nulled_at_source_with_star_projection(self) -> None:
+        """Star projections cannot be rewritten; values must still be nulled by name."""
+        rewritten = rewrite_masked_columns("SELECT * FROM employees", frozenset({"salary"}))
+        # rewrite is a no-op for star; the name-based post-mask handles the result
+        assert rewritten == "SELECT * FROM employees"
 
 
 # =====================================================================
@@ -234,3 +286,100 @@ class TestGraphQLQueryDepthSecurity:
         data = response.json()
         assert "errors" in data
         assert any("depth" in err["message"].lower() for err in data["errors"])
+
+
+# =====================================================================
+# 6. Effective schema access: introspection must mirror policy decisions
+# =====================================================================
+class TestEffectiveAccess:
+    """Verify the display-side view of a principal's schema matches the query gate."""
+
+    @staticmethod
+    def _principal(*, org_id: str = "tenant-a", **attributes: str) -> Principal:
+        attrs = {"tenant_id": org_id, "dept": "engineering", **attributes}
+        return Principal(
+            "alice-123", "alice@tenant-a.com", org_id, frozenset({"viewer"}), attributes=attrs
+        )
+
+    @classmethod
+    def _restricted_evaluator(cls) -> PolicyEvaluator:
+        return PolicyEvaluator(
+            [
+                Policy(
+                    id="allow-employees",
+                    effect="allow",
+                    org_id="tenant-a",
+                    database_id="db-a",
+                    table="employees",
+                    columns={"id", "name", "dept", "salary"},
+                    masked_columns={"salary"},
+                ),
+                Policy(
+                    id="deny-salaries",
+                    effect="deny",
+                    org_id="tenant-a",
+                    database_id="db-a",
+                    table="salaries",
+                ),
+            ]
+        )
+
+    def test_denied_tables_are_invisible(self) -> None:
+        access = self._restricted_evaluator().effective_access(self._principal(), "db-a")
+        assert access.table_accessible("employees")
+        assert not access.table_accessible("salaries")
+        assert not access.table_accessible("payroll")
+
+    def test_column_whitelist_mirrors_evaluator_allow_union(self) -> None:
+        access = self._restricted_evaluator().effective_access(self._principal(), "db-a")
+        assert access.column_accessible("employees", "dept")
+        assert not access.column_accessible("employees", "ssn")
+        assert not access.column_accessible("salaries", "amount")
+
+    def test_masked_columns_are_still_readable_but_nulled_at_query_time(self) -> None:
+        access = self._restricted_evaluator().effective_access(self._principal(), "db-a")
+        assert access.is_masked("salary")
+        assert not access.is_masked("dept")
+
+    def test_principal_not_matched_by_any_policy_sees_nothing(self) -> None:
+        access = self._restricted_evaluator().effective_access(
+            self._principal(org_id="tenant-b"), "db-a"
+        )
+        assert not access.table_accessible("employees")
+        assert not access.table_accessible("any")
+
+    def test_disabled_evaluator_is_unrestricted(self) -> None:
+        access = PolicyEvaluator(enabled=False).effective_access(self._principal(), "db-a")
+        assert access.unrestricted
+        assert access.table_accessible("anything")
+
+
+class TestSchemaTextFiltering:
+    """Embedding text-to-sql schema text must leak nothing the principal cannot read."""
+
+    SCHEMA_TEXT = (
+        "employees:\n"
+        "  id: PK\n"
+        "  name: employee name\n"
+        "  ssn: social security number\n"
+        "salaries:\n"
+        "  amount: compensation\n"
+    )
+
+    def test_denied_tables_and_columns_pruned(self) -> None:
+        access = TestEffectiveAccess._restricted_evaluator().effective_access(
+            TestEffectiveAccess._principal(), "db-a"
+        )
+        filtered = _filter_schema_text_by_access(self.SCHEMA_TEXT, access)
+        assert "employees:" in filtered
+        assert "id: PK" in filtered
+        assert "name: employee name" in filtered
+        assert "ssn" not in filtered
+        assert "salaries:" not in filtered
+        assert "amount" not in filtered
+
+    def test_unrestricted_access_leaves_text_untouched(self) -> None:
+        access = PolicyEvaluator(enabled=False).effective_access(
+            TestEffectiveAccess._principal(), "db-a"
+        )
+        assert _filter_schema_text_by_access(self.SCHEMA_TEXT, access) == self.SCHEMA_TEXT

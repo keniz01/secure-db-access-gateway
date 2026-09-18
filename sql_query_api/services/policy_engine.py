@@ -7,8 +7,16 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from auth import Principal
 from repositories.sql_validators.ast_analyzer import AstSqlAnalyzer
+
+# SQLGlot dialect used for policy rewrites. Statements that reach the
+# governed pipeline are already guaranteed to parse as a single Query node by
+# the safety checker, so rewriting here is safe and fail-closed.
+_DIALECT = "postgres"
 
 _SQL_KEYWORDS = {
     "select",
@@ -205,6 +213,41 @@ class PolicyDecision:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class EffectiveAccess:
+    """
+    Server-side view of the schema a principal may read for a logical database.
+
+    Mirrors the query-path decision in ``PolicyEvaluator.evaluate`` exactly:
+    a table is visible only when an allow policy matches it and no deny does,
+    and a column is visible only when it satisfies the same whitelist union
+    the evaluator enforces for column-gated policies.
+    """
+
+    accessible_tables: frozenset[str] = frozenset()
+    allowed_columns: frozenset[str] = frozenset()
+    masked_columns: frozenset[str] = frozenset()
+    unrestricted: bool = False
+
+    def table_accessible(self, table: str) -> bool:
+        """Return whether the given table name may be surfaced to the principal."""
+        if self.unrestricted:
+            return True
+        return _normalize_identifier(table) in self.accessible_tables
+
+    def column_accessible(self, table: str, column: str) -> bool:
+        """Return whether a column of a visible table may be surfaced."""
+        if not self.table_accessible(table):
+            return False
+        if self.unrestricted or not self.allowed_columns:
+            return True
+        return _normalize_identifier(column) in self.allowed_columns
+
+    def is_masked(self, column: str) -> bool:
+        """Return whether the column is readable-but-masked for the principal."""
+        return _normalize_identifier(column) in self.masked_columns
+
+
 class PolicyEvaluator:
     """Evaluate policy documents with deny precedence and fail-closed matching."""
 
@@ -313,6 +356,63 @@ class PolicyEvaluator:
             frozenset(masked),
         )
 
+    def effective_access(self, principal: Principal, database_id: str) -> EffectiveAccess:
+        """
+        Compute the schema surface a principal may read for a logical database.
+
+        This is the display-side mirror of ``evaluate``: deny-documents remove
+        tables, allow-documents grant them, and the column whitelist union is
+        exactly the set that a governed query would be allowed to reference.
+        When the evaluator is disabled every table and column is visible, so
+        local development and non-policy configurations are unaffected.
+        """
+        if not self.enabled:
+            return EffectiveAccess(unrestricted=True)
+
+        deny_all = False
+        denied_tables: set[str] = set()
+        allow_by_table: dict[str, list[Policy]] = {}
+        for policy in self.policies:
+            if not self._matches(policy, principal, database_id, policy.table or ""):
+                continue
+            if policy.effect == "deny":
+                if policy.table is None:
+                    deny_all = True
+                else:
+                    denied_tables.add(policy.table)
+            elif policy.table is not None:
+                allow_by_table.setdefault(policy.table, []).append(policy)
+
+        accessible = {
+            table for table in allow_by_table if table not in denied_tables
+        }
+        if deny_all:
+            accessible = set()
+
+        column_policies = [
+            policy
+            for policies in allow_by_table.values()
+            for policy in policies
+            if policy.columns
+        ]
+        allowed_columns = (
+            set().union(*(policy.columns for policy in column_policies))
+            if column_policies
+            else set()
+        )
+        masked_columns = {
+            column
+            for policies in allow_by_table.values()
+            for policy in policies
+            for column in policy.masked_columns
+        }
+
+        return EffectiveAccess(
+            accessible_tables=frozenset(accessible),
+            allowed_columns=frozenset(allowed_columns),
+            masked_columns=frozenset(masked_columns),
+        )
+
 
 _ast_analyzer = AstSqlAnalyzer()
 _TABLE_PATTERN = re.compile(r"\b(?:from|join)\s+([a-zA-Z_][\w.]*)", re.IGNORECASE)
@@ -357,44 +457,113 @@ def referenced_columns(sql: str) -> set[str]:
     return columns
 
 
+def _row_scope_from_tables(select: exp.Select) -> dict[str, list[str]]:
+    """
+    Map the physical tables directly referenced by a SELECT's FROM/JOIN clauses.
+
+    Returns ``{normalized_table_name: [qualifiers]}`` where each qualifier is
+    the alias the query uses for that table (or the table name itself when no
+    alias is given). Nested selects (derived tables, CTE bodies, subqueries,
+    UNION branches) are handled separately because they each get their own
+    row-scope predicate from the AST walk.
+    """
+    aliases: dict[str, list[str]] = {}
+
+    def scan(node: exp.Table) -> None:
+        if not isinstance(node, exp.Table):
+            return
+        name = (node.name or "").strip().lower()
+        qualifier = node.alias_or_name
+        if name and qualifier:
+            aliases.setdefault(name, []).append(qualifier)
+
+    from_ = select.args.get("from_")
+    if from_ is not None and isinstance(from_.this, exp.Table):
+        scan(from_.this)
+    for join in select.args.get("joins") or []:
+        if isinstance(join.this, exp.Table):
+            scan(join.this)
+    return aliases
+
+
 def apply_row_restrictions(sql: str, restrictions: dict[str, str], principal: Principal) -> str:
-    """Add immutable predicates to a SELECT without trusting user SQL."""
+    """
+    Add immutable predicates to a SELECT without trusting user SQL.
+
+    Rewrites the statement at the AST level so every branch, subquery, CTE
+    body, and derived table that references the affected tables carries its
+    own scope predicate. Unlike a trailing textual ``WHERE``, this cannot be
+    detached from earlier UNION branches or nested reads.
+    """
     if not restrictions:
         return sql
 
-    table_aliases = []
-    for match in re.finditer(
-        r"\b(?:from|join)\s+(?:only\s+)?(?P<table>(?:[A-Za-z_][\w]*\.)?[A-Za-z_][\w]*)(?:\s+(?:as\s+)?(?P<alias>[A-Za-z_][\w]*))?",
-        sql,
-        re.IGNORECASE,
-    ):
-        alias = match.group("alias")
-        table_name = match.group("table")
-        identifier = alias or table_name.rsplit(".", 1)[-1]
-        if identifier:
-            table_aliases.append(identifier.lower())
-
-    predicates: list[str] = []
+    resolved: dict[str, str] = {}
     for column, subject_attribute in restrictions.items():
         if subject_attribute not in principal.attributes:
             raise PermissionError(f"Required subject attribute '{subject_attribute}' is absent.")
         value = principal.attributes[subject_attribute]
         if value is None:
             raise PermissionError(f"Required subject attribute '{subject_attribute}' is absent.")
-        escaped = str(value).replace("'", "''")
-        targets = [column]
-        if table_aliases:
-            targets = [f"{alias}.{column}" for alias in table_aliases]
-        predicates.extend(f"{target} = '{escaped}'" for target in targets)
+        resolved[str(column).lower()] = str(value)
 
-    suffix = " AND ".join(predicates)
-    match = re.search(r"\b(order\s+by|group\s+by|having|limit)\b", sql, re.IGNORECASE)
-    if match:
-        head, tail = sql[: match.start()], sql[match.start() :]
-    else:
-        head, tail = sql, ""
-    conjunction = " AND " if re.search(r"\bwhere\b", head, re.IGNORECASE) else " WHERE "
-    return f"{head.rstrip()}{conjunction}{suffix} {tail}".strip()
+    try:
+        tree = sqlglot.parse_one(sql, read=_DIALECT)
+    except Exception:
+        raise ValueError("Row-restriction rewrite failed to parse statement.") from None
+    if tree is None:
+        raise ValueError("Row-restriction rewrite failed to parse statement.")
+
+    for select in tree.find_all(exp.Select):
+        qualifiers = {
+            qualifier
+            for table_aliases in _row_scope_from_tables(select).values()
+            for qualifier in table_aliases
+        }
+        if not qualifiers:
+            continue
+        for column, value in resolved.items():
+            for qualifier in sorted(qualifiers):
+                predicate = exp.EQ(this=exp.column(column, qualifier), expression=exp.Literal.string(value))
+                existing = select.args.get("where")
+                merged = exp.and_(existing.this, predicate, dialect=_DIALECT) if existing else predicate
+                select.set("where", exp.Where(this=merged))
+
+    return tree.sql(dialect=_DIALECT)
+
+
+def rewrite_masked_columns(sql: str, masked_columns: frozenset[str]) -> str:
+    """
+    Replace references to masked columns with NULL at the source of execution.
+
+    Nulling the column before the database executes guarantees that values
+    cannot leak through derivatives the result-name heuristics miss:
+    aggregates (``sum``/``avg``/``count``), implicit aliases, scalar
+    subqueries, and re-bound nested projections all compute over ``NULL``.
+    """
+    if not masked_columns:
+        return sql
+    masked = {str(column).lower() for column in masked_columns}
+    try:
+        tree = sqlglot.parse_one(sql, read=_DIALECT)
+    except Exception:
+        raise ValueError("Masking rewrite failed to parse statement.") from None
+    if tree is None:
+        raise ValueError("Masking rewrite failed to parse statement.")
+
+    for column in tree.find_all(exp.Column):
+        if (column.name or "").lower() not in masked:
+            continue
+        parent = column.parent
+        # Preserve the result column header for bare projections
+        # (SELECT salary -> SELECT NULL AS salary) so callers still see the
+        # column name while the value is nulled.
+        if isinstance(parent, exp.Select) and any(expr is column for expr in parent.expressions):
+            column.replace(exp.alias_(exp.Null(), column.name, quoted=False))
+        else:
+            column.replace(exp.Null())
+
+    return tree.sql(dialect=_DIALECT)
 
 
 def mask_rows(rows: list[dict[str, Any]], columns: frozenset[str], sql: str | None = None) -> list[dict[str, Any]]:
