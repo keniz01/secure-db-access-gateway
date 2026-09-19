@@ -261,8 +261,13 @@ class Query:
         try:
             binding, service = _tenant_service_provider.resolve(principal, database_id)
         except TenantDatabaseResolutionError as exc:
+            log_audit_event("tenant_resolution_failed", user=principal.email, org_id=principal.org_id,
+                          reason=str(exc), database_id=database_id or "unknown")
             raise PermissionError(str(exc)) from exc
         except Exception:
+            log_audit_event("tenant_resolution_failed", user=getattr(principal, "email", "unknown"),
+                          org_id=getattr(principal, "org_id", "unknown"),
+                          reason="database_unavailable", database_id=database_id or "unknown")
             logger.error("Tenant database service resolution failed.")
             raise PermissionError("Database is unavailable.") from None
 
@@ -308,6 +313,8 @@ class Query:
             raise ValueError("SQL statement is too long (max 10000 characters).")
 
         try:
+            log_audit_event("sql_query_started", user=principal.email, org_id=principal.org_id,
+                          database_id=binding.database_id, sql_length=len(sql))
             logger.info("Executing SQL query (length=%d)", len(sql))
             return await _query_gateway.execute(
                 GovernedQueryRequest(
@@ -318,6 +325,8 @@ class Query:
             )
         except ValueError as e:
             # ValueError from cleaning/validation - provide clear error message
+            log_audit_event("sql_validation_failed", user=principal.email, org_id=principal.org_id,
+                          database_id=binding.database_id, reason=str(e), sql_length=len(sql))
             logger.warning("SQL validation failed: %s", str(e))
             raise ValueError(str(e)) from e
         except SqlStatementExecutionError as e:
@@ -399,16 +408,28 @@ class Query:
         """Evaluate policy enforcement without executing SQL."""
         principal, binding, _ = Query._request_context(info, request.database_id)
         if principal.role != "admin":
+            log_audit_event("simulate_policy_unauthorized", user=principal.email,
+                          org_id=principal.org_id, reason="non_admin_role")
             raise PermissionError("Policy simulation requires an administrator role.")
         sql = request.sql_statement.strip()
         if not sql:
+            log_audit_event("simulate_policy_validation_failed", user=principal.email,
+                          org_id=principal.org_id, reason="empty_sql")
             raise ValueError("SQL statement cannot be empty.")
         try:
+            log_audit_event("simulate_policy_evaluating", user=principal.email,
+                          org_id=principal.org_id, database_id=binding.database_id,
+                          sql_length=len(sql))
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
             decision = _query_gateway.simulate(
                 GovernedQueryRequest(principal=principal, database_id=binding.database_id, sql=cleaned_sql)
             )
+            log_audit_event("simulate_policy_evaluated", user=principal.email,
+                          org_id=principal.org_id, database_id=binding.database_id,
+                          decision_allowed=decision.allowed, decision_reason=decision.reason)
         except ValueError:
+            log_audit_event("simulate_policy_validation_failed", user=principal.email,
+                          org_id=principal.org_id, reason="validation_error")
             raise
         return PolicySimulation(
             allowed=decision.allowed,
