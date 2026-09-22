@@ -25,6 +25,12 @@ services:
       - "9090:9090"
     environment:
       OTEL_SERVICE_NAME: read-only-database-explorer
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   auth0_api:
@@ -41,8 +47,10 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: auth0-api
     depends_on:
-      - sql_query_api
-      - otel-lgtm
+      sql_query_api:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3).read()"]
       interval: 10s
@@ -64,8 +72,13 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,https://localhost:5173,https://localhost:8443}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: sql-query-api
+      OPA_URL: ${OPA_URL:-http://opa:8181}
+      OPA_ENABLED: ${OPA_ENABLED:-false}
     depends_on:
-      - otel-lgtm
+      otel-lgtm:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -74,6 +87,28 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  opa:
+    image: openpolicyagent/opa:latest
+    expose:
+      - "8181"
+    volumes:
+      - ./sql_query_api/opa/policies:/etc/opa/policies:ro
+      - ./sql_query_api/opa/data.json:/etc/opa/data.json:ro
+    command:
+      - "run"
+      - "--server"
+      - "--addr=:8181"
+      - "--log-level=info"
+      - "/etc/opa/policies"
+      - "/etc/opa/data.json"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
 
   web_app:
     build: ./web-app

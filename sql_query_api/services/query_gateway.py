@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, Union
 
 from auth import Principal
 from config.app_logger import log_audit_event
@@ -54,7 +55,7 @@ class GovernedQueryGateway:
         provider: QueryServiceProvider | Callable[[], QueryServiceProvider],
         safety_checker: SqlSafetyChecker,
         audit: Callable[..., None] = log_audit_event,
-        policy_evaluator: PolicyEvaluator | None = None,
+        policy_evaluator: Union[PolicyEvaluator, Any, None] = None,
     ) -> None:
         self._provider = provider
         self._safety_checker = safety_checker
@@ -79,7 +80,7 @@ class GovernedQueryGateway:
             request.principal, request.database_id
         )
         cleaned_sql = self._safety_checker.clean_and_validate_sql(request.sql)
-        decision = self.evaluate(request, cleaned_sql)
+        decision = await self.evaluate(request, cleaned_sql)
         if not decision.allowed:
             self._audit("policy_denied", user=request.principal.email, org_id=request.principal.org_id,
                         database_id=binding.database_id, reason=decision.reason,
@@ -123,16 +124,21 @@ class GovernedQueryGateway:
         # are still nulled even when the source column was already removed.
         return mask_rows(result, decision.masked_columns, restricted_sql)
 
-    def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
+    async def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
         """Evaluate the policy decision for a request against the given statement."""
         statement = sql or request.sql
-        return self._policy_evaluator.evaluate(
+        # Support both sync (PolicyEvaluator) and async (OpaPolicyEvaluator) evaluators
+        result = self._policy_evaluator.evaluate(
             request.principal,
             request.database_id,
             tables_touched(statement),
             referenced_columns=referenced_columns(statement),
         )
+        # Handle async evaluators (e.g., OpaPolicyEvaluator)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
 
-    def simulate(self, request: GovernedQueryRequest) -> PolicyDecision:
+    async def simulate(self, request: GovernedQueryRequest) -> PolicyDecision:
         """Evaluate policy without resolving a database or reading protected data."""
-        return self.evaluate(request)
+        return await self.evaluate(request)

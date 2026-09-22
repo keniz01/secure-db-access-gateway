@@ -140,6 +140,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("🚀 Starting FastAPI application...")
     yield
     logger.info("🛑 Shutting down FastAPI application...")
+    # Clean up OPA HTTP client if initialized
+    from routes.sql_query_controller import _policy_evaluator
+    if hasattr(_policy_evaluator, "close"):
+        await _policy_evaluator.close()
 
 
 def create_app() -> FastAPI:

@@ -1,3 +1,4 @@
+import inspect
 import logging as logger
 import os
 import re
@@ -16,6 +17,7 @@ from dependencies.tenant_service_provider import TenantServiceProvider
 from exceptions.sql_statement_execution_exception import SqlStatementExecutionError
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
+from services.opa_policy_engine import OpaConfig, OpaPolicyEvaluator
 from services.policy_engine import EffectiveAccess, PolicyEvaluator
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
 from services.result_presentation_service import (
@@ -122,7 +124,15 @@ _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
 # to execute requests.
 _sql_query_service: ISqlQueryService | None = None
 _sql_safety_checker = DefaultSqlSafetyChecker()
-_policy_evaluator = PolicyEvaluator.from_environment()
+
+# Use OPA evaluator when enabled; fall back to built-in evaluator
+# Use OpaConfig to ensure consistent secret handling (env var → *_FILE path)
+_opa_config = OpaConfig.from_environment()
+if _opa_config.enabled and _opa_config.url:
+    _policy_evaluator = OpaPolicyEvaluator(_opa_config)
+else:
+    _policy_evaluator = PolicyEvaluator.from_environment()
+
 _query_gateway = GovernedQueryGateway(
     lambda: _tenant_service_provider,
     _sql_safety_checker,
@@ -400,7 +410,7 @@ class Query:
         return QueryResult(rows=rows, presentation=Query._decision_to_graphql(decision))
 
     @strawberry.field(description="Explain policy enforcement without executing SQL")
-    def simulate_policy(
+    async def simulate_policy(
         self,
         info: strawberry.Info,
         request: SqlStatementRequest,
@@ -421,7 +431,7 @@ class Query:
                           org_id=principal.org_id, database_id=binding.database_id,
                           sql_length=len(sql))
             cleaned_sql = _sql_safety_checker.clean_and_validate_sql(sql)
-            decision = _query_gateway.simulate(
+            decision = await _query_gateway.simulate(
                 GovernedQueryRequest(principal=principal, database_id=binding.database_id, sql=cleaned_sql)
             )
             log_audit_event("simulate_policy_evaluated", user=principal.email,
@@ -476,9 +486,13 @@ class Query:
             )
             logger.info("Fetching table schema with embeddings (dimensions=%d)", len(embeddings))
             result: dict[str, Any] = await service.get_table_schema(embeddings)
+            # Handle both sync and async effective_access
+            access_result = _policy_evaluator.effective_access(principal, binding.database_id)
+            if inspect.isawaitable(access_result):
+                access_result = await access_result
             schema_text = _filter_schema_text_by_access(
                 result.get("schema", ""),
-                _policy_evaluator.effective_access(principal, binding.database_id),
+                access_result,
             )
             return SchemaInfo(schema=schema_text)
         except Exception:
@@ -506,7 +520,11 @@ class Query:
             logger.info("Introspecting database schema")
             result: dict[str, Any] = await service.introspect_schema()
             raw_tables: list[dict[str, Any]] = result.get("tables", [])
-            access = _policy_evaluator.effective_access(principal, binding.database_id)
+            # Handle both sync and async effective_access
+            access_result = _policy_evaluator.effective_access(principal, binding.database_id)
+            if inspect.isawaitable(access_result):
+                access_result = await access_result
+            access = access_result
 
             tables: list[TableInfo] = []
             for t in raw_tables:
