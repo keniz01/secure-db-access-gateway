@@ -35,6 +35,11 @@ class TenantDatabaseConfig:
     metadata_schema: str = "meta"
     replica_connection_string: str | None = field(default=None, repr=False)
     use_read_replica: bool = False
+    # Per-tenant connection pool settings (optional; falls back to global env vars)
+    pool_size: int | None = None
+    max_overflow: int | None = None
+    pool_timeout: float | None = None
+    pool_recycle: int | None = None
 
     def __post_init__(self) -> None:
         """Validate the server-owned database configuration invariants."""
@@ -188,6 +193,21 @@ class TenantDatabaseResolver:
             use_read_replica = entry.get("use_read_replica")
             if use_read_replica is None and replica_connection_string:
                 use_read_replica = True
+            
+            # Per-tenant pool settings (optional)
+            pool_size = entry.get("pool_size")
+            if pool_size is not None:
+                pool_size = int(pool_size)
+            max_overflow = entry.get("max_overflow")
+            if max_overflow is not None:
+                max_overflow = int(max_overflow)
+            pool_timeout = entry.get("pool_timeout")
+            if pool_timeout is not None:
+                pool_timeout = float(pool_timeout)
+            pool_recycle = entry.get("pool_recycle")
+            if pool_recycle is not None:
+                pool_recycle = int(pool_recycle)
+            
             if not all(isinstance(entry.get(key), str) for key in ("org_id", "database_id")):
                 raise ValueError("Tenant database entries require org_id and database_id.")
             if not isinstance(connection_string, str) or not connection_string.strip():
@@ -205,6 +225,10 @@ class TenantDatabaseResolver:
                         else None
                     ),
                     use_read_replica=bool(use_read_replica),
+                    pool_size=pool_size,
+                    max_overflow=max_overflow,
+                    pool_timeout=pool_timeout,
+                    pool_recycle=pool_recycle,
                 )
             )
         return result

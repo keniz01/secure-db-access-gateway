@@ -4,3 +4,4 @@ export { SqlEditor } from './SqlEditor';
 export { SqlMonacoEditor } from './SqlMonacoEditor';
 export { AskEditor } from './AskEditor';
 export { ExecutionFeedback } from './ExecutionFeedback';
+export { createSqlCompletionProvider } from './SqlCompletionProvider';

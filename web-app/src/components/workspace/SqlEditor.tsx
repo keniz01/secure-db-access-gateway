@@ -1,5 +1,6 @@
 import { Play, Trash2 } from 'lucide-react';
 import { SqlMonacoEditor } from './SqlMonacoEditor';
+import type { SchemaTable } from '../dashboard/SchemaBrowser';
 
 interface SqlEditorProps {
   sql: string;
@@ -7,6 +8,7 @@ interface SqlEditorProps {
   onExecute: () => void;
   onClear: () => void;
   isExecuting: boolean;
+  schemaTables?: SchemaTable[];
 }
 
 export const SqlEditor = ({
@@ -15,6 +17,7 @@ export const SqlEditor = ({
   onExecute,
   onClear,
   isExecuting,
+  schemaTables,
 }: SqlEditorProps) => {
   return (
     <div className="space-y-3">
@@ -24,6 +27,7 @@ export const SqlEditor = ({
         onRunQuery={onExecute}
         placeholder="SELECT * FROM ..."
         height="160px"
+        schemaTables={schemaTables}
       />
       <div className="flex items-center gap-2">
         <button

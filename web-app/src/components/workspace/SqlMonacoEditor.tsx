@@ -1,6 +1,9 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useEffect } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type { editor } from 'monaco-editor';
+import type { IDisposable } from 'monaco-editor';
+import type { SchemaTable } from '../dashboard/SchemaBrowser';
+import { createSqlCompletionProvider } from './SqlCompletionProvider';
 
 interface SqlMonacoEditorProps {
   value: string;
@@ -9,6 +12,7 @@ interface SqlMonacoEditorProps {
   height?: string;
   onRunQuery?: () => void;
   readOnly?: boolean;
+  schemaTables?: SchemaTable[];
 }
 
 export const SqlMonacoEditor = ({
@@ -18,8 +22,10 @@ export const SqlMonacoEditor = ({
   height = '160px',
   onRunQuery,
   readOnly = false,
+  schemaTables,
 }: SqlMonacoEditorProps) => {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const disposableRef = useRef<IDisposable | null>(null);
 
   const handleMount: OnMount = useCallback(
     (editorInstance, monaco) => {
@@ -35,6 +41,12 @@ export const SqlMonacoEditor = ({
           ],
           run: () => onRunQuery(),
         });
+      }
+
+      // Register SQL autocomplete provider
+      if (schemaTables && schemaTables.length > 0) {
+        const provider = createSqlCompletionProvider(schemaTables);
+        disposableRef.current = monaco.languages.registerCompletionItemProvider('sql', provider);
       }
 
       // Placeholder text via content widget
@@ -74,8 +86,18 @@ export const SqlMonacoEditor = ({
       // Focus editor on mount
       editorInstance.focus();
     },
-    [onRunQuery, placeholder]
+    [onRunQuery, placeholder, schemaTables]
   );
+
+  // Dispose completion provider on unmount or schemaTables change
+  useEffect(() => {
+    return () => {
+      if (disposableRef.current) {
+        disposableRef.current.dispose();
+        disposableRef.current = null;
+      }
+    };
+  }, [schemaTables]);
 
   const handleChange = useCallback(
     (val: string | undefined) => {
@@ -107,7 +129,6 @@ export const SqlMonacoEditor = ({
           cursorBlinking: 'smooth',
           smoothScrolling: true,
           readOnly,
-          placeholder,
         }}
       />
     </div>

@@ -162,6 +162,7 @@ export const Dashboard = () => {
               onExecute={handleExecuteDirectSql}
               onClear={handleClear}
               isExecuting={executionStatus === 'executing' || executionStatus === 'validating'}
+              schemaTables={schemaTables}
             />
           ) : (
             <AskEditor
@@ -174,6 +175,7 @@ export const Dashboard = () => {
               onClear={handleClear}
               isGenerating={isGenerating}
               isExecuting={executionStatus === 'executing' || executionStatus === 'validating'}
+              schemaTables={schemaTables}
             />
           )}
 

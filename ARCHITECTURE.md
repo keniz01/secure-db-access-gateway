@@ -129,6 +129,40 @@ API Request (Web App)
 - **Query Safety:** Parameterized queries via SQLAlchemy; automatic limit clauses prevent DoS.
 - **CORS & Headers:** Whitelisted origins, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
 
+### Policy Enforcement (OPA Integration)
+
+The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
+
+```
+┌─────────────┐      ┌─────────────┐      ┌─────────────┐
+│  SQL Query  │──────│     OPA     │──────│   Rego      │
+│    API      │      │   Sidecar   │      │  Policies   │
+└─────────────┘      └─────────────┘      └─────────────┘
+       │
+       ▼
+┌─────────────┐
+│  PostgreSQL │
+└─────────────┘
+```
+
+**Configuration:**
+- `OPA_URL=http://opa:8181` — OPA sidecar endpoint
+- `OPA_ENABLED=true` — Toggle OPA evaluation (default: `true` when `OPA_URL` is set)
+
+**Policy Evaluation:**
+- OPA evaluates allow/deny decisions based on: principal (user_id, org_id, roles), database_id, tables, and referenced_columns
+- Deny policies always take precedence over allow policies
+- When OPA is unreachable, the evaluator **fails closed** (denies all requests)
+
+**Rego Policies:**
+- Located in `sql_query_api/opa/policies/gateway.rego`
+- Loaded from disk on OPA startup (file-based for dev, bundle loading for production)
+- Support for hot-reload via OPA bundle endpoints (S3/GCS/HTTP)
+
+**Fallback:**
+- When `OPA_ENABLED=false` or `OPA_URL` is not set, the built-in `PolicyEvaluator` is used
+- The `OpaPolicyEvaluator` implements the same interface as `PolicyEvaluator` for seamless switching
+
 ---
 
 ## Deployment Architecture
@@ -139,6 +173,7 @@ localhost:8080      → Nginx Gateway / Reverse Proxy (HTTP → HTTPS redirect)
 localhost:8443      → Nginx Gateway (TLS edge; serves the web app SPA + /api/*)
 localhost:8001      → Auth0 API
 localhost:8002      → SQL Query API
+localhost:8181      → OPA Sidecar (policy evaluation)
 localhost:3000      → Grafana UI (otel-lgtm telemetry stack)
 localhost:4318      → OTLP HTTP receiver for traces/logs/metrics
 localhost:5432      → PostgreSQL (Docker Container)

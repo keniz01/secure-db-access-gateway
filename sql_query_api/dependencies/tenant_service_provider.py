@@ -34,6 +34,10 @@ class TenantServiceProvider:
                 tenant_org_id=binding.org_id,
                 tenant_database_id=binding.database_id,
                 database_target=binding.effective_target,
+                pool_size=binding.pool_size,
+                max_overflow=binding.max_overflow,
+                pool_timeout=binding.pool_timeout,
+                pool_recycle=binding.pool_recycle,
             )
             self._containers[cache_key] = container
         return binding, container.resolve(ISqlQueryService)

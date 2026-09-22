@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Play, Sparkles, Pencil, Trash2 } from 'lucide-react';
 import { SqlMonacoEditor } from './SqlMonacoEditor';
+import type { SchemaTable } from '../dashboard/SchemaBrowser';
 
 interface AskEditorProps {
   question: string;
@@ -12,6 +13,7 @@ interface AskEditorProps {
   onClear: () => void;
   isGenerating: boolean;
   isExecuting: boolean;
+  schemaTables?: SchemaTable[];
 }
 
 export const AskEditor = ({
@@ -24,6 +26,7 @@ export const AskEditor = ({
   onClear,
   isGenerating,
   isExecuting,
+  schemaTables,
 }: AskEditorProps) => {
   const [editingGenerated, setEditingGenerated] = useState(false);
 
@@ -83,6 +86,7 @@ export const AskEditor = ({
               onChange={onGeneratedSqlChange}
               onRunQuery={onExecute}
               height="120px"
+              schemaTables={schemaTables}
             />
           ) : (
             <pre className="p-3 font-mono text-sm leading-relaxed text-gray-700 overflow-x-auto">

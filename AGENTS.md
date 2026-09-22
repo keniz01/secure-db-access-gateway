@@ -6,7 +6,22 @@ Three independently-installed services plus an nginx TLS edge, wired together by
 - `auth0_api/` — FastAPI OAuth2/Auth0 sessions + optional AI greeting (port 8001)
 - `sql_query_api/` — FastAPI + Strawberry GraphQL read-only SQL gateway (port 8002)
 
-Backend services each have their own `pyproject.toml` and `.venv` (Python 3.12). Deps are managed with `uv` (`uv.lock`), but CI installs via pip.
+Backend services each have their own `pyproject.toml` and `.venv` (Python 3.12). Deps are managed with `uv` (`uv.lock`), but CI installs via pip. A shared `shared/` package (`shared_secrets`) provides the `read_secret` loader and must be installed first.
+
+## Local dev setup
+
+```bash
+./scripts/bootstrap-dev.sh   # copies .env.example → .env, generates mkcert TLS cert
+docker compose up --build     # starts all services + nginx + otel-lgtm
+```
+
+Or run individual services directly:
+
+```bash
+cd sql_query_api && uv sync && uv run uvicorn main:app --reload --port 8002
+cd auth0_api && uv sync && uv run uvicorn main:app --reload --port 8001
+cd web-app && npm install && npm run dev
+```
 
 ## Commands
 
@@ -15,7 +30,9 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - SQL API tests: `python -m pytest` — hermetic, uses aiosqlite (`tests/conftest.py` sets `TENANT_DATABASES_JSON`), no external DB or services required.
 - Auth0 API tests: `python -m pytest`.
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
-- CI (`.github/workflows/ci.yml`) = SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`.
+- Shared secrets smoke test (CI only): `python -m pip install -e ./shared` then run inline assertions.
+- CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`.
+- Web app Node version: 20. Python services: 3.12.
 
 ## Ruff is diff-aware only
 
@@ -32,7 +49,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - `ENVIRONMENT` defaults to `production` in `sql_query_api/main.py`. In production (and not `CI`), startup fails fast if `POLICY_POLICIES_JSON` or `POLICY_POLICIES_JSON_FILE` is missing (`services/policy_engine.py`). For local dev runs set `ENVIRONMENT=dev` (also enables uvicorn reload).
 - `TENANT_DATABASES_JSON` or `TENANT_DATABASES_JSON_FILE` is required — there is no single-database fallback. It maps `org_id`/`database_id` → connection strings; clients send only a logical `database_id`, never connection strings.
 - Every token must carry the trusted tenant claim `https://app.secure-db-access-gateway.org/tenant_id`; RBAC middleware enforces it.
-- Secrets come only from env vars (or a `*_FILE` path injected by an orchestrator). Real values live in a single gitignored env file — `.env` for dev (copied from `.env.example` by `scripts/bootstrap-dev.sh`), `/etc/gateway/gateway.env` on a host (manual provisioning) — and are read via the shared `read_secret` loader. There is no `secrets/` directory and no encrypted secret files. Never hardcode credentials.
+- Secrets come only from env vars (or a `*_FILE` path injected by an orchestrator). The `shared_secrets.read_secret` loader checks: env var → `*_FILE` path → default. Real values live in a single gitignored env file — `.env` for dev (copied from `.env.example` by `scripts/bootstrap-dev.sh`), `/etc/gateway/gateway.env` on a host (manual provisioning). There is no `secrets/` directory and no encrypted secret files. Never hardcode credentials.
 
 ### SQL safety & query execution
 
@@ -63,15 +80,27 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - `log_audit_event` is called for: `sql_query`, `schema_embedding_lookup`, `schema_introspection`, `auth_failed`, `tenant_resolution_failed`, `sql_query_started`, `sql_validation_failed`, `simulate_policy_evaluated`.
 - Audit payload includes `user`, `org_id`, `database_id`, `query_hash`, `tables_touched`, `reason`, `decision_allowed`, `decision_reason`.
 - Raw SQL included in audit when `AUDIT_LOG_RAW_SQL=true` — disable in production.
-- Security-relevant events (auth failures, tenant resolution failures, policy evaluation) are now attributable via structured logging.
 - Policy denies and `permission_error` events may not all be logged — verify coverage if audit compliance is required.
-- **Fixes applied**: Added `log_audit_event` calls in `sql_query_api/middlewares/rbac_middleware.py` (auth failures), `sql_query_api/routes/sql_query_controller.py` (tenant resolution, query validation, simulate_policy).
 
 ### Dependency / supply-chain risk
 
 - Python deps managed with `uv`/`uv.lock`; CI runs `pip-audit` and `bandit` on `sql_query_api`.
 - Node deps audited via `npm audit` in web-app CI.
 - Each service has its own `.venv` and `pyproject.toml`; no shared runtime deps beyond auth0 pyramid.
+
+### Observability
+
+- `docker compose up` includes an `otel-lgtm` sidecar (Grafana OTel LGTM stack) on ports 3000 (UI), 4317/4318 (OTLP gRPC/HTTP), 9090 (Prometheus). All backend services depend on it.
+
+### Open Policy Agent (OPA)
+
+- OPA sidecar (`openpolicyagent/opa:latest`) runs on port 8181 for centralized policy evaluation.
+- Toggle between OPA and built-in evaluator via `OPA_ENABLED` env var (default: `true` when `OPA_URL` is set).
+- OPA policy files are mounted from `sql_query_api/opa/policies/` and evaluated at `/v1/data/gateway/evaluate`.
+- When OPA is unreachable, the evaluator **fails closed** (denies all requests).
+- The `OpaPolicyEvaluator` class implements the same interface as `PolicyEvaluator` for seamless switching.
+- Rego policies in `sql_query_api/opa/policies/gateway.rego` define allow/deny rules based on principal, org, database, table, and column attributes.
+- For production, configure OPA bundle loading (S3/GCS/HTTP) for hot-reload of policies without restarts.
 
 ### What to never regress
 
@@ -80,5 +109,12 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - Root `explore.py` is a local headless operator CLI that bypasses the multi-tenant gateway (it re-execs inside `sql_query_api/.venv` and requires a validated access token). It is NOT a governed access path.
 - `TENANT_DATABASES_JSON` is required at startup — no fallback.
 - `ENVIRONMENT=dev` is needed for local development; production defaults to strict enforcement.
+- OPA integration must fail closed: when `OPA_URL` is set but unreachable, all queries are denied.
+
+### Deployment
+
+- Production uses `docker-compose.prod.yml` override (ports 80/443 instead of 8080/8443, pre-built GHCR images).
+- `deploy.yml` triggers on `v*` tag push (builds release images) or `workflow_dispatch` (deploys existing tag for rollback).
+- `docker.yml` builds multi-arch (amd64/arm64) images to GHCR on push to main/master/feat/*.
 
 Deeper context: `ARCHITECTURE.md`, `SECURITY.md`, `GEMINI.md` (AI/CLI guardrails), per-service `README.md`.

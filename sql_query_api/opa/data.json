@@ -1,0 +1,37 @@
+{
+  "policies": [
+    {
+      "id": "allow-viewer-read-album",
+      "description": "Allow viewers to read the album table",
+      "effect": "allow",
+      "roles": ["viewer"],
+      "database_id": "default",
+      "table": "album",
+      "columns": ["album_id", "title", "artist_id"],
+      "masked_columns": [],
+      "row_scope": {}
+    },
+    {
+      "id": "allow-viewer-read-artist",
+      "description": "Allow viewers to read the artist table",
+      "effect": "allow",
+      "roles": ["viewer"],
+      "database_id": "default",
+      "table": "artist",
+      "columns": ["artist_id", "name"],
+      "masked_columns": [],
+      "row_scope": {}
+    },
+    {
+      "id": "allow-editor-read-invoice",
+      "description": "Allow editors to read invoices but mask total",
+      "effect": "allow",
+      "roles": ["editor"],
+      "database_id": "default",
+      "table": "invoice",
+      "columns": ["invoice_id", "customer_id", "total"],
+      "masked_columns": ["total"],
+      "row_scope": {}
+    }
+  ]
+}

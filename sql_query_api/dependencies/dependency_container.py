@@ -86,6 +86,31 @@ def pool_settings_from_env() -> dict[str, int | float]:
         "pool_recycle": pool_recycle,
     }
 
+
+def pool_settings_from_config(config: dict[str, int | float | None]) -> dict[str, int | float]:
+    """
+    Merge per-tenant pool settings with global defaults.
+
+    Per-tenant settings (passed in `config`) override global env var defaults.
+    Keys: pool_size, max_overflow, pool_timeout, pool_recycle.
+    """
+    defaults = pool_settings_from_env()
+    result = dict(defaults)
+    for key in ("pool_size", "max_overflow", "pool_timeout", "pool_recycle"):
+        value = config.get(key)
+        if value is not None:
+            # Validate per-tenant overrides
+            if key == "pool_size" and value < 1:
+                raise ValueError("pool_size must be at least 1.")
+            if key == "max_overflow" and value < 0:
+                raise ValueError("max_overflow must be >= 0.")
+            if key == "pool_timeout" and value <= 0:
+                raise ValueError("pool_timeout must be greater than zero.")
+            if key == "pool_recycle" and value < 0:
+                raise ValueError("pool_recycle must be >= 0.")
+            result[key] = value
+    return result
+
 # -----------------------------------------------------------------------------
 # Logging Configuration
 # -----------------------------------------------------------------------------
@@ -114,6 +139,10 @@ def setup_container(
     tenant_org_id: str | None = None,
     tenant_database_id: str | None = None,
     database_target: str = "primary",
+    pool_size: int | None = None,
+    max_overflow: int | None = None,
+    pool_timeout: float | None = None,
+    pool_recycle: int | None = None,
 ) -> Container:
     """
     Set up the dependency injection container for the SQL Query system.
@@ -125,6 +154,10 @@ def setup_container(
         tenant_org_id: Optional org identifier to scope the engine.
         tenant_database_id: Optional logical database identifier.
         database_target: Which configured database target to use.
+        pool_size: Per-tenant pool size override.
+        max_overflow: Per-tenant max overflow override.
+        pool_timeout: Per-tenant pool timeout override.
+        pool_recycle: Per-tenant pool recycle override.
 
     Returns:
         Container: A configured punq dependency injection container.
@@ -159,7 +192,13 @@ def setup_container(
             "pool_pre_ping": True,
         }
         if connection_string.startswith("postgresql") or connection_string.startswith("postgresql+asyncpg"):
-            engine_kwargs.update(pool_settings_from_env())
+            pool_config = {
+                "pool_size": pool_size,
+                "max_overflow": max_overflow,
+                "pool_timeout": pool_timeout,
+                "pool_recycle": pool_recycle,
+            }
+            engine_kwargs.update(pool_settings_from_config(pool_config))
 
         engine: Final[AsyncEngine] = create_async_engine(connection_string, **engine_kwargs)
 
