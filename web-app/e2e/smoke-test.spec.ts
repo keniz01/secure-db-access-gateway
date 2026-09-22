@@ -31,19 +31,6 @@ test.describe('E2E Smoke Test: Login -> Run Query -> View Results', () => {
       });
     });
 
-    // Mock dashboard message API endpoint
-    await page.route('**/api/dashboard', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          email: 'smoke.tester@example.com',
-          name: 'Smoke Tester',
-          message: 'Welcome back, Smoke Tester!',
-        }),
-      });
-    });
-
     // Mock GraphQL query execution endpoint
     await page.route('**/graphql', async (route) => {
       const request = route.request();
@@ -91,19 +78,25 @@ test.describe('E2E Smoke Test: Login -> Run Query -> View Results', () => {
     // Navigate to root Dashboard
     await page.goto('/');
 
-    // Verify Dashboard renders user info
-    await expect(page.getByText('Welcome, Smoke Tester!')).toBeVisible();
-    await expect(page.getByText('smoke.tester@example.com')).toBeVisible();
+    // Verify the new layout renders (header with Data Gateway title)
+    await expect(page.getByText('Data Gateway')).toBeVisible();
 
-    // Type SQL query into input area
-    const queryInput = page.getByPlaceholder(/Enter your SQL query/i);
-    await expect(queryInput).toBeVisible();
-    await queryInput.fill('SELECT id, name, artist, release_year FROM album');
+    // Verify security banner is visible
+    await expect(page.getByText('Read-only')).toBeVisible();
 
-    // Click Execute Query button
-    const executeButton = page.getByRole('button', { name: /Execute Query/i });
-    await expect(executeButton).toBeVisible();
-    await executeButton.click();
+    // Verify SQL mode is active (default)
+    await expect(page.getByRole('button', { name: /SQL/i })).toBeVisible();
+
+    // Type SQL query into Monaco editor
+    const monacoEditor = page.locator('.monaco-editor').first();
+    await expect(monacoEditor).toBeVisible();
+    await monacoEditor.click();
+    await page.keyboard.type('SELECT id, name, artist, release_year FROM album');
+
+    // Click Run query button
+    const runButton = page.getByRole('button', { name: /Run query/i });
+    await expect(runButton).toBeVisible();
+    await runButton.click();
 
     // Verify query results render in the results table
     await expect(page.getByText('Abbey Road')).toBeVisible();
