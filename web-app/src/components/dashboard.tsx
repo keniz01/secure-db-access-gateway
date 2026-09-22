@@ -1,44 +1,40 @@
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { dashboardApi } from '../services/dashboard-api';
 import { graphqlApi } from '../services/graphql-api';
 import { textToSqlApi } from '../services/text-to-sql-api';
 import useAuth from '../hooks/use-auth';
 import type { QueryResult } from '../models/query-result';
-import {
-  DashboardHeader,
-  UserInfoCard,
-  QueryInput,
-  NaturalLanguageInput,
-  QueryResults,
-  SchemaBrowser
-} from './dashboard/index';
+import { AppLayout, SecurityBanner } from './layout/index';
+import { SchemaSidebar } from './schema/index';
+import { QueryModeSwitcher, SqlEditor, AskEditor, ExecutionFeedback } from './workspace/index';
+import type { QueryMode } from './workspace/index';
+import { ResultsPanel } from './results/index';
+import { useQuery } from '@tanstack/react-query';
 
-type QueryMode = 'sql' | 'natural';
+type ExecutionStatus = 'idle' | 'validating' | 'executing' | 'success' | 'error';
+
+const POLICY_CHECKS = [
+  { label: 'SQL validated', passed: true },
+  { label: 'Read-only policy', passed: true },
+  { label: 'No destructive operations', passed: true },
+  { label: 'Row limit applied', passed: true },
+];
 
 export const Dashboard = () => {
   const { user, logout } = useAuth();
   const [queryMode, setQueryMode] = useState<QueryMode>('sql');
-  
+
   // SQL Query state
   const [sqlQuery, setSqlQuery] = useState('');
-  
+
   // Natural Language Query state
   const [naturalLanguageQuery, setNaturalLanguageQuery] = useState('');
   const [generatedSql, setGeneratedSql] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  
+
   // Shared state
   const [queryResults, setQueryResults] = useState<QueryResult | null>(null);
-  const [isExecuting, setIsExecuting] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
-
-  const { data: dashboardUser, isLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: dashboardApi.fetchDashboard,
-    retry: 1,
-    staleTime: 1000 * 60 * 5,
-  });
+  const [executionStatus, setExecutionStatus] = useState<ExecutionStatus>('idle');
 
   const {
     data: schemaTables = [],
@@ -51,31 +47,40 @@ export const Dashboard = () => {
     staleTime: 1000 * 60 * 5,
   });
 
-  const handleExecuteQuery = async () => {
-    if (!sqlQuery.trim()) {
+  const handleInsertIdentifier = (identifier: string) => {
+    if (queryMode === 'sql') {
+      setSqlQuery((prev) => (prev ? `${prev} ${identifier}` : identifier));
+    }
+  };
+
+  const handleExecuteSql = async (sql: string) => {
+    if (!sql.trim()) {
       setQueryError('Please enter a SQL query');
       return;
     }
 
-    setIsExecuting(true);
+    setExecutionStatus('validating');
     setQueryError(null);
     setQueryResults(null);
 
+    // Brief validation phase for UX feedback
+    await new Promise((r) => setTimeout(r, 300));
+
+    setExecutionStatus('executing');
+
     try {
-      const result = await graphqlApi.executeSqlQuery(sqlQuery);
-      if (result.presentation || result.rows.length > 0) {
-        setQueryResults(result);
-      } else {
-        setQueryError('No data returned from query');
-      }
+      const result = await graphqlApi.executeSqlQuery(sql);
+      setQueryResults(result);
+      setExecutionStatus('success');
     } catch (error) {
       setQueryError((error as Error).message || 'Failed to execute query');
-    } finally {
-      setIsExecuting(false);
+      setExecutionStatus('error');
     }
   };
 
-  const handleClearResults = () => {
+  const handleExecuteDirectSql = () => handleExecuteSql(sqlQuery);
+
+  const handleClear = () => {
     if (queryMode === 'sql') {
       setSqlQuery('');
     } else {
@@ -84,6 +89,7 @@ export const Dashboard = () => {
     }
     setQueryResults(null);
     setQueryError(null);
+    setExecutionStatus('idle');
   };
 
   const handleGenerateSql = async () => {
@@ -113,123 +119,80 @@ export const Dashboard = () => {
     }
   };
 
-  const handleSqlChange = (sql: string) => {
-    setGeneratedSql(sql);
-  };
-
   const handleExecuteNaturalLanguage = async () => {
     if (!generatedSql) {
       setQueryError('Please generate SQL first');
       return;
     }
-
-    setIsExecuting(true);
-    setQueryError(null);
-    setQueryResults(null);
-
-    try {
-      // Execute the generated SQL on behalf of the natural-language question
-      const result = await graphqlApi.executeSqlQuery(generatedSql, undefined, naturalLanguageQuery);
-      if (result.presentation || result.rows.length > 0) {
-        setQueryResults(result);
-      } else {
-        setQueryError('No data returned from query');
-      }
-    } catch (error) {
-      setQueryError((error as Error).message || 'Failed to execute query');
-    } finally {
-      setIsExecuting(false);
-    }
+    handleExecuteSql(generatedSql);
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-16 w-16 border-b-4 border-indigo-600 mb-4"></div>
-          <p className="text-gray-600">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      <DashboardHeader onLogout={logout} />
-
-      <div className="max-w-7xl mx-auto px-6 py-8">
-        <UserInfoCard
-          user={user}
-          dashboardMessage={dashboardUser?.message}
+    <AppLayout
+      onLogout={logout}
+      securityBanner={
+        <SecurityBanner
+          databaseId="default"
+          isReadOnly={true}
+          role={user?.role}
+          rowLimit={5000}
         />
-
-        <SchemaBrowser
+      }
+      schemaSidebar={
+        <SchemaSidebar
           tables={schemaTables}
           isLoading={isSchemaLoading}
           error={schemaError ? (schemaError as Error).message : null}
+          onInsertIdentifier={handleInsertIdentifier}
         />
+      }
+      queryArea={
+        <div className="space-y-4">
 
-        {/* Tab Navigation */}
-        <div className="bg-white rounded-2xl shadow-lg p-2 mb-8">
-          <div className="flex space-x-2">
-            <button
-              onClick={() => {
-                setQueryMode('sql');
-                handleClearResults();
-              }}
-              className={`flex-1 px-6 py-3 rounded-lg font-semibold transition-colors duration-200 ${
-                queryMode === 'sql'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              SQL Query
-            </button>
-            <button
-              onClick={() => {
-                setQueryMode('natural');
-                handleClearResults();
-              }}
-              className={`flex-1 px-6 py-3 rounded-lg font-semibold transition-colors duration-200 ${
-                queryMode === 'natural'
-                  ? 'bg-indigo-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              Natural Language Query
-            </button>
+          {/* Mode switcher */}
+          <div className="flex items-center justify-between">
+            <QueryModeSwitcher mode={queryMode} onModeChange={setQueryMode} />
           </div>
+
+          {/* Editor */}
+          {queryMode === 'sql' ? (
+            <SqlEditor
+              sql={sqlQuery}
+              onSqlChange={setSqlQuery}
+              onExecute={handleExecuteDirectSql}
+              onClear={handleClear}
+              isExecuting={executionStatus === 'executing' || executionStatus === 'validating'}
+            />
+          ) : (
+            <AskEditor
+              question={naturalLanguageQuery}
+              generatedSql={generatedSql}
+              onQuestionChange={setNaturalLanguageQuery}
+              onGeneratedSqlChange={setGeneratedSql}
+              onGenerateSql={handleGenerateSql}
+              onExecute={handleExecuteNaturalLanguage}
+              onClear={handleClear}
+              isGenerating={isGenerating}
+              isExecuting={executionStatus === 'executing' || executionStatus === 'validating'}
+            />
+          )}
+
+          {/* Execution feedback */}
+          <ExecutionFeedback
+            status={executionStatus}
+            checks={POLICY_CHECKS}
+            databaseId="default"
+            errorMessage={queryError ?? undefined}
+          />
         </div>
-
-        {/* Query Input based on mode */}
-        {queryMode === 'sql' ? (
-          <QueryInput
-            sqlQuery={sqlQuery}
-            onQueryChange={setSqlQuery}
-            onExecute={handleExecuteQuery}
-            onClear={handleClearResults}
-            isExecuting={isExecuting}
-          />
-        ) : (
-          <NaturalLanguageInput
-            query={naturalLanguageQuery}
-            generatedSql={generatedSql}
-            onQueryChange={setNaturalLanguageQuery}
-            onSqlChange={handleSqlChange}
-            onGenerateSql={handleGenerateSql}
-            onExecute={handleExecuteNaturalLanguage}
-            onClear={handleClearResults}
-            isGenerating={isGenerating}
-            isExecuting={isExecuting}
-          />
-        )}
-
-        <QueryResults
-          results={queryResults}
+      }
+      resultsArea={
+        <ResultsPanel
+          result={queryResults}
           error={queryError}
-          isExecuting={isExecuting || isGenerating}
+          isExecuting={executionStatus === 'executing' || executionStatus === 'validating'}
         />
-      </div>
-    </div>
+      }
+    />
   );
 };

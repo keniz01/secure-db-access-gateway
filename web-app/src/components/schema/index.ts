@@ -1,0 +1,1 @@
+export { SchemaSidebar } from './SchemaSidebar';
