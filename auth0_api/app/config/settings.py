@@ -61,6 +61,12 @@ class Settings:
     # Frontend Configuration
     FRONTEND_URL: str = read_secret("FRONTEND_URL")
     REACT_APP_URL: str = read_secret("REACT_APP_URL")
+    # OAuth redirect URI - static, pre-registered in Auth0 dashboard (OAuth 2.1).
+    # If OAUTH_REDIRECT_URI is set, use it verbatim; otherwise derive from frontend origin + /auth.
+    OAUTH_REDIRECT_URI: str = os.getenv("OAUTH_REDIRECT_URI", "").strip() or ""
+    # Session store (memory | redis). Memory is single-process only.
+    SESSION_STORE: str = os.getenv("SESSION_STORE", "memory").strip().lower()
+    REDIS_URL: str = os.getenv("REDIS_URL", "").strip()
 
     # AI/LLM Configuration
     OPENROUTER_API_KEY: str = read_secret("OPENROUTER_API_KEY")
@@ -104,6 +110,13 @@ class Settings:
                 "http://localhost:3000",
                 "http://127.0.0.1:5173",
             ]
+
+        # Derive OAUTH_REDIRECT_URI if not explicitly configured
+        if not self.OAUTH_REDIRECT_URI:
+            from app.utils.helpers import derive_frontend_origin as _derive
+
+            _origin = _derive(self.REACT_APP_URL, self.FRONTEND_URL)
+            self.OAUTH_REDIRECT_URI = f"{_origin.rstrip('/')}/auth"
 
         raw_org_mapping = os.getenv("ORG_DB_CONNECTIONS", "")
         if raw_org_mapping.strip():

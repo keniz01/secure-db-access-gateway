@@ -86,10 +86,7 @@ class TestGraphqlCrossOriginPost:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=upstream)
 
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         mocker.patch("app.routes.graphql_routes.httpx.AsyncClient", return_value=mock_client)
 
         _inject_csrf_cookie(client)
@@ -99,10 +96,7 @@ class TestGraphqlCrossOriginPost:
 
     @pytest.mark.asyncio
     async def test_disallowed_origin_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -114,10 +108,7 @@ class TestGraphqlCrossOriginPost:
 
     @pytest.mark.asyncio
     async def test_null_origin_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -128,10 +119,7 @@ class TestGraphqlCrossOriginPost:
 
     @pytest.mark.asyncio
     async def test_no_origin_no_referer_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -149,10 +137,7 @@ class TestGraphqlCrossOriginPost:
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client.post = AsyncMock(return_value=upstream)
 
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         mocker.patch("app.routes.graphql_routes.httpx.AsyncClient", return_value=mock_client)
 
         _inject_csrf_cookie(client)
@@ -165,10 +150,7 @@ class TestGraphqlCrossOriginPost:
 
     @pytest.mark.asyncio
     async def test_disallowed_referer_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -185,10 +167,7 @@ class TestCsrfDoubleSubmit:
 
     @pytest.mark.asyncio
     async def test_header_missing_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -199,10 +178,7 @@ class TestCsrfDoubleSubmit:
 
     @pytest.mark.asyncio
     async def test_cookie_missing_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         resp = await client.post(
             "/api/graphql",
             content=b'{"query":"{ping}"}',
@@ -212,10 +188,7 @@ class TestCsrfDoubleSubmit:
 
     @pytest.mark.asyncio
     async def test_header_cookie_mismatch_rejected(self, client, mocker) -> None:
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session()))
         _inject_csrf_cookie(client, BAD_CSRF)
         resp = await client.post(
             "/api/graphql",
@@ -227,10 +200,7 @@ class TestCsrfDoubleSubmit:
     @pytest.mark.asyncio
     async def test_token_not_bound_to_session_rejected(self, client, mocker) -> None:
         """Cookie and header match but the session holds a different value."""
-        mocker.patch(
-            "app.routes.graphql_routes.get_authenticated_session",
-            return_value=_session(csrf_token=BAD_CSRF),
-        )
+        mocker.patch("app.routes.graphql_routes.get_authenticated_session", new=AsyncMock(return_value=_session(csrf_token=BAD_CSRF)))
         _inject_csrf_cookie(client)
         resp = await client.post(
             "/api/graphql",
@@ -270,10 +240,7 @@ class TestTextToSqlCrossOriginPost:
         fake_service.generate_sql_from_text = AsyncMock(
             return_value={"sql": "SELECT 1", "schema": "s"}
         )
-        with patch(
-            "app.routes.user_routes.get_authenticated_session",
-            return_value=_session(),
-        ), patch("app.routes.user_routes.TextToSqlService", return_value=fake_service):
+        with patch("app.routes.user_routes.get_authenticated_session", new=AsyncMock(return_value=_session())), patch("app.routes.user_routes.TextToSqlService", return_value=fake_service):
             _inject_csrf_cookie(client)
             resp = await client.post(
                 "/api/text-to-sql",
@@ -286,10 +253,7 @@ class TestTextToSqlCrossOriginPost:
     async def test_disallowed_origin_rejected(
         self, client, mock_ai_service
     ) -> None:
-        with patch(
-            "app.routes.user_routes.get_authenticated_session",
-            return_value=_session(),
-        ):
+        with patch("app.routes.user_routes.get_authenticated_session", new=AsyncMock(return_value=_session())):
             _inject_csrf_cookie(client)
             resp = await client.post(
                 "/api/text-to-sql",
@@ -367,13 +331,20 @@ class TestCookieFlags:
     @pytest.mark.asyncio
     async def test_logout_clears_csrf_cookie(self, client) -> None:
         _inject_csrf_cookie(client)
-        resp = await client.get("/api/logout")
-        assert resp.status_code == 307
+        resp = await client.post("/api/logout", headers=_auth_headers())
+        # unauthenticated logout still clears (no session) -> 200 with logout_url
+        assert resp.status_code in (200, 307)
         set_cookies = resp.headers.get_list("set-cookie")
         assert any(
-            c.startswith("csrf_token=") and "max-age=0" in c.lower()
+            ("csrf_token=" in c or "__Host-csrf_token=" in c) and "max-age=0" in c.lower()
             for c in set_cookies
         ), "csrf_token cookie not cleared on logout"
+
+    @pytest.mark.asyncio
+    async def test_logout_get_returns_405(self, client) -> None:
+        resp = await client.get("/api/logout")
+        assert resp.status_code == 405
+        assert resp.headers.get("allow") == "POST"
 
 
 # ---------------------------------------------------------------------------

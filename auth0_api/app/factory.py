@@ -7,6 +7,7 @@ from app.config.settings import settings
 from app.config.logging import configure_logging, get_logger
 from app.middleware.setup import setup_middlewares
 from app.routes import auth_routes, graphql_routes, health_routes, user_routes
+from app.auth.session_store import validate_session_store
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,13 @@ def create_app() -> FastAPI:
         version=settings.APP_VERSION,
         description="Auth API for SQL Query Executor platform",
     )
+
+    # Validate session store config before wiring middlewares
+    try:
+        validate_session_store()
+    except RuntimeError as exc:
+        logger.error("Session store configuration error: %s", exc)
+        raise
 
     # Setup middlewares (CORS, Sessions)
     setup_middlewares(app)

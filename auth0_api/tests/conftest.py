@@ -1,9 +1,15 @@
+import os
 import pytest
 import asyncio
 from typing import AsyncGenerator, Generator
 from fastapi import FastAPI
 from httpx import AsyncClient, ASGITransport
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Tests use in-memory fallback without Redis; run as non-production
+os.environ.setdefault("ENVIRONMENT", "test")
+# Ensure no Redis requirement in tests
+os.environ.pop("REDIS_URL", None)
 
 from app.factory import create_app
 from app.services.ai_service import AIService

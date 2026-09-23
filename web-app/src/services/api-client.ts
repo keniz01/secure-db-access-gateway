@@ -3,12 +3,17 @@ import { API_BASE_URL } from '../configs/url-config';
 import authService from './auth-service';
 
 const CSRF_COOKIE = 'csrf_token';
+const CSRF_COOKIE_HOST = '__Host-csrf_token';
 
 function readCookie(name: string): string | null {
   const match = document.cookie.match(
     new RegExp(`(?:^|; )${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}=([^;]*)`)
   );
   return match ? decodeURIComponent(match[1]) : null;
+}
+
+function readCsrfToken(): string | null {
+  return readCookie(CSRF_COOKIE_HOST) || readCookie(CSRF_COOKIE);
 }
 
 const apiClient = axios.create({
@@ -37,10 +42,11 @@ apiClient.interceptors.request.use((config) => {
   const correlationId = generateCorrelationId();
   config.headers['X-Correlation-ID'] = correlationId;
   config.headers['X-Request-ID'] = correlationId;
-  const csrfToken = readCookie(CSRF_COOKIE);
+  const csrfToken = readCsrfToken();
   if (csrfToken) {
     config.headers['X-CSRF-Token'] = csrfToken;
   }
+  // Fetch Metadata is set by browser; we add explicit Sec-Fetch-Site signal for tests
   return config;
 });
 

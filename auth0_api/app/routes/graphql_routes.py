@@ -16,7 +16,7 @@ router = APIRouter(prefix="/api", tags=["graphql"])
 @router.post("/graphql")
 async def proxy_graphql(request: Request):
     """Forward GraphQL using the access token kept in the server-side session."""
-    session = get_authenticated_session(request)
+    session = await get_authenticated_session(request)
     access_token = session.get("access_token") if session else None
     if not isinstance(access_token, str) or not access_token:
         return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=ErrorResponse(

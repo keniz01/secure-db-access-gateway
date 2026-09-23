@@ -20,8 +20,14 @@ class TestLoginFlow:
             response = await client.get("/api/login")
             assert response.status_code == 307
             assert response.headers["location"] == "https://test.auth0.com/authorize"
+            # OAuth 2.1 PKCE + nonce
+            call_kwargs = mock_auth0.authorize_redirect.call_args[1]
+            assert "code_challenge" in call_kwargs
+            assert call_kwargs["code_challenge_method"] == "S256"
+            assert "nonce" in call_kwargs
 
     async def test_login_with_valid_custom_redirect_origin(self, client):
+        """OAuth 2.1: redirect_origin param is deprecated, static redirect_uri used."""
         mock_oauth = MagicMock()
         mock_auth0 = MagicMock()
         mock_oauth.auth0 = mock_auth0
@@ -32,10 +38,13 @@ class TestLoginFlow:
         with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
             response = await client.get("/api/login?redirect_origin=http://localhost:5173")
             assert response.status_code == 307
-            # Verify authorize_redirect was called with redirect_uri ending in /auth
             mock_auth0.authorize_redirect.assert_called_once()
             call_args = mock_auth0.authorize_redirect.call_args
-            assert call_args[0][1] == "http://localhost:5173/auth"
+            # Static redirect_uri (OAuth 2.1) - param is ignored
+            assert call_args[0][1].endswith("/auth")
+            assert "code_challenge" in call_args[1]
+            assert call_args[1]["code_challenge_method"] == "S256"
+            assert "nonce" in call_args[1]
 
     async def test_login_with_rejected_custom_redirect_origin(self, client):
         mock_oauth = MagicMock()
@@ -48,9 +57,10 @@ class TestLoginFlow:
         with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
             response = await client.get("/api/login?redirect_origin=http://malicious.com")
             assert response.status_code == 307
-            # Verify rejected origin falls back to allowed frontend origin
             call_args = mock_auth0.authorize_redirect.call_args
             assert "malicious.com" not in call_args[0][1]
+            # PKCE still required even for rejected origin
+            assert call_args[1]["code_challenge_method"] == "S256"
 
     async def test_login_error_handling(self, client):
         mock_oauth = MagicMock()
@@ -179,13 +189,18 @@ class TestLogoutFlow:
             return_value=mock_session,
         )
 
-        response = await client.get("/api/logout")
-        assert response.status_code == 307
-        location = response.headers["location"]
-        assert "logout" in location
-        assert "client_id=" in location
-        assert "returnTo=" in location
+        response = await client.post("/api/logout")
+        assert response.status_code == 200
+        body = response.json()
+        assert "logout_url" in body
+        assert "logout" in body["logout_url"]
+        assert "client_id=" in body["logout_url"]
+        assert "returnTo=" in body["logout_url"]
         assert mock_session == {}
+
+    async def test_logout_get_returns_405(self, client):
+        response = await client.get("/api/logout")
+        assert response.status_code == 405
 
 
 @pytest.mark.asyncio
