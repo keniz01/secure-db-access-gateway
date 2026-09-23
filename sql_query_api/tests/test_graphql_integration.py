@@ -615,5 +615,13 @@ class TestSecurityHeadersMiddleware:
         response = client.post("/graphql", json={"query": "query { ping }"}, headers=auth_headers())
         assert response.headers.get("X-Content-Type-Options") == "nosniff"
         assert response.headers.get("X-Frame-Options") == "DENY"
-        assert response.headers.get("X-XSS-Protection") == "1; mode=block"
+        # X-XSS-Protection is deprecated and intentionally removed (replaced by CSP)
+        assert response.headers.get("X-XSS-Protection") is None
         assert "max-age=" in response.headers.get("Strict-Transport-Security", "")
+        assert "preload" in response.headers.get("Strict-Transport-Security", "")
+        csp = response.headers.get("Content-Security-Policy", "")
+        assert "frame-ancestors 'none'" in csp
+        assert "default-src 'none'" in csp
+        assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
+        assert "camera=()" in response.headers.get("Permissions-Policy", "")
+        assert response.headers.get("Cross-Origin-Opener-Policy") == "same-origin"

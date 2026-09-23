@@ -16,6 +16,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
   otel-lgtm:
     image: grafana/otel-lgtm:latest
     ports:
@@ -46,7 +59,10 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,https://localhost:5173,https://localhost:8443,http://web-app:5173}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: auth0-api
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
     depends_on:
+      redis:
+        condition: service_healthy
       sql_query_api:
         condition: service_healthy
       otel-lgtm:

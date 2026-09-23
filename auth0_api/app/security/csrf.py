@@ -34,10 +34,27 @@ from app.utils.helpers import normalize_origin
 
 #: Cookie the server stamps with the double-submit token. Not HttpOnly on
 #: purpose: the SPA must be able to read it back and echo it in a header.
+#: In production (Secure) uses __Host- prefix per OWASP Cookie Prefixes (requires Secure + Path=/ + no Domain).
 CSRF_COOKIE_NAME = "csrf_token"
+CSRF_COOKIE_NAME_HOST = "__Host-csrf_token"
 #: Header the SPA uses to echo the double-submit token.
 CSRF_HEADER_NAME = "X-CSRF-Token"
 CSRF_FAILURE_DETAIL = "CSRF protection failed"
+
+
+def _csrf_cookie_name() -> str:
+    """Return __Host- prefixed name in production (Secure), plain otherwise for http dev."""
+    try:
+        if settings.SESSION_COOKIE_SECURE:
+            return CSRF_COOKIE_NAME_HOST
+    except Exception:
+        pass
+    return CSRF_COOKIE_NAME
+
+
+def _get_csrf_cookie_name() -> str:
+    # Alias for tests that import CSRF_COOKIE_NAME directly
+    return _csrf_cookie_name()
 
 
 def get_allowed_origins() -> list[str]:
@@ -101,8 +118,13 @@ def csrf_failure_reason(request: Request, session: dict[str, Any] | None) -> str
         return CSRF_FAILURE_DETAIL
     if not request_origin_is_allowed(request):
         return CSRF_FAILURE_DETAIL
+    # Fetch Metadata defense-in-depth: reject cross-site (Sec-Fetch-Site) when present
+    fetch_site = request.headers.get("sec-fetch-site")
+    if fetch_site and fetch_site.lower() not in {"same-origin", "same-site"}:
+        return CSRF_FAILURE_DETAIL
 
-    cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
+    # Support both __Host- and plain cookie names (prod vs dev)
+    cookie_token = request.cookies.get(_csrf_cookie_name()) or request.cookies.get(CSRF_COOKIE_NAME)
     header_token = request.headers.get(CSRF_HEADER_NAME)
     if not cookie_token or not header_token:
         return CSRF_FAILURE_DETAIL
@@ -123,12 +145,13 @@ def set_csrf_cookie(response: Response, session: dict[str, Any] | None) -> None:
     Written next to the session cookie whenever a session is created so the SPA
     can read it for the header echo. SameSite/secure flags mirror the session
     cookie; the value is additionally bound to the server-side session.
+    Uses __Host- prefix in production (Secure).
     """
     token = (session or {}).get("csrf_token")
     if not token:
         return
     response.set_cookie(
-        key=CSRF_COOKIE_NAME,
+        key=_csrf_cookie_name(),
         value=str(token),
         max_age=settings.SESSION_MAX_AGE,
         path="/",
@@ -140,9 +163,10 @@ def set_csrf_cookie(response: Response, session: dict[str, Any] | None) -> None:
 
 def clear_csrf_cookie(response: Response) -> None:
     """Expire the double-submit cookie (used on logout)."""
-    response.delete_cookie(
-        key=CSRF_COOKIE_NAME,
-        path="/",
-        secure=settings.SESSION_COOKIE_SECURE,
-        samesite="lax",
-    )
+    for name in {_csrf_cookie_name(), CSRF_COOKIE_NAME}:
+        response.delete_cookie(
+            key=name,
+            path="/",
+            secure=settings.SESSION_COOKIE_SECURE,
+            samesite="lax",
+        )

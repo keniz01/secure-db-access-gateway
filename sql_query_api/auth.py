@@ -92,13 +92,28 @@ def build_principal_from_claims(claims: dict[str, Any] | None) -> Principal | No
     )
 
 
+_jwks_client: PyJWKClient | None = None
+_jwks_client_url: str | None = None
+
+
+def _get_jwks_client() -> PyJWKClient:
+    """Singleton JWKS client with key caching (avoids per-request fetch)."""
+    global _jwks_client, _jwks_client_url
+    url = f"https://{AUTH0_DOMAIN}/.well-known/jwks.json"
+    if _jwks_client is None or _jwks_client_url != url:
+        # cache_keys=True enables in-memory JWK set caching per PyJWT docs
+        _jwks_client = PyJWKClient(url, cache_keys=True)
+        _jwks_client_url = url
+    return _jwks_client
+
+
 def validate_access_token(token: str | None) -> dict[str, Any] | None:
     """Verify an Auth0 bearer token and return its validated claims."""
     if not token or not AUTH0_DOMAIN or not AUTH0_AUDIENCE:
         return None
 
     try:
-        jwks_client = PyJWKClient(f"https://{AUTH0_DOMAIN}/.well-known/jwks.json")
+        jwks_client = _get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
         claims = jwt.decode(
             token,
@@ -106,7 +121,18 @@ def validate_access_token(token: str | None) -> dict[str, Any] | None:
             algorithms=["RS256"],
             audience=AUTH0_AUDIENCE,
             issuer=AUTH0_ISSUER or f"https://{AUTH0_DOMAIN}/",
+            leeway=10,
+            options={"require": ["exp", "iss", "aud", "sub"]},
         )
+        # Scope is requested but RS authorizes via policy engine; if scope is
+        # present, ensure it is a well-formed string (defense against malformed tokens)
+        scope_val = claims.get("scope") or claims.get("scp")
+        if scope_val is not None and not isinstance(scope_val, str):
+            return None
+        # Optional strict scope check: uncomment to require specific scopes
+        # expected = {"openid", "profile", "email"}
+        # if scope_val and not expected.intersection(set(scope_val.split())):
+        #     return None
         return claims
     except (InvalidTokenError, ValueError, TypeError):
         return None

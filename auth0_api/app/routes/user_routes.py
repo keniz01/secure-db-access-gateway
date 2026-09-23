@@ -21,9 +21,9 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api", tags=["user"])
 
 
-def get_authenticated_session(request: Request) -> dict | None:
+async def get_authenticated_session(request: Request) -> dict | None:
     """Load the server-side session referenced by the opaque cookie identifier."""
-    session = get_session(request.session.get("session_id"))
+    session = await get_session(request.session.get("session_id"))
     if session:
         return session
     # Compatibility for signed sessions created before this release; no new login writes this form.
@@ -31,8 +31,8 @@ def get_authenticated_session(request: Request) -> dict | None:
     return {"user": user} if user else None
 
 
-def get_authenticated_user(request: Request) -> dict | None:
-    session = get_authenticated_session(request)
+async def get_authenticated_user(request: Request) -> dict | None:
+    session = await get_authenticated_session(request)
     return session.get("user") if session else None
 
 
@@ -88,7 +88,7 @@ async def get_user(request: Request):
     Returns:
         User information or 401 if not authenticated
     """
-    session = get_authenticated_session(request)
+    session = await get_authenticated_session(request)
     user = session.get("user") if session else None
 
     if not user:
@@ -111,7 +111,7 @@ async def get_user(request: Request):
 @router.get("/admin/overview")
 async def get_admin_overview(request: Request):
     """Return a minimal admin overview for this org, backed by Prometheus/Grafana usage data."""
-    session = get_authenticated_session(request)
+    session = await get_authenticated_session(request)
     user = session.get("user") if session else None
     if not user:
         return JSONResponse(
@@ -164,7 +164,7 @@ async def get_dashboard(request: Request):
     Returns:
         Dashboard data with greeting message or 401 if not authenticated
     """
-    session = get_authenticated_session(request)
+    session = await get_authenticated_session(request)
     user = session.get("user") if session else None
 
     if not user:
@@ -227,7 +227,7 @@ async def text_to_sql(request: Request, body: TextToSqlRequest):
     Returns:
         Generated SQL and optionally query results, or 401 if not authenticated
     """
-    session = get_authenticated_session(request)
+    session = await get_authenticated_session(request)
     user = session.get("user") if session else None
 
     if not user:

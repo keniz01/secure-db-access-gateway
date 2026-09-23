@@ -19,26 +19,29 @@ async def test_login_redirect(client, mocker):
     mock_oauth = MagicMock()
     mock_auth0 = MagicMock()
     mock_oauth.auth0 = mock_auth0
-    # authorize_redirect returns a RedirectResponse
     from fastapi.responses import RedirectResponse
-    # RedirectResponse defaults to 307
     mock_auth0.authorize_redirect = AsyncMock(return_value=RedirectResponse(url="https://auth0.com/login"))
     
     with patch("app.routes.auth_routes.get_oauth_instance", return_value=mock_oauth):
         response = await client.get("/api/login")
-        # FastAPI's RedirectResponse defaults to 307
         assert response.status_code == 307
         assert response.headers["location"] == "https://auth0.com/login"
 
 @pytest.mark.asyncio
 async def test_logout(client):
-    """Test logout clears session and redirects."""
-    # We don't necessarily need to mock the session clear here as it's handled by Starlette
+    """Test logout POST clears session and returns logout_url (CSRF-protected)."""
+    response = await client.post("/api/logout", headers={"Origin": ALLOWED_ORIGIN, "X-Requested-With": "XMLHttpRequest"})
+    assert response.status_code == 200
+    assert "logout_url" in response.json()
+    assert "auth0" in response.json()["logout_url"]
+
+
+@pytest.mark.asyncio
+async def test_logout_get_returns_405(client):
+    """GET /api/logout is deprecated — must be POST per OWASP ASVS 4.3.1."""
     response = await client.get("/api/logout")
-    # RedirectResponse defaults to 307
-    assert response.status_code == 307
-    assert "logout" in response.headers["location"]
-    assert "auth0" in response.headers["location"]
+    assert response.status_code == 405
+    assert response.headers.get("allow") == "POST"
 
 @pytest.mark.asyncio
 async def test_auth_callback_success(client, mocker):
@@ -58,7 +61,6 @@ async def test_auth_callback_success(client, mocker):
     }
     mock_auth0.authorize_access_token = AsyncMock(return_value=token)
     
-    # Mock session
     mock_session = {}
     mocker.patch("starlette.requests.Request.session", new_callable=mocker.PropertyMock, return_value=mock_session)
     
@@ -69,7 +71,9 @@ async def test_auth_callback_success(client, mocker):
         assert "access_token" not in data
         assert data["user"]["email"] == "test@example.com"
         assert set(mock_session) == {"session_id"}
-        assert get_session(mock_session["session_id"])["access_token"] == "test-token"
+        sess = await get_session(mock_session["session_id"])
+        assert sess["access_token"] == "test-token"
+        await revoke_session(mock_session["session_id"])
 
 @pytest.mark.asyncio
 async def test_auth_callback_error(client, mocker):
@@ -133,6 +137,7 @@ async def test_auth_callback_reads_tenant_claim_from_verified_id_token(client, m
         response = await client.get("/api/auth?code=test-code")
 
     assert response.status_code == 200
+    await revoke_session(mock_session.get("session_id"))
 
 
 @pytest.mark.asyncio
@@ -150,10 +155,10 @@ async def test_graphql_proxy_rejects_requests_without_csrf_header(client):
     client.cookies.set(CSRF_COOKIE_NAME, CSRF_TOKEN)
     with patch(
         "app.routes.graphql_routes.get_authenticated_session",
-        return_value={
+        new=AsyncMock(return_value={
             "access_token": "test-access-token",
             "csrf_token": CSRF_TOKEN,
-        },
+        }),
     ):
         response = await client.post(
             "/api/graphql",
@@ -170,7 +175,7 @@ async def test_graphql_proxy_forwards_session_access_token(client, mocker):
     """The SQL API receives the authenticated user's bearer token."""
     mocker.patch(
         "app.routes.graphql_routes.get_authenticated_session",
-        return_value={"access_token": "test-access-token", "csrf_token": CSRF_TOKEN},
+        new=AsyncMock(return_value={"access_token": "test-access-token", "csrf_token": CSRF_TOKEN}),
     )
 
     upstream = MagicMock()
@@ -205,8 +210,8 @@ async def test_graphql_proxy_forwards_session_access_token(client, mocker):
 async def test_auth_callback_rotates_previous_server_session(client, mocker):
     """A fresh login revokes the previously issued server-side session."""
     old_user = {"id": "test-sub", "email": "test@example.com", "name": "Test User", "org_id": "org-1", "roles": []}
-    old_session_id = create_session(old_user, "old-access-token", ttl_seconds=3600)
-    assert get_session(old_session_id) is not None
+    old_session_id = await create_session(old_user, "old-access-token", ttl_seconds=3600)
+    assert await get_session(old_session_id) is not None
 
     mock_oauth = MagicMock()
     mock_auth0 = MagicMock()
@@ -228,11 +233,10 @@ async def test_auth_callback_rotates_previous_server_session(client, mocker):
         response = await client.get("/api/auth?code=test-code")
 
     assert response.status_code == 200
-    # The previous session must be revoked and replaced by a fresh one.
-    assert get_session(old_session_id) is None
+    assert await get_session(old_session_id) is None
     new_session_id = mock_session.get("session_id")
     assert new_session_id and new_session_id != old_session_id
-    assert get_session(new_session_id)["access_token"] == "new-token"
+    sess = await get_session(new_session_id)
+    assert sess["access_token"] == "new-token"
 
-    # Clean up so the module-level session store stays hermetic.
-    revoke_session(new_session_id)
+    await revoke_session(new_session_id)

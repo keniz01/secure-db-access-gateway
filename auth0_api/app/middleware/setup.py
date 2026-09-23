@@ -56,7 +56,8 @@ def setup_cors_middleware(app: FastAPI):
         max_age=3600,
     )
     
-    # Security headers middleware
+    # Security headers middleware — iron-clad per OWASP ASVS 14.4 + CSP Cheat Sheet
+    # CSP is authoritative at nginx in prod, but FastAPI also emits it for direct dev (uvicorn) and tests.
     @app.middleware("http")
     async def add_security_headers(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
@@ -64,8 +65,18 @@ def setup_cors_middleware(app: FastAPI):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["X-XSS-Protection"] = "1; mode=block"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
+            "connect-src 'self' https://localhost:8443 https://localhost:5173 https://openrouter.ai; "
+            "img-src 'self' data:; font-src 'self' data:; upgrade-insecure-requests"
+        )
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         return response
 
 
@@ -110,6 +121,11 @@ def setup_correlation_middleware(app: FastAPI):
             reset_current_correlation_id(token)
 
 
+def _session_cookie_name() -> str:
+    # __Host- requires Secure + Path=/ + no Domain — enforced by SessionMiddleware
+    return "__Host-gateway_session" if settings.SESSION_COOKIE_SECURE else "gateway_session"
+
+
 def setup_session_middleware(app: FastAPI):
     """
     Configure session middleware for OAuth state management.
@@ -120,12 +136,13 @@ def setup_session_middleware(app: FastAPI):
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.APP_SECRET_KEY,
-        session_cookie="gateway_session",
+        session_cookie=_session_cookie_name(),
         max_age=settings.SESSION_MAX_AGE,
         same_site="lax",
         https_only=settings.SESSION_COOKIE_SECURE,
+        path="/",
     )
-    logger.debug("Session middleware configured")
+    logger.debug("Session middleware configured: cookie=%s secure=%s", _session_cookie_name(), settings.SESSION_COOKIE_SECURE)
 
 
 def setup_middlewares(app: FastAPI):

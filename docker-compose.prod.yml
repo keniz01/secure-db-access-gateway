@@ -19,8 +19,20 @@ services:
       - "80:80"
       - "443:443"
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   auth0_api:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/auth0-api:${IMAGE_TAG:-latest}
+    environment:
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
 
   sql_query_api:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/sql-query-api:${IMAGE_TAG:-latest}
