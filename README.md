@@ -103,6 +103,8 @@ This starts:
 - Auth0 API: http://localhost:8001
 - SQL Query API: http://localhost:8002
 - Nginx gateway (HTTPS, serves the web app + APIs): https://localhost:8443 (plaintext on :8080 redirects to HTTPS)
+- Redis: redis://redis:6379/0 (session store, mandatory in prod)
+- OPA: http://opa:8181 (expose only, policy evaluation)
 - OTEL/LGTM stack: http://localhost:3000
 
 Browse the web app at **https://localhost:8443** — the SPA is served through the
@@ -122,23 +124,15 @@ CA (or set up ACME).
 #### 1) SQL Query API
 
 ```bash
-cd sql_query_api
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
-python main.py
+cd sql_query_api && uv sync && uv run uvicorn main:app --reload --port 8002
+# or: pip install -e ../shared && pip install -e . && ENVIRONMENT=dev python main.py
 ```
 
 #### 2) Auth0 API
 
 ```bash
-cd auth0_api
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e .
-python main.py
+cd auth0_api && uv sync && uv run uvicorn main:app --reload --port 8001
+# or: pip install -e ../shared && pip install -e . && ENVIRONMENT=dev python main.py
 ```
 
 #### 3) Web app

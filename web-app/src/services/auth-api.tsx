@@ -5,9 +5,8 @@ import apiClient from "./api-client";
 
 const AuthApi = {
   login: () => {
-    const origin = window.location.origin;
-    const redirectUrl = `${API_BASE_URL}/api/login?redirect_origin=${encodeURIComponent(origin)}`;
-    window.location.href = redirectUrl;
+    // OAuth 2.1: static OAUTH_REDIRECT_URI (server ignores redirect_origin)
+    window.location.href = `${API_BASE_URL}/api/login`;
   },
   
   logout: async (queryClient: QueryClient) => {

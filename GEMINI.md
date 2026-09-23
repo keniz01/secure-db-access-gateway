@@ -35,20 +35,14 @@ The Secure DB Access Gateway is a secure, full-stack application designed to saf
 
 #### 1. SQL Query API & CLI Runner
 ```bash
-cd sql_query_api
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py  # Runs API on port 8002
+cd sql_query_api && uv sync && uv run uvicorn main:app --reload --port 8002
+# or: pip install -e ../shared && pip install -e . && ENVIRONMENT=dev python main.py
 ```
 
 #### 2. Auth0 API
 ```bash
-cd auth0_api
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python main.py  # Runs API on port 8001
+cd auth0_api && uv sync && uv run uvicorn main:app --reload --port 8001
+# or: pip install -e ../shared && pip install -e . && ENVIRONMENT=dev python main.py
 ```
 
 #### 3. Web Application

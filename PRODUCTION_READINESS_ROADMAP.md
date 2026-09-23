@@ -1,6 +1,6 @@
 # Production Readiness Roadmap
 
-This roadmap tracks the work required to move Secure DB Access Gateway from a functional prototype/build to a production-ready system. Status last verified **2026-09-13**.
+This roadmap tracks the work required to move Secure DB Access Gateway from a functional prototype/build to a production-ready system. Status last verified **2026-09-23**.
 
 ## Current status summary
 
@@ -8,7 +8,7 @@ The architecture, governed query pipeline, and core security controls are **impl
 
 Verified facts as of today:
 
-- **All backend tests pass**: SQL Query API `126 passed`, Auth0 API `60 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint/typecheck/build + Playwright e2e on every PR.
+- **All backend tests pass**: SQL Query API `482 passed`, Auth0 API `116 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint/typecheck/build + Playwright e2e on every PR.
 - **SQL safety check is fixed and pinned**: `sqlglot>=30.0.0,<31` (pyproject.toml), strict AST read-only analysis with bypass tests (`pg_read_file`, `dblink_connect`, `pg_write_file`, aliases/derived expressions).
 - **Read-only is enforced at every layer**: `SET TRANSACTION READ ONLY` for PostgreSQL (`repositories/sql_query_repository.py:207`), SQLite forced to `mode=ro` (both in connection-string enforcement and startup validation in `dependencies/dependency_container.py:104`), and the governed pipeline applies safety/AST validation, tenant resolution, auto-LIMIT, masking, and audit.
 - **Identity/tenant hardening shipped**: authenticated `Principal` is the sole identity source, `X-User-*`/`X-Org-Id`/`X-Tenant-Id` headers are cleared at the nginx edge and never trusted, tenant claim is required, cookie is HttpOnly/Secure/SameSite via env. Spoofing + cross-tenant regression suites pass.
@@ -93,7 +93,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Acceptance: platform can self-diagnose unhealthy components and fail predictably
 
 ### 2.3 Add operational security controls — DONE (carry-over noted)
-- [x] Restrict CORS to approved production origins only (`ALLOWED_ORIGINS` env, credentialed)
+- [x] Restrict CORS to approved production origins only (`CORS_ORIGINS` env, credentialed; `CORS_ORIGINS` shared with CSRF allowlist `csrf.py`)
 - [x] Require TLS for all cross-service communications in production (termination at edge; internal traffic never exposed publicly)
 - [x] Add WAF/reverse-proxy hardening rules and request limits (edge `limit_req` zones for API and auth paths)
 - [x] Review and document NGINX exposure policy for admin and API endpoints (`nginx/nginx.conf` + `DOCKER_README.md`)

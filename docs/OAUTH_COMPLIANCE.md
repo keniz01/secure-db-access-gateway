@@ -25,7 +25,7 @@ Scope: `auth0_api` (Auth0 confidential client, BFF) + `sql_query_api` (Resource 
 | JWT RS256, `aud`/`iss`/`exp`/`sub` + leeway | 7519 | ✅ | `sql_query_api/auth.py: _get_jwks_client` singleton `cache_keys=True` + `jwt.decode(..., leeway=10, require=[exp,iss,aud,sub])` |
 | Tenant claim mandatory | app zero-trust | ✅ | `TENANT_ID_CLAIM` `sql_query_api/auth.py:21` + `auth_routes.py:167` |
 | Token revocation on logout | 7009 | ✅ | `auth_routes.py: _revoke_token_at_auth0` best-effort before `revoke_session` |
-| Shared session store for scale | — | ✅ | `session_store.py: REDIS_URL / SESSION_STORE=redis` + `validate_session_store()` |
+| Shared session store for scale | — | ✅ | `session_store.py: REDIS_URL mandatory in prod` + `validate_session_store()` fail-closed (`docker-compose.yml:62` redis) |
 | Scope validation (optional) | 6749 §3.3 | ⚠️ noted | RS validates `scope` type if present; fine-grained auth via policy engine `services/policy_engine.py` |
 
 ## How to Verify
@@ -43,5 +43,5 @@ curl -i "http://localhost:8001/api/login?redirect_origin=https://evil.com"
 
 - [ ] Register `OAUTH_REDIRECT_URI` verbatim in Auth0 > Applications > Allowed Callback URLs (e.g. `https://app.example.com/auth`, `https://localhost:8443/auth` for dev)
 - [ ] Remove `redirect_origin` query usage from SPA/clients
-- [ ] Set `REDIS_URL` or `GATEWAY_SINGLE_PROCESS=1` in production
+- [ ] Set `REDIS_URL` in production (`REDIS_URL=redis://redis:6379/0` default in `docker-compose.yml:62`; `session_store.py:63` fails fast if missing)
 - [ ] Ensure `AUTH0_AUDIENCE` / `AUTH0_DOMAIN` identical between `auth0_api` and `sql_query_api`

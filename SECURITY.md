@@ -67,17 +67,19 @@ CORS_ORIGINS="https://yourdomain.com,https://www.yourdomain.com"
 ```
 
 **Files Modified:**
-- `sql_query_api/main.py`
+- `sql_query_api/app_factory.py`
 - `auth0_api/app/middleware/setup.py`
 - `auth0_api/app/config/settings.py`
+- `auth0_api/app/security/csrf.py` (shared allowlist `get_allowed_origins()`)
 
 ### 3. HTTP Security Headers ✅
 
-#### Response Headers
+#### Response Headers (authoritative at `nginx/nginx.conf:102`, mirrored in FastAPI for dev)
 - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing
-- **X-Frame-Options: DENY** - Prevents clickjacking attacks
-- **X-XSS-Protection: 1; mode=block** - Enables browser XSS filtering
-- **Strict-Transport-Security** - Enforces HTTPS (1 year max-age)
+- **X-Frame-Options: DENY** - Prevents clickjacking (supplemented by `Content-Security-Policy: frame-ancestors 'none'`)
+- **Content-Security-Policy** - BFF: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 ...; upgrade-insecure-requests`; API: `default-src 'none'; frame-ancestors 'none'` (`auth0_api/app/middleware/setup.py:68`, `sql_query_api/app_factory.py:82`)
+- **Strict-Transport-Security: max-age=31536000; includeSubDomains; preload** - Enforces HTTPS (1 year, preload)
+- **Referrer-Policy: strict-origin-when-cross-origin**, **Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()**, **Cross-Origin-Opener-Policy: same-origin**, **Cross-Origin-Embedder-Policy: require-corp**, **Cross-Origin-Resource-Policy: same-site**
 
 **Implementation:**
 ```python
@@ -86,10 +88,13 @@ async def add_security_headers(request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; ..."
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     return response
 ```
+`X-XSS-Protection` is intentionally not set (deprecated, replaced by CSP).
 
 ### 4. Input Validation & DoS Prevention ✅
 
@@ -104,7 +109,9 @@ async def add_security_headers(request, call_next):
 - Existing SQL safety checker: Prevents subqueries, CTEs, DDL, DML
 
 **Files Modified:**
-- `sql_query_api/routes/music_query_controller.py`
+- `sql_query_api/routes/sql_query_controller.py`
+- `sql_query_api/repositories/sql_validators/sql_safety_checker.py`
+- `sql_query_api/services/query_gateway.py`
 
 **Implementation:**
 ```python
@@ -326,16 +333,16 @@ curl -I http://localhost:8001/api/health
 
 ## Future Security Enhancements
 
-1. **Rate Limiting** - Implement per-IP/per-user rate limits
-2. **WAF Integration** - CloudFront, AWS WAF, or similar
-3. **API Key Management** - For third-party integrations
-4. **Audit Logging** - Comprehensive user action logging
-5. **Database Encryption** - At-rest encryption for sensitive data
-6. **Token Expiration** - JWT token refresh mechanism
-7. **MFA Support** - Multi-factor authentication option
-8. **SQL Query Caching** - With result encryption
-9. **Penetration Testing** - Regular security audits
-10. **Security Monitoring** - Real-time threat detection
+1. **WAF Integration** - CloudFront, AWS WAF, or similar
+2. **API Key Management** - For third-party integrations
+3. **Database Encryption** - At-rest encryption for sensitive data
+4. **Token Expiration** - JWT token refresh mechanism (silent renewal via `offline_access`)
+5. **MFA Support** - Multi-factor authentication option
+6. **SQL Query Caching** - With result encryption
+7. **Penetration Testing** - Regular security audits
+8. **Security Monitoring** - Real-time threat detection
+
+Already implemented (not future): edge rate limiting (`nginx/nginx.conf:11 nginx: api_limit 60r/m burst 20, auth_limit 5r/m burst 3`), comprehensive audit logging (`sql_query_api/services/audit`), RBAC + ABAC policy engine.
 
 ## Security Contact
 
