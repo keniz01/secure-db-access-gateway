@@ -19,16 +19,17 @@ document — the document is expected to drift with the system.
                       └──────┬───────────────┬────────────┬───────────┘
                              │               │            (proxied by auth0_api)
                              ▼               ▼            ▼
-                        web_app        auth0_api     sql_query_api
-                        (SPA :5173)    (FastAPI :8001)(FastAPI+GraphQL :8002)
+                         web_app        auth0_api     sql_query_api
+                         (SPA :5173)    (FastAPI :8001)(FastAPI+GraphQL :8002)
                              │               │            │
                              │               │            ├──> tenant DBs
                              │               ├──> Auth0   │     (Postgres / SQLite,
                              │               ├──> AI prov.│      TENANT_DATABASES_JSON)
                              │               └──> sql_query_api (server-to-server)
                              ▼
-                       otel-lgtm (Grafana/Loki/Prometheus/Tempo Observability)
+                        otel-lgtm (Grafana/Loki/Prometheus/Tempo Observability)
 ```
+*Note: `:5173` host-mapped only in dev (`docker-compose.yml`); prod (`docker-compose.prod.yml:43`) serves SPA solely via nginx `:443` (`ports: !override []`).*
 
 - **External dependencies** (owned by third parties): Auth0 (identity),
   AI provider (OpenRouter/Gemini — used for the optional AI greeting and

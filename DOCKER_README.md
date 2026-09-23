@@ -26,12 +26,13 @@ This project supports running the entire application stack using Docker Compose,
    ```
 
 This will start:
-- **Nginx** (reverse proxy / TLS edge) on ports 8080 (HTTP→HTTPS redirect) and 8443 (HTTPS) – proxies Auth0 API requests
-- Auth0 API on port 8001 (also reachable via nginx at https://localhost:8443/api)
-- SQL Query API on port 8002
-- Web App on port 5173
+- **Nginx** (reverse proxy / TLS edge) on ports 8080 (HTTP→HTTPS redirect) and 8443 (HTTPS) – serves SPA and proxies `/api/*` to Auth0 API
+- Auth0 API on port 8001 (reachable via nginx at https://localhost:8443/api; BFF proxies `/api/graphql` to SQL Query API)
+- SQL Query API on port 8002 (internal, via auth0_api)
+- Web App on port 5173 (dev, via nginx; not host-exposed in prod `docker-compose.prod.yml:43`)
+- Redis on 6379 (expose, session store), OPA on 8181 (expose), otel-lgtm on 3000/4317/4318/9090
 
-**Note**: PostgreSQL runs on your local machine, not in a container.
+**Note**: PostgreSQL is external via `host.docker.internal:5432` (see `.env.example` `DATABASE_URL` / `TENANT_DATABASES_JSON`), not a compose service.
 
 **TLS**: `scripts/bootstrap-dev.sh` generates a certificate signed by the
 mkcert local CA (`certs/web_tls_cert.pem` / `certs/web_tls_key.pem`). The first
@@ -45,8 +46,8 @@ stores session cookies with the `Secure` flag.
 ### Nginx (Reverse Proxy / TLS edge)
 - **Image**: nginx:alpine
 - **Ports**: 8080 (HTTP, redirects to HTTPS), 8443 (HTTPS)
-- **Role**: Terminates TLS and proxies `/api` requests from the web app to the Auth0 API service
-- **Config**: `./nginx/nginx.conf`
+- **Role**: Terminates TLS, serves SPA (`/` → `web_app:5173`), proxies `/api/*` → `auth0_api:8001`; auth0_api BFF then proxies `/api/graphql` → `sql_query_api:8002`
+- **Config**: `./nginx/nginx.conf` (HSTS preload, CSP, CORS, rate limits `auth_limit 5r/m`, `api_limit 60r/m`, correlation IDs)
 - **TLS certs**: bind-mounted from `certs/web_tls_cert.pem` and `certs/web_tls_key.pem`
 
 ### Auth0 API
@@ -61,8 +62,19 @@ stores session cookies with the `Secure` flag.
 
 ### Web App
 - **Build**: ./web-app
-- **Port**: 5173
-- **Environment**: API base URL configured for container networking
+- **Port**: 5173 (dev `docker-compose.yml:22` host-mapped; prod `docker-compose.prod.yml:43` has `ports: !override []` — served only via nginx :443)
+- **Environment**: `VITE_API_BASE_URL=https://localhost:8443` (dev) / `https://app.secure-db-access-gateway.org` (prod)
+
+### Redis
+- **Image**: `redis:7-alpine` on `6379` (expose)
+- **Role**: Shared session store (`REDIS_URL=redis://redis:6379/0`, mandatory in prod fail-closed `session_store.py:63`)
+
+### OPA
+- **Image**: `openpolicyagent/opa:latest` on `8181` (expose, not host-mapped)
+- **Role**: Policy bundle evaluation at `/v1/data/gateway/evaluate`, fail-closed when unreachable
+
+### otel-lgtm
+- **Image**: `grafana/otel-lgtm` on `3000`/`4317`/`4318`/`9090` (Grafana + OTLP)
 
 ## Secrets Management
 
@@ -213,12 +225,12 @@ docker compose up --build
 
 The Docker setup creates a complete development environment with:
 
-- **Nginx reverse proxy / TLS edge** – serves the web app SPA and proxies `https://localhost:8443/api` for auth; nginx terminates TLS and forwards to web_app:5173 / auth0_api
-- Isolated PostgreSQL database
-- Backend APIs with proper networking
-- Frontend served with hot reload
+- **Nginx reverse proxy / TLS edge** – serves SPA and proxies `https://localhost:8443/api` to auth0_api; auth0_api BFF holds JWT server-side and proxies GraphQL to sql_query_api
+- **Backend APIs** with proper networking (PostgreSQL external via `host.docker.internal`)
+- **Redis + OPA + otel-lgtm** sidecars
+- **Frontend** served with hot reload (dev) / via nginx (prod)
 - Env-file secret management
-- Health checks for database readiness
+- Health checks for all services
 
 ### Request flow (Auth API)
 

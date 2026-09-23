@@ -222,13 +222,13 @@ Each `(org_id, database_id)` gets dedicated resources — scales linearly with t
 | No token in URL, httpOnly BFF | ✅ | Server-side `session_store.py` + `gateway_session` |
 | Token revocation on logout | ✅ | RFC 7009 `POST /oauth/revoke` best-effort `auth_routes.py: _revoke_token_at_auth0` |
 | JWKS caching, clock leeway | ✅ | Singleton `PyJWKClient(cache_keys=True)` + `leeway=10` `sql_query_api/auth.py` |
-| Shared session store for scale | ✅ | `REDIS_URL` / `SESSION_STORE=redis` with `validate_session_store()` fail-closed |
+| Shared session store for scale | ✅ | `REDIS_URL` mandatory in prod (`validate_session_store()` fail-closed, `docker-compose.yml:62` `redis` + `.env.example:43`) |
 
 ## 10. Gaps & Hardening Opportunities
 
 | Area | Current State | Recommended Action | Priority |
 |------|---------------|-------------------|----------|
-| Session store persistence | Memory by default; Redis opt-in via `REDIS_URL` | Deploy Redis for prod multi-replica; set `REDIS_URL` | High (done: code ready, deploy pending) |
+| Session store persistence | Redis mandatory in prod (`REDIS_URL` required, `session_store.py:63` fail-closed); in-memory only for dev/CI (`ENVIRONMENT!=production`) | Redis service in `docker-compose.yml:7` + prod override; set `REDIS_URL` (default `redis://redis:6379/0`) | High (done) |
 | OAuth static redirect | Static `OAUTH_REDIRECT_URI`; legacy param ignored | Register exact URI in Auth0 dashboard, remove client `redirect_origin` usage | High (done) |
 | Per-user rate limiting | IP-only at nginx | Redis token-bucket keyed by `principal.user_id` | High |
 | Policy change propagation | OPA bundle (manual) | OPA Bundle API + CI/CD for policy-as-code | High |

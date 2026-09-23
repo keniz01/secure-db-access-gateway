@@ -15,10 +15,10 @@ The Auth0 API provides secure authentication and user management for the SQL Que
 
 ## 📋 Quick Links
 
-- **Getting Started?** → [QUICK_START.md](QUICK_START.md)
-- **Need Architecture Overview?** → [ARCHITECTURE.md](../ARCHITECTURE.md)
-- **Setting Up Development?** → [DEVELOPMENT.md](DEVELOPMENT.md)
-- **Documentation Index?** → [INDEX.md](INDEX.md)
+- **Architecture Overview** → [ARCHITECTURE.md](../ARCHITECTURE.md)
+- **Security Model** → [SECURITY.md](../SECURITY.md)
+- **OAuth 2.1 Compliance** → [docs/OAUTH_COMPLIANCE.md](../docs/OAUTH_COMPLIANCE.md)
+- **Runbooks** → [RUNBOOKS.md](../RUNBOOKS.md)
 
 ## 🚀 Quick Start
 
@@ -30,33 +30,26 @@ The Auth0 API provides secure authentication and user management for the SQL Que
 ### Setup (5 minutes)
 
 ```bash
-# Clone and navigate to directory
-cd auth0_api
+# From repo root — shared secrets must be installed first
+pip install -e ./shared
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Auth0 API (Python 3.12, uv)
+cd auth0_api && uv sync && uv run uvicorn main:app --reload --port 8001
+# Or: pip install -e . && python main.py (requires ENVIRONMENT=dev)
 
-# Install dependencies
-pip install -e .
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your Auth0 and API credentials
-
-# Run application
-python main.py
+# Or via Docker (recommended): see ../README.md and docker-compose.yml
+#   ./scripts/bootstrap-dev.sh && docker compose up --build
 ```
 
-The API will be available at `http://localhost:8001`
+The API will be available at `http://localhost:8001` (direct) or `https://localhost:8443/api/*` via nginx.
 
 ## 📌 API Endpoints
 
 ### Authentication
 - `GET /api/health` - Health check
-- `GET /api/login` - Initiate Auth0 login flow
-- `GET /api/auth` - OAuth callback handler
-- `GET /api/logout` - Clear session and logout
+- `GET /api/login` - Initiate Auth0 login (Authorization Code + PKCE S256, static `OAUTH_REDIRECT_URI`)
+- `GET /api/auth` - OAuth callback handler (verifies PKCE verifier + nonce)
+- `POST /api/logout` - Clear session and logout (CSRF-protected; `GET /api/logout` returns 405)
 
 ### User
 - `GET /api/user` - Get authenticated user information
@@ -66,18 +59,16 @@ The API will be available at `http://localhost:8001`
 
 ```
 auth0_api/
-├── app/                      # Main application package
-│   ├── config/              # Settings and logging configuration
-│   ├── auth/                # Auth0 and OAuth setup
-│   ├── services/            # Business logic (AI service)
-│   ├── routes/              # API endpoints
-│   ├── middleware/          # CORS and session middleware
-│   ├── schemas/             # Request/response models
-│   ├── exceptions/          # Custom exception definitions
-│   └── utils/               # Helper functions
-├── main.py                  # Application entry point
-├── pyproject.toml           # Project dependencies
-└── Documentation files      # 8 comprehensive guides
+├── app/
+│   ├── config/              # settings.py, logging.py
+│   ├── auth/                # oauth.py, session_store.py (Redis)
+│   ├── security/            # csrf.py (__Host- + Sec-Fetch-Site)
+│   ├── middleware/          # setup.py (CORS, session, security headers, CSP)
+│   ├── routes/              # auth_routes.py, graphql_routes.py, user_routes.py, health_routes.py
+│   ├── services/            # ai_service.py, text_to_sql_service.py
+│   └── utils/               # helpers.py
+├── main.py
+└── pyproject.toml
 ```
 
 ## 🔧 Environment Variables
@@ -85,43 +76,41 @@ auth0_api/
 Required configuration (see `.env.example`):
 
 ```bash
-# Auth0 Configuration
-AUTH0_DOMAIN=your-auth0-domain
-AUTH0_CLIENT_ID=your-client-id
-AUTH0_CLIENT_SECRET=your-client-secret
+# Auth0 (required in production)
+AUTH0_DOMAIN=your-tenant.auth0.com
+AUTH0_CLIENT_ID=...
+AUTH0_CLIENT_SECRET=...
+AUTH0_AUDIENCE=https://secure-db-access-gateway-api
 
-# AI API Keys
-OPENROUTER_API_KEY=your-openrouter-api-key
-GEMINI_API_KEY=your-gemini-api-key
-EMBEDDING_DIMENSIONS=768
+# Session (required)
+APP_SECRET_KEY=  # openssl rand -hex 32
+SESSION_MAX_AGE=3600
+# OAUTH_REDIRECT_URI defaults to FRONTEND_URL + /auth (must be in Auth0 Allowed Callbacks)
+# REDIS_URL is required in production for shared sessions (fail-closed); e.g. redis://redis:6379/0
 
-Model identifiers are loaded from `AI_MODEL_FILE` and `EMBEDDING_MODEL_FILE`.
-
-# Session Management
-APP_SECRET_KEY=your-secret-key
-
-# Frontend Configuration
+# Frontend / CORS
+FRONTEND_URL=https://localhost:8443
 REACT_APP_URL=https://localhost:8443
-FRONTEND_URL=https://localhost:8443/dashboard
+CORS_ORIGINS=https://localhost:8443,http://localhost:5173
+SQL_QUERY_API_URL=http://sql_query_api:8002/graphql
 
-# Optional
-AUTH_LOG_LEVEL=INFO
+# AI (optional)
+OPENROUTER_API_KEY=...
+GEMINI_API_KEY=...
+EMBEDDING_DIMENSIONS=768
+AI_MODEL=nvidia/nemotron-3-super-120b-a12b:free
+
+# Env: ENVIRONMENT=production (fail-closed) or dev
 ```
+See `../.env.example` for full list.
 
 ## 📚 Documentation
 
-This project includes comprehensive documentation:
-
-| Document | Purpose | Read Time |
-|----------|---------|-----------|
-| [INDEX.md](INDEX.md) | Navigation guide for all docs | 5 min |
-| [QUICK_START.md](QUICK_START.md) | Getting started quickly | 5 min |
-| [ARCHITECTURE.md](../ARCHITECTURE.md) | Design and architecture | 15 min |
-| [DEVELOPMENT.md](DEVELOPMENT.md) | Development guide and patterns | 20 min |
-| [MIGRATION.md](MIGRATION.md) | How code was refactored | 15 min |
-| [STRUCTURE.md](STRUCTURE.md) | File organization reference | 10 min |
-| [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) | Refactoring details | 10 min |
-| [COMPLETION_CHECKLIST.md](COMPLETION_CHECKLIST.md) | Verification checklist | 10 min |
+- [ARCHITECTURE.md](../ARCHITECTURE.md) — design and multi-tenant data flow
+- [SECURITY.md](../SECURITY.md) — security headers, CORS, CSP, CSRF, DB least-privilege
+- [docs/OAUTH_COMPLIANCE.md](../docs/OAUTH_COMPLIANCE.md) — OAuth 2.1 / BCP 9700 matrix
+- [RUNBOOKS.md](../RUNBOOKS.md) — operator runbooks (linted via `scripts/check-runbooks.py`)
+- [AGENTS.md](../AGENTS.md) — service commands, env gotchas, OPA, nginx
 
 ## ✨ Key Features
 
@@ -171,26 +160,20 @@ The Auth0 API is the browser-facing backend-for-frontend: it holds the Auth0
 access token server-side and proxies governed queries to `sql_query_api` (which
 is never browser-reachable and authenticates with a bearer token only).
 
-**Browser session cookies** (`gateway_session` + `csrf_token`):
-- `gateway_session` carries only an opaque session id, signed with
+**Browser session cookies** (`__Host-gateway_session` / `__Host-csrf_token` in production, `gateway_session`/`csrf_token` in dev):
+- `__Host-gateway_session` carries only an opaque session id, signed with
   `APP_SECRET_KEY`. It is **HttpOnly** (never readable by JS), `SameSite=lax`,
-  and `Secure` when `SESSION_COOKIE_SECURE` is true (auto-forced in
-  production). `SESSION_MAX_AGE` controls the lifetime of both cookies and the
-  server-side session.
-- `csrf_token` is the double-submit CSRF value, readable by JS on purpose so
-  the SPA can echo it (see below).
+  `Secure`, `Path=/` (no Domain) via `__Host-` prefix in production. `SESSION_MAX_AGE` controls lifetime.
+- `__Host-csrf_token` is the double-submit CSRF value, readable by JS on purpose so
+  the SPA can echo it; also `__Host-` in production.
 
 **CSRF defense in depth** — every state-changing (POST) endpoint
-(`/api/graphql`, `/api/text-to-sql`) must clear all of these layers:
-1. `SameSite=lax` cookies — browsers already refuse to attach the session
-   cookie to cross-site POST submissions.
-2. **Origin/Referer validation** against the same allowlist CORS uses
-   (`app/security/csrf.py`). Requests with the session cookie but no trusted
-   Origin or Referer are rejected with `403 "CSRF protection failed"`.
-3. The `X-Requested-With: XMLHttpRequest` browser marker, sent by the SPA.
-4. A double-submit token: the server binds a random token to the session and
-   stamps it in a `csrf_token` cookie at login; the SPA echoes it as
-   `X-CSRF-Token`, and the server requires **cookie == header == session**.
+(`/api/graphql`, `/api/text-to-sql`, `POST /api/logout`) must clear all of these layers:
+1. `SameSite=lax` cookies (with `__Host-` prefix in prod) — browsers refuse to attach session to cross-site POST.
+2. **Origin/Referer validation** against the same allowlist CORS uses (`app/security/csrf.py` `get_allowed_origins()`); rejected with `403`.
+3. **Fetch Metadata** — `Sec-Fetch-Site` must be `same-origin` or `same-site` when present.
+4. The `X-Requested-With: XMLHttpRequest` browser marker, sent by the SPA.
+5. A double-submit token: server binds random token to Redis session and stamps `__Host-csrf_token` cookie at login; SPA echoes `X-CSRF-Token`, server requires **cookie == header == session** via `secrets.compare_digest`.
 
 **CORS review outcome** — `allow_origins` is an explicit allowlist shared with
 the Origin check (never `*`), `allow_credentials=True` is required for cookie
@@ -214,14 +197,9 @@ origin to `CORS_ORIGINS` — it automatically becomes valid for Origin checks to
 
 ## 🚀 Deployment
 
-The application is production-ready and supports:
-
-- **Docker containerization** - Included in structure
-- **Kubernetes deployment** - Health checks and graceful shutdown ready
-- **Cloud platforms** - Environment variable configuration
-- **Horizontal scaling** - Stateless design
-
-See [DEVELOPMENT.md](DEVELOPMENT.md#deployment-considerations) for deployment guide.
+- **Docker Compose** — `docker-compose.yml` (dev) and `docker-compose.prod.yml` (GHCR images, `REDIS_URL=redis://redis:6379/0`, TLS via nginx). See `../DOCKER_README.md`.
+- **Horizontal scaling** — stateless only with `REDIS_URL` (Redis mandatory in prod, `session_store.py` fail-closed); without Redis, in-memory store is single-process only.
+- **Health checks** — `/api/health`, `/readyz`, nginx `/nginx-health`.
 
 ## 📊 Refactoring Highlights
 
@@ -249,19 +227,7 @@ Full list: See `pyproject.toml`
 
 ## 📝 Development Workflow
 
-### Adding a New Feature
-
-1. Read [DEVELOPMENT.md](DEVELOPMENT.md) for patterns
-2. Create new module in appropriate directory
-3. Follow existing code style and structure
-4. Update documentation as needed
-
-### Common Tasks
-
-- **Add endpoint**: [DEVELOPMENT.md](DEVELOPMENT.md#adding-a-new-endpoint)
-- **Add service**: [DEVELOPMENT.md](DEVELOPMENT.md#adding-a-new-service)
-- **Configure settings**: [DEVELOPMENT.md](DEVELOPMENT.md#extending-configuration)
-- **Write tests**: [DEVELOPMENT.md](DEVELOPMENT.md#testing)
+See `../AGENTS.md` for service commands (`uv sync`, `pytest`, `npm run lint`), env gotchas, and OPA/nginx notes. Use `../scripts/bootstrap-dev.sh` for local setup.
 
 ## 🤝 Contributing
 
@@ -290,18 +256,13 @@ Part of the SQL Query Executor platform.
 - Check logs for rate limiting
 
 ### CORS errors
-- Ensure frontend origin is in `ALLOWED_ORIGINS`
-- Update `REACT_APP_URL` in `.env` to match frontend
+- Ensure frontend origin is in `CORS_ORIGINS` (not `ALLOWED_ORIGINS` — internal allowlist)
+- Update `REACT_APP_URL`/`FRONTEND_URL` in `.env` to match frontend and ensure `OAUTH_REDIRECT_URI` is in Auth0 Allowed Callbacks
 
-For more help, see [DEVELOPMENT.md](DEVELOPMENT.md#troubleshooting).
+Check `app/security/csrf.py` shared allowlist.
 
 ## 📞 Support
 
-- **Architecture questions**: See [ARCHITECTURE.md](../ARCHITECTURE.md)
-- **Setup issues**: See [DEVELOPMENT.md](DEVELOPMENT.md)
-- **Finding files**: See [STRUCTURE.md](STRUCTURE.md)
-- **General info**: See [INDEX.md](INDEX.md) for navigation
-
----
-
-**Start here**: Read [QUICK_START.md](QUICK_START.md) for a quick orientation, then dive into [ARCHITECTURE.md](../ARCHITECTURE.md) for the full picture.
+- **Architecture**: [ARCHITECTURE.md](../ARCHITECTURE.md)
+- **Security**: [SECURITY.md](../SECURITY.md)
+- **OAuth 2.1**: [docs/OAUTH_COMPLIANCE.md](../docs/OAUTH_COMPLIANCE.md)

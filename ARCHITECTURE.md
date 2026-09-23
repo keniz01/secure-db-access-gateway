@@ -124,10 +124,10 @@ API Request (Web App)
 - **Session Flag:** `localStorage` stores only `app_jwt_exists` status indicator.
 
 ### API & Database Security
-- **Strict Read-Only Enforcement:** Only `SELECT` statements are executed.
-- **Connection Flags:** `SET TRANSACTION READ ONLY` on PostgreSQL connections.
-- **Query Safety:** Parameterized queries via SQLAlchemy; automatic limit clauses prevent DoS.
-- **CORS & Headers:** Whitelisted origins, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`.
+- **Strict Read-Only Enforcement:** Only `SELECT` statements are executed (governed pipeline `services/query_gateway.py`).
+- **Connection Flags:** `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` + `SET ROLE sql_readonly_role` (see `SECURITY.md` least-privilege).
+- **Query Safety:** AST validation (`sql_safety_checker.py`), parameterized queries via SQLAlchemy; auto-LIMIT, cost/timeout/byte guards.
+- **CORS & Headers:** whitelisted `CORS_ORIGINS` (shared with CSRF `csrf.py`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (frame-ancestors none), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-*`, `Strict-Transport-Security: preload` (nginx + FastAPI, authoritative at `nginx/nginx.conf:102`).
 
 ### Policy Enforcement (OPA Integration)
 
@@ -147,7 +147,7 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 
 **Configuration:**
 - `OPA_URL=http://opa:8181` — OPA sidecar endpoint
-- `OPA_ENABLED=true` — Toggle OPA evaluation (default: `true` when `OPA_URL` is set)
+- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; set `OPA_ENABLED=true` to delegate to OPA
 
 **Policy Evaluation:**
 - OPA evaluates allow/deny decisions based on: principal (user_id, org_id, roles), database_id, tables, and referenced_columns
@@ -168,15 +168,16 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 ## Deployment Architecture
 
 ```
-localhost:5173      → Web App (Vite dev server; http://localhost:5173 only, proxied via the TLS edge)
-localhost:8080      → Nginx Gateway / Reverse Proxy (HTTP → HTTPS redirect)
-localhost:8443      → Nginx Gateway (TLS edge; serves the web app SPA + /api/*)
-localhost:8001      → Auth0 API
-localhost:8002      → SQL Query API
-localhost:8181      → OPA Sidecar (policy evaluation)
-localhost:3000      → Grafana UI (otel-lgtm telemetry stack)
-localhost:4318      → OTLP HTTP receiver for traces/logs/metrics
-localhost:5432      → PostgreSQL (Docker Container)
+localhost:5173      → Web App (Vite dev server; http://localhost:5173 only, proxied via TLS edge)
+localhost:8080      → Nginx Gateway (HTTP → HTTPS redirect; /nginx-health plaintext)
+localhost:8443      → Nginx Gateway (TLS edge; serves SPA + /api/*)
+localhost:8001      → Auth0 API (via nginx, not host-exposed in prod compose)
+localhost:8002      → SQL Query API (via auth0_api BFF, not host-exposed)
+opa:8181            → OPA Sidecar (expose only, not host-mapped; docker-compose.yml:108)
+localhost:3000      → Grafana UI (otel-lgtm)
+localhost:4318      → OTLP HTTP receiver
+host.docker.internal:5432 → PostgreSQL (external, not a compose service; see .env.example DATABASE_URL)
+  + redis:6379      → Redis (session store, docker-compose.yml:7)
 ```
 
 Containerized deployment is defined in `docker-compose.yml` and documented in `DOCKER_README.md`.

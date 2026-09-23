@@ -66,7 +66,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 - Rate limits: `api_limit` (60r/m burst 20), `auth_limit` (5r/m burst 3 for login/auth/logout). IP-based only; no per-user granularity.
 - `/nginx-health` on port 80 (plaintext) is the only open HTTP endpoint; it just returns `OK`.
-- HSTS, X-Content-Type-Options nosniff, X-Frame-Options DENY, Strict-Transport-Security all enforced.
+- HSTS (`preload`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (`frame-ancestors 'none'`), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Embedder/Resource-Policy` all enforced at `nginx/nginx.conf:102` and mirrored in FastAPI for dev.
 - Correlation ID headers (`X-Correlation-ID`, `X-Request-ID`) are charset/length-validated at the nginx boundary; spoofable headers (`X-User-*`, `X-Org-*`, `X-Tenant-*`) are stripped by both nginx and RBAC middleware.
 
 ### DoS / resource exhaustion
@@ -94,8 +94,8 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 ### Open Policy Agent (OPA)
 
-- OPA sidecar (`openpolicyagent/opa:latest`) runs on port 8181 for centralized policy evaluation.
-- Toggle between OPA and built-in evaluator via `OPA_ENABLED` env var (default: `true` when `OPA_URL` is set).
+- OPA sidecar (`openpolicyagent/opa:latest`) runs on port 8181 (`expose` only, not host-mapped) for centralized policy evaluation.
+- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; set `OPA_ENABLED=true` to enable.
 - OPA policy files are mounted from `sql_query_api/opa/policies/` and evaluated at `/v1/data/gateway/evaluate`.
 - When OPA is unreachable, the evaluator **fails closed** (denies all requests).
 - The `OpaPolicyEvaluator` class implements the same interface as `PolicyEvaluator` for seamless switching.

@@ -1,82 +1,36 @@
-# React + TypeScript + Vite
+# Web App — Secure DB Access Gateway UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite + TypeScript SPA. Served through the nginx TLS edge (`https://localhost:8443`) in Docker; dev server runs on `http://localhost:5173` via Vite.
 
-Currently, two official plugins are available:
+## Auth model
+- Auth is httpOnly cookie JWT (BFF). Browser never stores raw JWT; `localStorage` holds only `app_jwt_exists` flag and non-sensitive `user` metadata (`src/services/auth-service.tsx:12`).
+- CSRF double-submit (`csrf_token` + `X-CSRF-Token` + `X-Requested-With`) handled by `src/services/api-client.ts:35`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Prerequisites
+- Node 20 (see CI `web-app` Node 20)
+- Auth0 tenant + `.env` at repo root (see `../.env.example` and `../scripts/bootstrap-dev.sh`)
 
-## React Compiler
+## Run
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev        # Vite on 5173 (proxied via nginx :8443 when using docker compose)
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Docker (repo root): `docker compose up --build` (nginx, auth0_api, sql_query_api, redis, opa, otel-lgtm, web_app)
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Scripts (per AGENTS.md)
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
-Key Features:
+- `npm run lint` — eslint
+- `npm test` — typecheck only (`tsc -b`) — no unit tests
+- `npm run build` — Vite production build
+- `npm run test:e2e` — Playwright (auto-starts Vite dev server; only real browser suite)
 
-Login Page - Beautiful gradient design with Auth0 login button (shows on initial load)
-Auth Callback Handler - Processes the OAuth callback from Auth0
-Protected Dashboard - Shows personalized AI greeting and user stats
-Token Management - Stores JWT in localStorage
-TanStack Query Integration - For efficient data fetching and caching
-TypeScript - Full type safety throughout
-Tailwind CSS - Modern, responsive styling
+## Env
+
+- `VITE_API_BASE_URL` (default `https://localhost:8443` in `docker-compose.yml:22`, prod `https://app.secure-db-access-gateway.org` in `docker-compose.prod.yml:33`)
+- `VITE_SQL_GRAPHQL_BASE_URL` (default `https://localhost:8443/api/graphql`)
+
+## Security notes
+- Do not store JWT in `localStorage`; use httpOnly cookie flow.
+- Logout is `POST /api/logout` (CSRF-protected), not GET.
