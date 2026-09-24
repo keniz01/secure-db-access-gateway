@@ -23,7 +23,12 @@ class OpaConfig:
 
     @classmethod
     def from_environment(cls) -> OpaConfig:
-        """Load OPA configuration from environment variables."""
+        """Load OPA configuration from environment variables.
+
+        Preferred production path is OPA bundles (sql_query_api/opa/config.yaml
+        + BUNDLE_SERVICE_URL). OPA_URL/OPA_ENABLED control the gateway->OPA
+        data-plane; bundles are fetched by OPA itself, not the app.
+        """
         from shared_secrets import is_environment_production, read_secret
 
         raw_url = os.getenv("OPA_URL", "").strip()
@@ -32,7 +37,7 @@ class OpaConfig:
 
         raw_enabled = os.getenv("OPA_ENABLED", "").strip().lower()
         if not raw_enabled:
-            raw_enabled = read_secret("OPA_ENABLED", required=False) or "true"
+            raw_enabled = read_secret("OPA_ENABLED", required=False) or "false"
 
         enabled = raw_enabled in ("true", "1", "yes")
         production = is_environment_production()
@@ -42,9 +47,17 @@ class OpaConfig:
                 logger.warning(
                     "OPA_URL is not set in production. "
                     "Falling back to in-process policy evaluator. "
-                    "Set OPA_URL to enable OPA-based policy enforcement."
+                    "Preferred: set OPA_ENABLED=true and OPA_URL=http://opa:8181 "
+                    "and serve policies via bundle (scripts/build-opa-bundle.sh)."
                 )
             return cls(url="", timeout=5.0, enabled=False)
+
+        # Log bundle hint in production so operators migrate off inline JSON
+        if production and os.getenv("POLICY_POLICIES_JSON"):
+            logger.warning(
+                "POLICY_POLICIES_JSON is deprecated; policies should be served via "
+                "OPA bundle (sql_query_api/opa/config.yaml + BUNDLE_SERVICE_URL)."
+            )
 
         return cls(url=raw_url.rstrip("/"), timeout=5.0, enabled=enabled)
 

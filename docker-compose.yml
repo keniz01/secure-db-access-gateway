@@ -7,10 +7,10 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
+    networks:
+      - frontend
     depends_on:
       auth0_api:
-        condition: service_healthy
-      sql_query_api:
         condition: service_healthy
       web_app:
         condition: service_healthy
@@ -21,6 +21,8 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no"]
     expose:
       - "6379"
+    networks:
+      - backend
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -38,6 +40,9 @@ services:
       - "9090:9090"
     environment:
       OTEL_SERVICE_NAME: read-only-database-explorer
+    networks:
+      - backend
+      - frontend
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
       interval: 10s
@@ -60,6 +65,9 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: auth0-api
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    networks:
+      - frontend
+      - backend
     depends_on:
       redis:
         condition: service_healthy
@@ -90,6 +98,8 @@ services:
       OTEL_SERVICE_NAME: sql-query-api
       OPA_URL: ${OPA_URL:-http://opa:8181}
       OPA_ENABLED: ${OPA_ENABLED:-false}
+    networks:
+      - backend
     depends_on:
       otel-lgtm:
         condition: service_healthy
@@ -111,6 +121,12 @@ services:
     volumes:
       - ./sql_query_api/opa/policies:/etc/opa/policies:ro
       - ./sql_query_api/opa/data.json:/etc/opa/data.json:ro
+      - ./sql_query_api/opa/config.yaml:/etc/opa/config.yaml:ro
+    networks:
+      - backend
+    # Dev: file mount (policies + data.json). Prod bundle mode: override
+    # command to `run --config-file /etc/opa/config.yaml` and set
+    # BUNDLE_SERVICE_URL. See sql_query_api/opa/config.yaml + scripts/build-opa-bundle.sh
     command:
       - "run"
       - "--server"
@@ -126,11 +142,31 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # Optional bundle server for OPA hot-reload (prod). Serves bundle.tar.gz
+  # built by `scripts/build-opa-bundle.sh`. Enable by uncommenting and
+  # setting OPA to bundle mode (see docker-compose.prod.yml).
+  # opa-bundle-server:
+  #   image: nginx:alpine
+  #   expose:
+  #     - "8080"
+  #   networks:
+  #     - backend
+  #   volumes:
+  #     - ./sql_query_api/bundle.tar.gz:/usr/share/nginx/html/bundle.tar.gz:ro
+  #   healthcheck:
+  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/bundle.tar.gz"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
   web_app:
     build: ./web-app
     environment:
       VITE_API_BASE_URL: https://localhost:8443
       VITE_SQL_GRAPHQL_BASE_URL: https://localhost:8443/api/graphql
+    networks:
+      - frontend
     ports:
       - "5173:5173"
     healthcheck:
@@ -141,7 +177,19 @@ services:
       start_period: 5s
     depends_on:
       - auth0_api
-      - sql_query_api
+
+networks:
+  frontend:
+    name: gateway-frontend
+    driver: bridge
+  backend:
+    name: gateway-backend
+    driver: bridge
+    # Note: not `internal: true` — sql_query_api needs egress to
+    # host.docker.internal:5432 (Postgres) and openrouter.ai, and OPA
+    # needs egress for bundle fetches (S3/GCS). Isolation is via
+    # network membership (web_app/frontend cannot reach backend) rather
+    # than blocking all external egress.
 
 # volumes:
 #   postgres_data:

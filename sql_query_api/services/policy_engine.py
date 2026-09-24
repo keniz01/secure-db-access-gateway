@@ -257,20 +257,39 @@ class PolicyEvaluator:
 
     @classmethod
     def from_environment(cls) -> PolicyEvaluator:
-        """Load policy configuration from the environment, failing fast in production."""
+        """Load policy configuration from the environment, failing fast in production.
+
+        Deprecated: inline POLICY_POLICIES_JSON is superseded by OPA bundles
+        (sql_query_api/opa/policies/gateway.rego + data.json, served via
+        BUNDLE_SERVICE_URL / scripts/build-opa-bundle.sh). This path remains
+        only for ENVIRONMENT=dev throwaway runs when OPA_ENABLED=false.
+        """
         import os
+        import warnings
 
         from shared_secrets import is_environment_production, read_secret
 
         _production = is_environment_production()
-        raw = os.getenv("POLICY_POLICIES_JSON", "").strip()
+        raw = read_secret(
+            "POLICY_POLICIES_JSON",
+            required=False,
+        )
+        if raw and not _production:
+            # In non-prod we allow the deprecated path but warn
+            warnings.warn(
+                "POLICY_POLICIES_JSON is deprecated; use OPA bundles "
+                "(sql_query_api/opa/config.yaml + scripts/build-opa-bundle.sh).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if not raw:
             raw = read_secret(
                 "POLICY_POLICIES_JSON",
                 required=_production and not os.getenv("CI"),
                 error_message=(
                     "Missing required POLICY_POLICIES_JSON environment variable or "
-                    "POLICY_POLICIES_JSON_FILE secret for policy configuration."
+                    "POLICY_POLICIES_JSON_FILE secret for policy configuration. "
+                    "Preferred: enable OPA (OPA_ENABLED=true) and serve policies via bundle."
                 ),
             )
         if not raw:
@@ -278,7 +297,8 @@ class PolicyEvaluator:
             if _production and not os.getenv("CI"):
                 raise RuntimeError(
                     "Missing required POLICY_POLICIES_JSON environment variable or "
-                    "POLICY_POLICIES_JSON_FILE secret for policy configuration."
+                    "POLICY_POLICIES_JSON_FILE secret for policy configuration. "
+                    "Preferred: enable OPA (OPA_ENABLED=true) and serve policies via bundle."
                 )
             # Non-production (e.g., CI, local dev) – disable policy enforcement.
             return cls(enabled=False)
