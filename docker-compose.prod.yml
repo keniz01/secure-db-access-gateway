@@ -36,6 +36,33 @@ services:
 
   sql_query_api:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/sql-query-api:${IMAGE_TAG:-latest}
+    environment:
+      OPA_ENABLED: "true"
+      OPA_URL: http://opa:8181
+
+  opa:
+    # Prod: hot-reload via bundle instead of volume mount.
+    # Build bundle with scripts/build-opa-bundle.sh and serve via
+    # opa-bundle-server (or S3/GCS/HTTP). Override volumes/command here
+    # if using bundle mode.
+    volumes: !override
+      - ./sql_query_api/opa/config.yaml:/etc/opa/config.yaml:ro
+    command: !override
+      - "run"
+      - "--server"
+      - "--config-file=/etc/opa/config.yaml"
+      - "--addr=:8181"
+      - "--log-level=info"
+    environment:
+      BUNDLE_SERVICE_URL: ${BUNDLE_SERVICE_URL:-http://opa-bundle-server:8080}
+
+  # Uncomment to serve bundles from the host in prod without external storage:
+  # opa-bundle-server:
+  #   image: nginx:alpine
+  #   networks:
+  #     - backend
+  #   volumes:
+  #     - ./sql_query_api/bundle.tar.gz:/usr/share/nginx/html/bundle.tar.gz:ro
 
   web_app:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/web-app:${IMAGE_TAG:-latest}

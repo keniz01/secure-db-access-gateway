@@ -36,13 +36,15 @@ Windows
   not create users or manage tenant membership; Auth0 or an upstream identity
   provider must issue this claim.
 
-### Policy enforcement
+### Policy enforcement (OPA bundles — preferred)
 
-The governed query gateway can load a central, default-deny policy document
-from `POLICY_POLICIES_JSON`. Each policy may target `org_id`, `principal_id`,
-`roles`, `database_id`, and `table`, and may specify `columns`,
-`masked_columns`, and `row_scope` mappings from database columns to validated
-subject attributes:
+Policies are managed as **OPA bundles**, not inline `POLICY_POLICIES_JSON`.
+
+* Source: `sql_query_api/opa/policies/gateway.rego` (Rego) + `sql_query_api/opa/data.json` (`{policies: [...]}`)
+* Dev: mounted via `docker-compose.yml` `opa` volumes (`/etc/opa/policies`, `/etc/opa/data.json`)
+* Prod: hot-reloaded via bundle polling `sql_query_api/opa/config.yaml` (`BUNDLE_SERVICE_URL`, `resource: bundle.tar.gz`). Build with `scripts/build-opa-bundle.sh` (`opa build -b sql_query_api/opa -o sql_query_api/bundle.tar.gz`) and serve via `opa-bundle-server` (nginx), S3/GCS, Gitea, or any HTTP server. No app restart required.
+
+Each policy may target `org_id`, `principal_id`, `roles`, `database_id`, and `table`, and may specify `columns`, `masked_columns`, and `row_scope` mappings from database columns to validated subject attributes:
 
 ```json
 [
@@ -64,6 +66,11 @@ Denials take precedence, missing subject attributes fail closed, and row
 predicates are added by the gateway before execution. `simulatePolicy` is
 available to administrators through GraphQL and returns the decision without
 reading protected data.
+
+Deprecated fallback: `POLICY_POLICIES_JSON` / `POLICY_POLICIES_JSON_FILE` is still
+read by `services/policy_engine.py:259` when `OPA_ENABLED=false` (dev/CI only, emits
+`DeprecationWarning`). Prod sets `OPA_ENABLED=true` (`docker-compose.prod.yml`) and
+must not rely on the inline env var.
 
 ### Headless CLI authentication
 

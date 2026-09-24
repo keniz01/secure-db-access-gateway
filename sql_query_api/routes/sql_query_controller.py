@@ -125,7 +125,10 @@ _tenant_service_provider = TenantServiceProvider(_tenant_database_resolver)
 _sql_query_service: ISqlQueryService | None = None
 _sql_safety_checker = DefaultSqlSafetyChecker()
 
-# Use OPA evaluator when enabled; fall back to built-in evaluator
+# Policy evaluator selection:
+# Preferred: OPA bundle (sql_query_api/opa/config.yaml + data.json + gateway.rego,
+# built with scripts/build-opa-bundle.sh and hot-reloaded via BUNDLE_SERVICE_URL).
+# Fallback (deprecated): inline POLICY_POLICIES_JSON when OPA_ENABLED=false.
 # Use OpaConfig to ensure consistent secret handling (env var → *_FILE path)
 _opa_config = OpaConfig.from_environment()
 if _opa_config.enabled and _opa_config.url:

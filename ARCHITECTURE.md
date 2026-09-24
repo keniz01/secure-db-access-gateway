@@ -147,7 +147,8 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 
 **Configuration:**
 - `OPA_URL=http://opa:8181` — OPA sidecar endpoint
-- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; set `OPA_ENABLED=true` to delegate to OPA
+- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; `docker-compose.prod.yml` sets `true`. Set `OPA_ENABLED=true` to delegate to OPA
+- Prod bundle: `BUNDLE_SERVICE_URL=http://opa-bundle-server:8080` + `sql_query_api/opa/config.yaml` (`bundles.gateway.resource: bundle.tar.gz`, polling 10-20s)
 
 **Policy Evaluation:**
 - OPA evaluates allow/deny decisions based on: principal (user_id, org_id, roles), database_id, tables, and referenced_columns
@@ -155,13 +156,14 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 - When OPA is unreachable, the evaluator **fails closed** (denies all requests)
 
 **Rego Policies:**
-- Located in `sql_query_api/opa/policies/gateway.rego`
-- Loaded from disk on OPA startup (file-based for dev, bundle loading for production)
-- Support for hot-reload via OPA bundle endpoints (S3/GCS/HTTP)
+- Located in `sql_query_api/opa/policies/gateway.rego`, data in `sql_query_api/opa/data.json` (`{policies: [...]}`)
+- Dev: loaded from disk on OPA startup (file mount `docker-compose.yml:112`)
+- Prod: bundle `scripts/build-opa-bundle.sh` (`opa build -b sql_query_api/opa -o sql_query_api/bundle.tar.gz`) served via `opa-bundle-server` or S3/GCS/HTTP; hot-reload without restart
+- Validate: `opa fmt --fail`, `opa test ./sql_query_api/opa/policies`, `opa build` in CI
 
-**Fallback:**
-- When `OPA_ENABLED=false` or `OPA_URL` is not set, the built-in `PolicyEvaluator` is used
-- The `OpaPolicyEvaluator` implements the same interface as `PolicyEvaluator` for seamless switching
+**Fallback (deprecated):**
+- When `OPA_ENABLED=false` or `OPA_URL` is not set, the in-process `PolicyEvaluator` (`services/policy_engine.py:259` `POLICY_POLICIES_JSON`) is used — dev/CI only, emits `DeprecationWarning`
+- The `OpaPolicyEvaluator` (`services/opa_policy_engine.py:52`) implements the same interface as `PolicyEvaluator` for seamless switching
 
 ---
 
@@ -179,6 +181,11 @@ localhost:4318      → OTLP HTTP receiver
 host.docker.internal:5432 → PostgreSQL (external, not a compose service; see .env.example DATABASE_URL)
   + redis:6379      → Redis (session store, docker-compose.yml:7)
 ```
+
+**Network segmentation** (`docker-compose.yml:172`):
+- `frontend` (`gateway-frontend`) — `nginx`, `web_app`, `auth0_api`, `otel-lgtm` (ports exposed)
+- `backend` (`gateway-backend`, `internal: true`) — `sql_query_api`, `opa`, `redis`, `auth0_api`, `otel-lgtm`
+- `auth0_api` bridges both so `web_app` cannot reach `sql_query_api:8002`/`opa:8181`/`redis:6379` even if compromised; `nginx` no longer depends on `sql_query_api` directly (`sql_query_api` is private to BFF).
 
 Containerized deployment is defined in `docker-compose.yml` and documented in `DOCKER_README.md`.
 

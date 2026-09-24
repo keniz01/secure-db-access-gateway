@@ -1,0 +1,35 @@
+# OPA bundle configuration for production hot-reload.
+# Dev keeps the file mount (docker-compose.yml: opa volumes). Production
+# uses this config with `opa run --config-file /etc/opa/config.yaml`.
+#
+# Services define where bundles are fetched from. The host serving
+# `bundle.tar.gz` can be any HTTP server (nginx, S3, GCS, Gitea, minio).
+# No AuthN is configured here; add `credentials:` / `headers:` for
+# private stores (see https://www.openpolicyagent.org/docs/latest/management-bundles/).
+
+services:
+  gateway-bundle-service:
+    url: ${BUNDLE_SERVICE_URL:-http://opa-bundle-server:8080}
+
+bundles:
+  gateway:
+    # Resource path relative to service.url — must serve a bundle built with
+    # `opa build -b ./opa` or `scripts/build-opa-bundle.sh`.
+    resource: bundle.tar.gz
+    service: gateway-bundle-service
+    persist: false
+    polling:
+      min_delay_seconds: 10
+      max_delay_seconds: 20
+
+# Fallback: also load local policies/data if present (dev). The bundle
+# contents merge with these on top; in prod the bundle is authoritative.
+# Keep /etc/opa/policies and /etc/opa/data.json mounted for offline boot.
+
+decision_logs:
+  reporting:
+    min_delay_seconds: 5
+    max_delay_seconds: 10
+
+status:
+  prometheus: true
