@@ -185,7 +185,11 @@ networks:
   backend:
     name: gateway-backend
     driver: bridge
-    internal: true  # no external egress; only frontend bridges via auth0_api/otel
+    # Note: not `internal: true` — sql_query_api needs egress to
+    # host.docker.internal:5432 (Postgres) and openrouter.ai, and OPA
+    # needs egress for bundle fetches (S3/GCS). Isolation is via
+    # network membership (web_app/frontend cannot reach backend) rather
+    # than blocking all external egress.
 
 # volumes:
 #   postgres_data:

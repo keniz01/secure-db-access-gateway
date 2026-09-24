@@ -270,15 +270,10 @@ class PolicyEvaluator:
         from shared_secrets import is_environment_production, read_secret
 
         _production = is_environment_production()
-        raw = os.getenv("POLICY_POLICIES_JSON", "").strip()
-        file_raw = ""
-        if not raw:
-            # Check _FILE variant before deciding to warn/fail
-            file_raw = read_secret(
-                "POLICY_POLICIES_JSON",
-                required=False,
-            )
-            raw = file_raw
+        raw = read_secret(
+            "POLICY_POLICIES_JSON",
+            required=False,
+        )
         if raw and not _production:
             # In non-prod we allow the deprecated path but warn
             warnings.warn(

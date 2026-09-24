@@ -37,7 +37,7 @@ class OpaConfig:
 
         raw_enabled = os.getenv("OPA_ENABLED", "").strip().lower()
         if not raw_enabled:
-            raw_enabled = read_secret("OPA_ENABLED", required=False) or "true"
+            raw_enabled = read_secret("OPA_ENABLED", required=False) or "false"
 
         enabled = raw_enabled in ("true", "1", "yes")
         production = is_environment_production()

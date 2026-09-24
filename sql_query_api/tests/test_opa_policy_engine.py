@@ -38,7 +38,8 @@ class TestOpaConfig:
     def test_config_from_environment_with_url(self):
         with patch.dict("os.environ", {"OPA_URL": "http://localhost:8181"}):
             config = OpaConfig.from_environment()
-            assert config.enabled is True
+            # OPA_ENABLED defaults to false when unset (docker-compose.yml: OPA_ENABLED:-false)
+            assert config.enabled is False
             assert config.url == "http://localhost:8181"
 
     def test_config_from_environment_disabled(self):

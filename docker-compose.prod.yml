@@ -41,11 +41,13 @@ services:
       OPA_URL: http://opa:8181
 
   opa:
-    # Prod: hot-reload via bundle instead of volume mount.
-    # Build bundle with scripts/build-opa-bundle.sh and serve via
-    # opa-bundle-server (or S3/GCS/HTTP). Override volumes/command here
-    # if using bundle mode.
+    # Prod: hot-reload via bundle with offline-boot fallback.
+    # Keep policies/data.json mounts so OPA can start if bundle server
+    # is temporarily unavailable (fail-closed only on policy evaluation,
+    # not boot). See sql_query_api/opa/config.yaml:25-27.
     volumes: !override
+      - ./sql_query_api/opa/policies:/etc/opa/policies:ro
+      - ./sql_query_api/opa/data.json:/etc/opa/data.json:ro
       - ./sql_query_api/opa/config.yaml:/etc/opa/config.yaml:ro
     command: !override
       - "run"
