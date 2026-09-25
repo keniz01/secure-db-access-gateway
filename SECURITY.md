@@ -187,10 +187,7 @@ in precedence order:
    content is plaintext).
 3. A configured default (development only).
 
-Required secrets are validated at startup. In `ENVIRONMENT=production` the
-services **fail fast** when a required secret is absent, so a misconfigured
-deployment can never start serving with empty credentials (e.g. a blank
-session-signing key).
+Required secrets are validated at startup. `ENVIRONMENT` defaults to `production` (fail-closed) - dev must set `ENVIRONMENT=dev`; in `production` (and non-`CI`) the services **fail fast** when a required secret is absent, so a misconfigured deployment can never start with empty credentials. `shared_secrets` warns on missing `*_FILE` mounts and validates `..` traversal.
 
 ### Required for Production
 

@@ -151,7 +151,8 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 - Prod bundle: `BUNDLE_SERVICE_URL=http://opa-bundle-server:8080` + `sql_query_api/opa/config.yaml` (`bundles.gateway.resource: bundle.tar.gz`, polling 10-20s)
 
 **Policy Evaluation:**
-- OPA evaluates allow/deny decisions based on: principal (user_id, org_id, roles), database_id, tables, and referenced_columns
+- OPA evaluates allow/deny decisions based on: principal (user_id, org_id, roles, `attributes`), `action` (`select` default), `database_id`, `tables`, and `referenced_columns`
+- RBAC1 hierarchy `admin->viewer` via `role_hierarchy` + `expanded_roles`, static SoD `sod_constraints` (empty=disabled, deny-first in `evaluate` + `effective_access`)
 - Deny policies always take precedence over allow policies
 - When OPA is unreachable, the evaluator **fails closed** (denies all requests)
 
@@ -172,11 +173,11 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 ```
 localhost:5173      → Web App (Vite dev server; http://localhost:5173 only, proxied via TLS edge)
 localhost:8080      → Nginx Gateway (HTTP → HTTPS redirect; /nginx-health plaintext)
-localhost:8443      → Nginx Gateway (TLS edge; serves SPA + /api/*)
+localhost:8443      → Nginx Gateway (TLS edge; serves SPA + /api/*, Mozilla intermediate, HSTS preload)
 localhost:8001      → Auth0 API (via nginx, not host-exposed in prod compose)
 localhost:8002      → SQL Query API (via auth0_api BFF, not host-exposed)
 opa:8181            → OPA Sidecar (expose only, not host-mapped; docker-compose.yml:108)
-localhost:3000      → Grafana UI (otel-lgtm)
+127.0.0.1:3000      → Grafana UI (otel-lgtm, 127.0.0.1-only in compose)
 localhost:4318      → OTLP HTTP receiver
 host.docker.internal:5432 → PostgreSQL (external, not a compose service; see .env.example DATABASE_URL)
   + redis:6379      → Redis (session store, docker-compose.yml:7)

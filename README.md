@@ -9,16 +9,15 @@ The project is structured as a three-part system:
 
 ## What’s included
 
-- SELECT-only SQL validation with blocking of DML/DDL and unsafe patterns
-- Automatic query limits and audit logging for every SQL execution
-- Dynamic schema introspection for arbitrary database tables and foreign keys
-- Auth0 JWT validation with `viewer` / `admin` role checks
-- Tenant-aware principal mapping using a required trusted tenant claim and enforcement at the middleware layer
-- Server-side tenant database resolution using opaque logical `database_id` values
-- Web, API, AI, and CLI execution through the shared governed query gateway
-- Schema browser and admin-safe UI for browsing connected database metadata
-- Docker Compose setup for the web app, APIs, Nginx gateway, and OTEL/LGTM observability stack
-- CI pipeline for backend and frontend validation
+- SELECT-only SQL validation with blocking of DML/DDL and unsafe patterns (fail-closed `clean_sql` - no `SELECT *` synthesis)
+- Automatic query limits, cost/timeout/row-byte guards and audit logging for every SQL execution
+- Dynamic schema introspection filtered by `EffectiveAccess` (OPA/policy engine)
+- Auth0 JWT validation (`RS256`, `leeway=2s`, scope `openid/profile/email` enforced) with RBAC1 hierarchy (`admin` -> `viewer`) and SoD via OPA
+- Tenant-aware principal mapping using required `https://app.secure-db-access-gateway.org/tenant_id` claim, spoofable `X-User/Org/Tenant` headers stripped at edge + middleware
+- Server-side tenant database resolution via opaque `database_id` (no connection strings from client)
+- OPA bundle policy management (`sql_query_api/opa/policies/gateway.rego` + `data.json`, hot-reload via `scripts/build-opa-bundle.sh`, fail-closed on unreachable)
+- Docker Compose with `frontend`/`backend` network segmentation, Redis `requirepass`, pinned images, and hardened nginx TLS (Mozilla intermediate)
+- CI with SHA-pinned actions, `bandit`/`pip-audit` (both services) and `npm audit` supply-chain gates
 
 ## Current architecture
 
@@ -31,13 +30,10 @@ The project is structured as a three-part system:
 - Browser-based schema inspection and GraphQL calls to the SQL API
 
 ### SQL Query API
-- FastAPI
-- Strawberry GraphQL
-- SQLAlchemy async engine
-- SQLite/PostgreSQL-compatible schema introspection
-- Read-only validation enforced before execution
-- Middleware-based Auth0 and RBAC enforcement
-- One execution pipeline for tenant resolution, SQL classification, limits, read-only execution, masking, and audit
+- FastAPI + Strawberry GraphQL + SQLAlchemy async (per-tenant pooled, `gateway_readonly_user` `SET ROLE` + `READ ONLY`)
+- SQLite/PostgreSQL introspection via quoted `PRAGMA` identifiers (injection hardened)
+- Governed gateway: tenant resolve -> `clean_sql` (no widening) -> `DefaultSqlSafetyChecker`/`AstSqlAnalyzer` -> OPA `PolicyEvaluator` (hierarchy/SoD, deny-precedence) -> `READ ONLY` + `SET ROLE` + timeouts/limits -> post-masking -> audit
+- Auth via `httpOnly` JWT (`leeway=2s`, scope enforced) -> `Principal{roles,org_id}` (`has_any_role`), authorization delegated to OPA bundles
 
 ### Auth0 API
 - FastAPI service for auth flows and session management
@@ -157,25 +153,25 @@ the path with `GATEWAY_ENV_FILE`), and the shared `read_secret` loader
 `NAME_FILE` path for orchestrators that mount secrets as files.
 
 ```dotenv
-# .env (gitignored; real values)
-ENVIRONMENT=production
-APP_SECRET_KEY=<openssl rand -hex 32>
+# .env (gitignored; real values) - see .env.example for full list
+ENVIRONMENT=production # default fail-closed; dev must set ENVIRONMENT=dev
+APP_SECRET_KEY=<openssl rand -hex 32> # ephemeral random in dev if missing
 AUTH0_DOMAIN=your-domain.auth0.com
 AUTH0_CLIENT_ID=...
 AUTH0_CLIENT_SECRET=...
 AUTH0_AUDIENCE=https://your-api-audience
 FRONTEND_URL=https://localhost:8443
+REDIS_PASSWORD=<openssl rand -hex 32> # -> REDIS_URL=redis://:PASSWORD@redis:6379/0
+SESSION_MAX_AGE=1800 # 30m per NIST 800-63B
 
-# Tenant mappings (one line) / data-access policy (one line)
-TENANT_DATABASES_JSON=[{"org_id":"...","database_id":"default","connection_string":"...","data_schema":"music","metadata_schema":"meta"}]
-POLICY_POLICIES_JSON=[{"id":"allow-album","effect":"allow","database_id":"default","table":"album"}]
+# Tenant mappings (prefer file, not inline) / OPA bundle (preferred over inline JSON)
+TENANT_DATABASES_JSON=[{"org_id":"...","database_id":"default","connection_string":"..."}] # or TENANT_DATABASES_JSON_FILE
+# Policies: OPA bundle sql_query_api/opa/policies/gateway.rego + data.json (scripts/build-opa-bundle.sh)
+# Legacy inline (deprecated, dev only): POLICY_POLICIES_JSON=[{"id":"allow-album","effect":"allow","table":"album"}]
 
 # AI services
 OPENROUTER_API_KEY=...
 GEMINI_API_KEY=...
-EMBEDDING_DIMENSIONS=768
-AI_MODEL=openai/gpt-4o
-EMBEDDING_MODEL=text-embedding-004
 ```
 
 See `.env.example` for the authoritative list of variables and comments.
@@ -201,19 +197,17 @@ full details.
 
 ## Security model
 
-This application is designed around a read-only database access model:
+This application is designed around a read-only gateway with defense-in-depth:
 
-- only SELECT-style queries are accepted by the SQL safety layer
-- DDL/DML and other mutating statements are rejected
-- request identity comes from validated Auth0 JWT claims, not caller-supplied headers
-- tenant scoping is driven from the required signed tenant claim
-  `https://app.secure-db-access-gateway.org/tenant_id` and is enforced in middleware
-- every governed operation resolves `(tenant_id, database_id)` against server-side configuration
-- requests without a trusted tenant claim are rejected; the application does not manage users or memberships
-- audit logging captures trusted user, org, database, and table access metadata
-- rate limiting and structured logging are enabled for operational control
+- **SQL:** only `SELECT`/`WITH` accepted (`clean_sql` rejects non-SELECT, no `SELECT *` synthesis), DDL/DML blocked by `AstSqlAnalyzer`, per-query `statement_timeout`/`lock_timeout` + `SET ROLE gateway_readonly_user` at DB
+- **Identity:** Auth0 JWT `RS256` verified (`leeway=2s`, `scope` enforced), tenant claim `https://app.secure-db-access-gateway.org/tenant_id` required, `X-User/Org/Tenant` stripped at `nginx` + `RBACMiddleware` (auth-only, no hardcoded `ALLOWED_ROLES`)
+- **Authorization:** OPA bundles (`gateway.rego` `role_hierarchy admin->viewer`, `sod_constraints`, `action` `select` default, deny-precedence, fail-closed on unreachable) or deprecated `POLICY_POLICIES_JSON` fallback (dev only). Every operation resolves `(tenant_id, database_id)` server-side; `database_id="default"` must be explicit per org
+- **Network:** `frontend` (`nginx`, `web_app`, `auth0_api`) + `backend` (`sql_query_api`, `opa`, `redis`, `auth0_api`) segmentation, Redis `requirepass`, `otel-lgtm` `127.0.0.1` only, images pinned (`nginx:1.27`, `redis:7.4`, `opa:1.8.0`), `read_only`/`no-new-privileges`
+- **Edge:** `nginx` TLS Mozilla intermediate (`ECDHE`+`TLS1.3`, `session_tickets off`, `client_max_body_size 1m`), HSTS `preload`, `CSP` `frame-ancestors none`, `X-Content-Type-Options nosniff`, rate limits `60r/m` burst 20 / `5r/m` burst 3
+- **Supply chain:** GitHub Actions SHA-pinned, `bandit`/`pip-audit` (both services, `ecdsa` PYSEC-2026-1325 ignored as upstream out-of-scope), `npm ci --ignore-scripts` + `audit --audit-level=moderate`
+- **Audit:** `log_audit_event` for `sql_query`/`policy_denied`/`auth_failed`/`schema_introspection` with `query_hash` (raw SQL only if `AUDIT_LOG_RAW_SQL=true`, off in prod), quarterly review via `docs/runbook-access-review.md`
 
-For the full policy and threat model, see [SECURITY.md](SECURITY.md).
+For full controls see [SECURITY.md](SECURITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Testing
 
