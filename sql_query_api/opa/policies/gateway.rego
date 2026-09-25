@@ -30,6 +30,16 @@ default allow = false
 # Role hierarchy: admin inherits viewer (RBAC1). Extend here for editor, etc.
 role_hierarchy := {"admin": ["viewer"]}
 
+# Static Separation of Duties: pairs that must not be held together.
+# Empty by default; add ["viewer","admin"] etc if you want to forbid dual assignment.
+# Example: sod_constraints := [["editor","approver"]]
+sod_constraints := []
+
+violates_sod(principal_roles) {
+    constraint := sod_constraints[_]
+    count({r | r := constraint[_]; lower(r) in {lower(e) | e := principal_roles[_]}}) == count(constraint)
+}
+
 # Expand principal roles with inherited roles
 expanded_roles(principal_roles) := expanded {
     direct := {r | r := principal_roles[_]}
@@ -39,6 +49,16 @@ expanded_roles(principal_roles) := expanded {
 
 # Evaluate the request against all loaded policies.
 evaluate := result {
+    # SoD must be checked before any allow
+    violates_sod(input.principal.roles)
+    result := {
+        "allowed": false,
+        "reason": "Denied by SoD constraint.",
+        "policy_ids": ["sod-violation"],
+        "row_restrictions": {},
+        "masked_columns": [],
+    }
+} else := result {
     # Collect all applicable policies for this request
     applicable := [p | p := data.policies[_]; matches_policy(p, input)]
 
