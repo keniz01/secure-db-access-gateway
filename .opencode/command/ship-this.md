@@ -15,21 +15,30 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
 
 2. **Fetch and branch off main**
    - `git fetch origin main` (use a generous timeout if the network is slow).
-   - Determine a branch name from the PR title: strip a leading `feat:`/`fix:`/`chore:` prefix and slugify lowercase with dashes, prefixed with the matching category (default `feat/`). Example: title "AI text-to-sql improvements" -> `feat/ai-text-to-sql-improvements`.
+   - Determine a branch name from the PR title: strip a leading `feat:`/`fix:`/`chore:` prefix and slugify lowercase with dashes, prefixed with the matching category (default `feat/`). Example: title "AI text-to-sql improvements" -> `feat/ai-text-to-sql-improvements`. Use robust bash (avoid multi-line grep bug):
+     ```bash
+     LOWER=$(echo "$PR_TITLE" | tr '[:upper:]' '[:lower:]')
+     if echo "$LOWER" | grep -q "^feat:"; then PREFIX="feat"; elif echo "$LOWER" | grep -q "^fix:"; then PREFIX="fix"; elif echo "$LOWER" | grep -q "^chore:"; then PREFIX="chore"; else PREFIX="feat"; fi
+     SLUG=$(echo "$PR_TITLE" | sed -E 's/^[[:space:]]*(feat|fix|chore):[[:space:]]*//I' | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g')
+     BRANCH="${PREFIX}/${SLUG}"
+     ```
    - `git switch -c <branch> origin/main` so the PR contains exactly this work and nothing from the currently checked-out branch. Uncommitted changes carry over automatically — do not stash or commit first.
 
 3. **Quick verification (hermetic, fast)**
-   - Run the quick test suites for the services that have changed files. These are hermetic and fast:
-     - `sql_query_api/.venv/bin/python -m pytest -q` (run from inside the service dir)
-     - `auth0_api/.venv/bin/python -m pytest -q` (run from inside the service dir)
+   - Run the quick test suites for the services that have changed files. These are hermetic and fast — use `workdir` param to run from inside each service dir (do NOT run `sql_query_api/.venv/bin/python` from repo root):
+     - `workdir=sql_query_api .venv/bin/python -m pytest -q`
+     - `workdir=auth0_api .venv/bin/python -m pytest -q`
      - `web-app`: `npm run lint` then `npm test` if web files changed
+   - Also validate composition and policy when those areas changed:
+     - `docker compose config > /dev/null` (and `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` if `docker-compose.*` changed)
+     - `opa fmt --fail` / `opa test ./sql_query_api/opa/policies` if `opa/` changed
    - If any fail, stop and report the failures — do not commit.
 
 4. **Stage and commit**
    - `git add -A`.
-   - Review `git diff --cached --stat` and confirm only intended files are staged.
+   - Review `git diff --cached --stat` and confirm only intended files are staged. Verify no `.env`/`certs/`/`secrets/` leaked (`git diff --cached --name-only | grep -E "^\.env$|^certs/|^secrets/"` must be empty).
    - Commit with a conventional message (`feat:`/`fix:`/`chore:` prefix + short summary) matching the repo style.
-   - **Important**: the pre-commit hook runs the opencode code-review gate and can take 30–90s. Give the commit command a tool timeout of no less than 400000 ms and do NOT skip or work around the hook. If the review reports issues, fix them and commit again.
+   - **Important**: the pre-commit hook runs the opencode code-review gate and can take 60-120s (plus retries). Give the commit command a tool timeout of **no less than 600000 ms** and do NOT skip or work around the hook. If the commit times out after 400000 ms, retry once with 600000 ms. If the review reports `REVIEW_VERDICT: REQUEST_CHANGES` with `REQUIRED_FIXES`, fix those before pushing - do not push with blocking findings. If `APPROVE` or only `SUGGESTED`, proceed.
 
 5. **Push**
    - `git push -u origin <branch>`.
@@ -48,10 +57,10 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
 8. **Fix CI failures and retry (up to 3 fix cycles)**
    - List the failing checks: `gh pr checks <branch>`; for detail, `gh run list` and `gh run view <id> --log-failed`.
    - Reproduce and fix the failure locally:
-     - SQL/Auth0 Python failures → run the hermetic suites from inside each service dir (`sql_query_api/.venv/bin/python -m pytest -q`, `auth0_api/.venv/bin/python -m pytest -q`).
+     - SQL/Auth0 Python failures → run the hermetic suites from inside each service dir (`workdir=sql_query_api .venv/bin/python -m pytest -q`, `workdir=auth0_api .venv/bin/python -m pytest -q`).
      - Web failures → `npm run lint`, then `npm test` (typecheck). If the failure is only in Playwright e2e, try `npm run test:e2e` when browsers are installed, otherwise read the `gh run view` logs.
      - Diagnose the root cause and fix it at the source. Never weaken the governed query pipeline, security gates, or tests to turn a check green.
-   - Re-run the applicable quick verification, then commit with a conventional message (`fix(ci):`, `fix(<area>):`, …). The pre-commit review hook runs again — keep timeouts >= 400000 ms, don't skip it.
+   - Re-run the applicable quick verification (including `docker compose config` if compose changed), then commit with a conventional message (`fix(ci):`, `fix(<area>):`, …). The pre-commit review hook runs again — keep timeouts **>= 600000 ms**, don't skip it. If commit times out, retry once with larger timeout.
    - Push, then re-run `gh pr checks <branch> --watch --interval 30`. If green, merge per step 7. If still red and this was fewer than 3 fix cycles, repeat from the top of this step.
    - After 3 failed fix cycles: stop. Print the remaining failing checks, summarize what was tried, and hand off to the user. Do not merge and do not bypass CI.
 
