@@ -2,6 +2,7 @@
 User and dashboard routes.
 """
 
+import re
 from urllib.parse import quote
 
 import httpx
@@ -48,13 +49,17 @@ async def fetch_usage_summary(org_id: str | None) -> dict:
     """Query Prometheus/Grafana for this org's usage metrics when available."""
     if not org_id:
         return {"queries_total": 0, "rows_returned_total": 0, "source": "no-org"}
+    # Validate org_id strictly (tenant claim is ^[A-Za-z0-9_-]+$ per Auth0) and escape for PromQL
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", org_id):
+        return {"queries_total": 0, "rows_returned_total": 0, "source": "invalid-org"}
+    safe_org = org_id.replace("\\", "\\\\").replace('"', '\\"')
 
     try:
         query_url = (
-            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_total{{org_id=\"{org_id}\"}}')}"
+            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_total{{org_id=\"{safe_org}\"}}')}"
         )
         rows_url = (
-            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_rows_returned_bucket{{org_id=\"{org_id}\"}}')}"
+            f"{settings.GRAFANA_PROMETHEUS_URL}/api/v1/query?query={quote(f'sql_query_rows_returned_bucket{{org_id=\"{safe_org}\"}}')}"
         )
 
         async with httpx.AsyncClient(timeout=5) as client:
