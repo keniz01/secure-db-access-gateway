@@ -115,6 +115,13 @@ evaluate := result {
 
 # effective_access computes the schema surface a principal may read.
 effective_access := result {
+    violates_sod(input.principal.roles)
+    result := {
+        "accessible_tables": [],
+        "allowed_columns": [],
+        "masked_columns": [],
+    }
+} else := result {
     deny_all := has_deny_all(input.principal, input.database_id)
     deny_all
     result := {

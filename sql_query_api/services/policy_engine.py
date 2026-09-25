@@ -254,7 +254,12 @@ class EffectiveAccess:
 
 
 class PolicyEvaluator:
-    """Evaluate policy documents with deny precedence and fail-closed matching."""
+    """Evaluate policy documents with deny precedence and fail-closed matching.
+
+    Deprecated fallback evaluator (ENVIRONMENT=dev, OPA_ENABLED=false only).
+    Does NOT implement RBAC1 hierarchy (admin->viewer) or SoD; use OPA bundle
+    (gateway.rego) for hierarchical and constrained RBAC. See docs/runbook-access-review.md.
+    """
 
     def __init__(self, policies: list[Policy] | tuple[Policy, ...] = (), *, enabled: bool = True):
         self.policies = tuple(policies)

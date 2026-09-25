@@ -12,12 +12,10 @@ class RBACMiddleware:
     """Authenticate via Auth0 JWT claims and ignore spoofed caller-provided headers.
 
     Authorization is delegated to the policy engine (OPA bundle / PolicyEvaluator);
-    this middleware only establishes the trusted Principal. Previous
-    ALLOWED_ROLES hardcode has been removed in favor of RBAC1 via OPA.
+    this middleware only establishes the trusted Principal. Role checks (hierarchy,
+    SoD) are enforced by OPA, not here.
     """
 
-    # Kept for backwards compat / tests that import it; not enforced. Use OPA.
-    ALLOWED_ROLES = {"viewer", "admin"}
     SPOOFABLE_HEADER_PREFIXES = (b"x-user-", b"x-org-", b"x-tenant-")
 
     def __init__(self, app: ASGIApp) -> None:

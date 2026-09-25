@@ -5,8 +5,11 @@
 ## 1. Export current state
 
 ```bash
-# Policies (bundle source of truth)
-cat sql_query_api/opa/data.json | jq '.policies'
+# Policies (bundle source of truth — Rego + data)
+cat sql_query_api/opa/policies/gateway.rego
+cat sql_query_api/opa/data.json | jq '.policies'  # generated bundle data; source is opa/policies + data.json
+# Verify bundle
+opa fmt --fail ./sql_query_api/opa/policies && opa test ./sql_query_api/opa/policies
 # OPA effective access per org (via simulate - admin only)
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
@@ -34,7 +37,7 @@ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 ## 5. Approve / remediate
 
 * Approve: sign `docs/access-review-YYYY-QN.md` with reviewer, date, policy bundle revision (`scripts/build-opa-bundle.sh` revision).
-* Remediate: edit `sql_query_api/opa/data.json` or `policies/gateway.rego`, rebuild bundle `scripts/build-opa-bundle.sh $REV`, redeploy `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`.
+* Remediate: edit `sql_query_api/opa/policies/gateway.rego` or `sql_query_api/opa/data.json` (then `scripts/build-opa-bundle.sh $REV` to rebuild `bundle.tar.gz`), redeploy `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`.
 
 ## 6. Checklist
 
