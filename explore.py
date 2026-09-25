@@ -3,6 +3,7 @@
 Explore - Command Line Database Explorer with Headless Query, Schema-to-Wiki, and Diagnostic Analysis.
 """
 
+import re
 import sys
 import os
 import argparse
@@ -158,8 +159,12 @@ async def crawl_schema(db_url: str) -> Dict[str, Any]:
 
             tables_dict = {}
             for table in tables:
+                # Validate identifier and quote for PRAGMA (defense-in-depth even though from sqlite_master)
+                if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', table):
+                    continue
+                quoted = '"' + table.replace('"', '""') + '"'
                 # Columns info
-                cursor.execute(f"PRAGMA table_info({table})")
+                cursor.execute(f"PRAGMA table_info({quoted})")
                 cols = cursor.fetchall()
                 columns_list = []
                 for col in cols:
@@ -171,7 +176,7 @@ async def crawl_schema(db_url: str) -> Dict[str, Any]:
                     })
 
                 # Foreign keys info
-                cursor.execute(f"PRAGMA foreign_key_list({table})")
+                cursor.execute(f"PRAGMA foreign_key_list({quoted})")
                 fks = cursor.fetchall()
                 fk_list = []
                 for fk in fks:
@@ -709,13 +714,16 @@ Do not output anything else. Only output exactly 3 lines.
             
             # Formulate query
             if args.table:
-                sql = f"SELECT * FROM {args.table}"
+                if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', args.table):
+                    print(f"Invalid table name: {args.table!r} (must match ^[A-Za-z_][A-Za-z0-9_]*$)", file=sys.stderr)
+                    sys.exit(1)
+                quoted_table = '"' + args.table.replace('"', '""') + '"'
+                sql = f"SELECT * FROM {quoted_table}"
             else:
                 sql = args.sql
             
             # Enforce limits
             if args.limit:
-                import re
                 if not re.search(r'\bLIMIT\s+\d+\b', sql, re.IGNORECASE):
                     sql = f"{sql.rstrip(';')} LIMIT {args.limit}"
 

@@ -84,16 +84,16 @@ def clean_sql(sql: str) -> str:
                 sql = "S" + sql
                 sql_upper = sql.upper().strip()
             else:
-                # Last resort: prepend SELECT if it looks like SQL
+                # Do not synthesize SELECT * - fail-closed per data minimization
                 if any(keyword in sql_upper for keyword in ["FROM", "WHERE", "JOIN"]):
-                    sql = "SELECT * " + sql
-                    logger.warning("Prepended 'SELECT *' to SQL query")
-                    sql_upper = sql.upper().strip()
+                    raise ValueError(
+                        f"SQL query failed safety validation: must start with SELECT after cleaning: {sql[:100]}"
+                    )
 
     # Step 5: Final validation - ensure it starts with SELECT or WITH after cleaning
     if not (sql_upper.startswith("SELECT") or _WITH_PREFIX_RE.match(sql_upper)):
         raise ValueError(
-            f"SQL query does not start with SELECT after cleaning: {sql[:100]}"
+            f"SQL query failed safety validation: does not start with SELECT after cleaning: {sql[:100]}"
         )
 
     logger.info("Cleaned SQL query: %s", sql[:200])
