@@ -169,10 +169,14 @@ class Policy:
     columns: frozenset[str] = frozenset()
     masked_columns: frozenset[str] = frozenset()
     row_scope: dict[str, str] = field(default_factory=dict)
+    action: str = "select"
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> Policy:
         """Build a policy from its raw configured representation."""
+        raw_action = value.get("action") or value.get("actions")
+        if isinstance(raw_action, list) and raw_action:
+            raw_action = raw_action[0]
         return cls(
             id=str(value.get("id") or value.get("name") or "unnamed"),
             effect=str(value.get("effect", "allow")).lower(),
@@ -189,6 +193,7 @@ class Policy:
                 str(column).lower(): str(subject_attribute)
                 for column, subject_attribute in (value.get("row_scope") or {}).items()
             },
+            action=str(raw_action or "select").lower(),
         )
 
 
@@ -311,13 +316,14 @@ class PolicyEvaluator:
             raise RuntimeError("Policy configuration is invalid.") from exc
 
     @staticmethod
-    def _matches(policy: Policy, principal: Principal, database_id: str, table: str) -> bool:
+    def _matches(policy: Policy, principal: Principal, database_id: str, table: str, action: str = "select") -> bool:
         return (
             (policy.org_id is None or policy.org_id == principal.org_id)
             and (policy.principal_id is None or policy.principal_id == principal.user_id)
             and (not policy.roles or bool(policy.roles & principal.roles))
             and (policy.database_id is None or policy.database_id == database_id)
             and (policy.table is None or policy.table == table.lower())
+            and (policy.action in ("select", "*") or policy.action == action.lower())
         )
 
     def evaluate(

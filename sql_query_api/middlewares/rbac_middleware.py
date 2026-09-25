@@ -60,10 +60,10 @@ class RBACMiddleware:
 
             request.state.principal = principal
 
-            if principal.role not in self.ALLOWED_ROLES:
-                log_audit_event("auth_failed", reason="unauthorized_role", role=principal.role, path=request.url.path)
+            if not principal.has_any_role(self.ALLOWED_ROLES):
+                log_audit_event("auth_failed", reason="unauthorized_role", role=principal.role, roles=list(principal.roles), path=request.url.path)
                 response = JSONResponse(
-                    status_code=40,
+                    status_code=403,
                     content={"detail": "Forbidden: user role is not authorized to access this API."},
                 )
                 await response(scope, receive, send)
