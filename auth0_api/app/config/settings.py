@@ -46,7 +46,7 @@ class Settings:
     # cookie, so an empty value would silently produce forgeable sessions.
     # In dev, generates ephemeral key if not configured.
     APP_SECRET_KEY: str = _get_app_secret_key()
-    SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", "3600"))
+    SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", "1800"))
     SESSION_COOKIE_SECURE: bool = os.getenv(
         "SESSION_COOKIE_SECURE", "true" if _PRODUCTION else "false"
     ).strip().lower() in {"1", "true", "yes"}

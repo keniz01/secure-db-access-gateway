@@ -129,7 +129,7 @@ def validate_access_token(token: str | None) -> dict[str, Any] | None:
             algorithms=["RS256"],
             audience=AUTH0_AUDIENCE,
             issuer=AUTH0_ISSUER or f"https://{AUTH0_DOMAIN}/",
-            leeway=10,
+            leeway=2,
             options={"require": ["exp", "iss", "aud", "sub"]},
         )
         # Scope is requested but RS authorizes via policy engine; if scope is
@@ -137,10 +137,9 @@ def validate_access_token(token: str | None) -> dict[str, Any] | None:
         scope_val = claims.get("scope") or claims.get("scp")
         if scope_val is not None and not isinstance(scope_val, str):
             return None
-        # Optional strict scope check: uncomment to require specific scopes
-        # expected = {"openid", "profile", "email"}
-        # if scope_val and not expected.intersection(set(scope_val.split())):
-        #     return None
+        expected = {"openid", "profile", "email"}
+        if scope_val and not expected.intersection(set(scope_val.split())):
+            return None
         return claims
     except (InvalidTokenError, ValueError, TypeError):
         return None
