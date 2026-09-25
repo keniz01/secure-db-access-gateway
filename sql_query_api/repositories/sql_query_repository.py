@@ -443,8 +443,10 @@ class SqlQueryRepository(ISqlQueryRepository):
 
         tables_list = []
         for table in tables:
-            safe_table = table.replace("'", "''")
-            cols_res = await conn.execute(text(f"PRAGMA table_info('{safe_table}')"))
+            if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', table):
+                continue
+            quoted = '"' + table.replace('"', '""') + '"'
+            cols_res = await conn.execute(text(f"PRAGMA table_info({quoted})"))
             cols = cols_res.fetchall()
             columns_list = []
             for col in cols:
@@ -469,7 +471,7 @@ class SqlQueryRepository(ISqlQueryRepository):
                     ),
                 })
 
-            fks_res = await conn.execute(text(f"PRAGMA foreign_key_list('{safe_table}')"))
+            fks_res = await conn.execute(text(f"PRAGMA foreign_key_list({quoted})"))
             fks = fks_res.fetchall()
             fk_list = []
             for fk in fks:
