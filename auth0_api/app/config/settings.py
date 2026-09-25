@@ -15,6 +15,24 @@ load_dotenv()
 
 _PRODUCTION = is_environment_production()
 
+# Ephemeral fallback for dev: generate random key if not configured
+def _get_app_secret_key() -> str:
+    raw = read_secret("APP_SECRET_KEY", required=_PRODUCTION)
+    if raw:
+        return raw
+    if not _PRODUCTION:
+        import secrets
+        import warnings
+
+        ephemeral = secrets.token_hex(32)
+        warnings.warn(
+            "APP_SECRET_KEY not configured - using ephemeral random key (sessions will not persist across restarts). Set APP_SECRET_KEY or APP_SECRET_KEY_FILE for stable sessions.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return ephemeral
+    return ""
+
 
 class Settings:
     """Application configuration settings."""
@@ -26,10 +44,8 @@ class Settings:
 
     # Session signing key. Required in production; it signs the gateway_session
     # cookie, so an empty value would silently produce forgeable sessions.
-    APP_SECRET_KEY: str = read_secret(
-        "APP_SECRET_KEY",
-        required=_PRODUCTION,
-    )
+    # In dev, generates ephemeral key if not configured.
+    APP_SECRET_KEY: str = _get_app_secret_key()
     SESSION_MAX_AGE: int = int(os.getenv("SESSION_MAX_AGE", "3600"))
     SESSION_COOKIE_SECURE: bool = os.getenv(
         "SESSION_COOKIE_SECURE", "true" if _PRODUCTION else "false"

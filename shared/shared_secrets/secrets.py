@@ -24,12 +24,25 @@ class MissingSecretError(RuntimeError):
 
 def is_environment_production() -> bool:
     """Return whether the runtime environment is a production deployment."""
-    return os.getenv("ENVIRONMENT", "development").lower() in {"production", "prod"}
+    # Default to production (fail-closed) - dev must explicitly set ENVIRONMENT=dev
+    return os.getenv("ENVIRONMENT", "production").lower() in {"production", "prod"}
 
 
 def _source_file(name: str) -> str | None:
     path = os.getenv(f"{name}_FILE", "").strip()
-    return path or None
+    if not path:
+        return None
+    # Validate path does not contain traversal and is absolute when configured
+    if ".." in path:
+        import warnings
+
+        warnings.warn(
+            f"Secret file path for '{name}' contains '..' traversal: {path}",
+            UserWarning,
+            stacklevel=3,
+        )
+        return None
+    return path
 
 
 def _read_file(path: str, name: str) -> str:
@@ -37,6 +50,14 @@ def _read_file(path: str, name: str) -> str:
         with open(path, encoding="utf-8") as handle:
             return handle.read()
     except FileNotFoundError:
+        # Warn when a *_FILE path was explicitly configured but missing - silent failure hides mis-mounts
+        import warnings
+
+        warnings.warn(
+            f"Secret file for '{name}' not found at {path}. Check {name}_FILE mount.",
+            UserWarning,
+            stacklevel=3,
+        )
         return ""
     except OSError as exc:
         raise RuntimeError(f"Unable to read secret file for '{name}' at {path}.") from exc
@@ -75,17 +96,19 @@ def read_secret(
         MissingSecretError: A required secret resolved to no value.
     """
     value = os.getenv(name)
-    if value:
-        return value.strip()
+    if value is not None:
+        stripped = value.strip()
+        if stripped:
+            return stripped
 
     path = _source_file(name)
     if path:
         content = _read_file(path, name)
         if content:
-            value = content.strip()
-
-    if value:
-        return value
+            stripped_content = content.strip()
+            if stripped_content:
+                return stripped_content
+            # File exists but empty after strip - treat as missing
     if required:
         raise MissingSecretError(
             error_message
