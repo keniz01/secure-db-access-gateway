@@ -33,8 +33,16 @@ class Principal:
 
     @property
     def role(self) -> str:
-        """Return the highest role understood by this application."""
+        """Return the highest role understood by this application (deprecated)."""
         return "admin" if "admin" in self.roles else "viewer"
+
+    def has_role(self, role: str) -> bool:
+        """Return whether the principal holds the given role."""
+        return role.lower() in self.roles
+
+    def has_any_role(self, roles: set[str] | frozenset[str]) -> bool:
+        """Return whether the principal holds any of the given roles."""
+        return bool(self.roles & frozenset(r.lower() for r in roles))
 
     def __post_init__(self) -> None:
         """Normalize the principal attributes mapping after initialization."""

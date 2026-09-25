@@ -27,6 +27,16 @@ import future.keywords.in
 
 default allow = false
 
+# Role hierarchy: admin inherits viewer (RBAC1). Extend here for editor, etc.
+role_hierarchy := {"admin": ["viewer"]}
+
+# Expand principal roles with inherited roles
+expanded_roles(principal_roles) := expanded {
+    direct := {r | r := principal_roles[_]}
+    inherited := {h | r := principal_roles[_]; h := role_hierarchy[r][_]}
+    expanded := direct | inherited
+}
+
 # Evaluate the request against all loaded policies.
 evaluate := result {
     # Collect all applicable policies for this request
@@ -149,7 +159,7 @@ matches_policy_partial(policy, input) {
 }
 
 matches_policy_rest(policy, input) {
-    # Match on roles (if specified)
+    # Match on roles (if specified) - with hierarchy expansion
     has_field(policy, "roles")
     count(policy.roles) > 0
     role_matches(policy.roles, input.principal.roles)
@@ -165,10 +175,31 @@ matches_policy_database(policy, input) {
     has_field(policy, "database_id")
     policy.database_id != null
     policy.database_id == input.database_id
-    matches_policy_table(policy, input)
+    matches_policy_action(policy, input)
 } else {
     # database_id not specified
     not has_field(policy, "database_id")
+    matches_policy_action(policy, input)
+}
+
+matches_policy_action(policy, input) {
+    # Match on action (if specified) - default select for gateway
+    has_field(policy, "action")
+    policy.action != null
+    policy.action != "*"
+    lower(policy.action) == lower(object.get(input, "action", "select"))
+    matches_policy_table(policy, input)
+} else {
+    # action not specified or wildcard - matches select
+    not has_field(policy, "action")
+    matches_policy_table(policy, input)
+} else {
+    has_field(policy, "action")
+    policy.action == "*"
+    matches_policy_table(policy, input)
+} else {
+    has_field(policy, "action")
+    policy.action == null
     matches_policy_table(policy, input)
 }
 
@@ -209,7 +240,7 @@ matches_policy_partial_access(policy, input) {
 }
 
 matches_policy_rest_access(policy, input) {
-    # Match on roles (if specified)
+    # Match on roles (if specified) - with hierarchy
     has_field(policy, "roles")
     count(policy.roles) > 0
     role_matches(policy.roles, input.principal.roles)
@@ -225,15 +256,31 @@ matches_policy_database_access(policy, input) {
     has_field(policy, "database_id")
     policy.database_id != null
     policy.database_id == input.database_id
-    # No table check needed for access enumeration
+    matches_policy_action_access(policy, input)
 } else {
     # database_id not specified
     not has_field(policy, "database_id")
-    # No table check needed for access enumeration
+    matches_policy_action_access(policy, input)
+}
+
+matches_policy_action_access(policy, input) {
+    has_field(policy, "action")
+    policy.action != null
+    policy.action != "*"
+    lower(policy.action) == lower(object.get(input, "action", "select"))
+} else {
+    not has_field(policy, "action")
+} else {
+    has_field(policy, "action")
+    policy.action == "*"
+} else {
+    has_field(policy, "action")
+    policy.action == null
 }
 
 role_matches(policy_roles, principal_roles) {
-    count({r | r := policy_roles[_]; r in principal_roles}) > 0
+    expanded := expanded_roles(principal_roles)
+    count({r | r := policy_roles[_]; lower(r) in {lower(e) | e := expanded[_]}}) > 0
 }
 
 check_columns(column_policies, referenced_columns) {
