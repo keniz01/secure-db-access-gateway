@@ -3,6 +3,7 @@
 Explore - Command Line Database Explorer with Headless Query, Schema-to-Wiki, and Diagnostic Analysis.
 """
 
+import re
 import sys
 import os
 import argparse
@@ -713,8 +714,7 @@ Do not output anything else. Only output exactly 3 lines.
             
             # Formulate query
             if args.table:
-                import re as _re
-                if not _re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', args.table):
+                if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', args.table):
                     print(f"Invalid table name: {args.table!r} (must match ^[A-Za-z_][A-Za-z0-9_]*$)", file=sys.stderr)
                     sys.exit(1)
                 quoted_table = '"' + args.table.replace('"', '""') + '"'
@@ -724,7 +724,6 @@ Do not output anything else. Only output exactly 3 lines.
             
             # Enforce limits
             if args.limit:
-                import re
                 if not re.search(r'\bLIMIT\s+\d+\b', sql, re.IGNORECASE):
                     sql = f"{sql.rstrip(';')} LIMIT {args.limit}"
 
