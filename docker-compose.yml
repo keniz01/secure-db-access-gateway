@@ -1,6 +1,6 @@
 services:
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports:
       - "8080:80"
       - "8443:443"
@@ -14,10 +14,20 @@ services:
         condition: service_healthy
       web_app:
         condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     command: ["sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then exec redis-server --requirepass \"$REDIS_PASSWORD\" --save \"\" --appendonly no; else exec redis-server --save \"\" --appendonly no; fi"]
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -25,6 +35,14 @@ services:
       - "6379"
     networks:
       - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 5s
@@ -34,17 +52,22 @@ services:
     restart: unless-stopped
 
   otel-lgtm:
-    image: grafana/otel-lgtm:latest
+    image: grafana/otel-lgtm:0.11.1
     ports:
-      - "3000:3000"
-      - "4317:4317"
-      - "4318:4318"
-      - "9090:9090"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:9090:9090"
     environment:
       OTEL_SERVICE_NAME: read-only-database-explorer
     networks:
       - backend
       - frontend
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
       interval: 10s
@@ -117,7 +140,7 @@ services:
       start_period: 10s
 
   opa:
-    image: openpolicyagent/opa:latest
+    image: openpolicyagent/opa:1.8.0
     expose:
       - "8181"
     volumes:
@@ -126,6 +149,14 @@ services:
       - ./sql_query_api/opa/config.yaml:/etc/opa/config.yaml:ro
     networks:
       - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
     # Dev: file mount (policies + data.json). Prod bundle mode: override
     # command to `run --config-file /etc/opa/config.yaml` and set
     # BUNDLE_SERVICE_URL. See sql_query_api/opa/config.yaml + scripts/build-opa-bundle.sh

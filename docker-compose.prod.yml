@@ -14,16 +14,18 @@
 
 services:
   nginx:
-    image: nginx:alpine
+    image: nginx:1.27-alpine
     ports: !override
       - "80:80"
       - "443:443"
 
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then exec redis-server --requirepass \"$REDIS_PASSWORD\" --save \"\" --appendonly no; else exec redis-server --save \"\" --appendonly no; fi"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -60,7 +62,7 @@ services:
 
   # Uncomment to serve bundles from the host in prod without external storage:
   # opa-bundle-server:
-  #   image: nginx:alpine
+  #   image: nginx:1.27-alpine
   #   networks:
   #     - backend
   #   volumes:

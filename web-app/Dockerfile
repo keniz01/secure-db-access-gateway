@@ -1,12 +1,12 @@
-FROM node:20-slim
+FROM node:20.18-slim
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies without lifecycle scripts (supply-chain hardening)
+RUN npm ci --ignore-scripts
 
 # Copy source code
 COPY . .
@@ -21,6 +21,10 @@ ENV VITE_SQL_GRAPHQL_BASE_URL=$VITE_SQL_GRAPHQL_BASE_URL
 
 # Build the application
 RUN npm run build
+
+# Create non-root user and drop privileges
+RUN adduser --disabled-password --gecos '' appuser && chown -R appuser /app
+USER appuser
 
 # Expose port
 EXPOSE 5173
