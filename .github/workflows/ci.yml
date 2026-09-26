@@ -108,6 +108,7 @@ jobs:
           category: grype-fs
       - name: Generate SBOM with Syft
         uses: anchore/sbom-action@v0
+        continue-on-error: true
         with:
           path: "."
           format: "cyclonedx-json=sbom.cdx.json"
