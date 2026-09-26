@@ -124,6 +124,7 @@ services:
       OPA_URL: ${OPA_URL:-http://opa:8181}
       OPA_ENABLED: ${OPA_ENABLED:-false}
       CREDS_DIR: /creds
+      TENANT_DATABASES_CONFIG_FILE: /config/tenant_databases.json
     networks:
       - backend
     depends_on:
@@ -135,6 +136,7 @@ services:
         condition: service_started
     volumes:
       - creds_data:/creds:ro
+      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -181,26 +183,26 @@ services:
     restart: unless-stopped
 
   # Credential rotation sidecar - rotates PostgreSQL passwords daily
+  # Reads tenant config from /config/tenant_databases.json
   # Writes rotated credentials to shared volume for sql_query_api
   creds-rotator:
     image: postgres:16-alpine
     command: ["/bin/sh", "/rotate_creds.sh", "--loop"]
     environment:
-      PG_HOST: ${PG_HOST:-postgres}
-      PG_PORT: ${PG_PORT:-5432}
-      PG_ADMIN_USER: ${PG_ROTATOR_ADMIN_USER:-rotator_admin}
-      PG_ADMIN_PASS: ${PG_ROTATOR_ADMIN_PASS}
+      CONFIG_FILE: /config/tenant_databases.json
       CREDS_DIR: /creds
-      TENANTS_JSON: ${TENANTS_ROTATION_JSON:-}
-      ROTATION_INTERVAL: ${ROTATION_INTERVAL:-86400}
+      ADMIN_PASSWORD_FILE: /run/secrets/pg_rotator_admin_pass
     volumes:
       - ./sql_query_api/scripts/rotate_creds.sh:/rotate_creds.sh:ro
+      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
       - creds_data:/creds
     networks:
       - backend
     depends_on:
       postgres:
         condition: service_healthy
+    secrets:
+      - pg_rotator_admin_pass
     read_only: true
     cap_drop:
       - ALL
@@ -274,6 +276,10 @@ networks:
 volumes:
   postgres_data:
   creds_data:
+
+secrets:
+  pg_rotator_admin_pass:
+    file: ${PG_ROTATOR_ADMIN_PASS_FILE:-./secrets/pg_rotator_admin_pass.txt}
 
 # Secrets are injected as environment variables from a single env file
 # (GATEWAY_ENV_FILE, default .env) that never enters version control. There are

@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "tenants": {
+    "tenant-a": {
+      "databases": {
+        "default": {
+          "credential_mode": "rotated",
+          "role_name": "analytics",
+          "host": "postgres",
+          "port": 5432,
+          "db_name": "analytics",
+          "data_schema": "public",
+          "metadata_schema": "meta",
+          "rotation": {
+            "enabled": true,
+            "interval_seconds": 86400
+          }
+        }
+      }
+    },
+    "tenant-b": {
+      "databases": {
+        "default": {
+          "credential_mode": "rotated",
+          "role_name": "analytics",
+          "host": "postgres",
+          "port": 5432,
+          "db_name": "analytics",
+          "data_schema": "public",
+          "metadata_schema": "meta",
+          "rotation": {
+            "enabled": true,
+            "interval_seconds": 86400
+          }
+        }
+      }
+    }
+  },
+  "rotation": {
+    "admin_user": "rotator_admin",
+    "admin_password_file": "/run/secrets/pg_rotator_admin_pass"
+  }
+}

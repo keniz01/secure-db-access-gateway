@@ -202,13 +202,40 @@ class TenantDatabaseResolver:
         return isinstance(database_id, str) and bool(cls._DATABASE_ID_PATTERN.fullmatch(database_id.strip()))
 
     @classmethod
+    def from_config_file(cls, config_path: str | None = None) -> TenantDatabaseResolver:
+        """Load tenant mappings from the unified JSON config file."""
+        config_file = config_path or os.getenv("TENANT_DATABASES_CONFIG_FILE", "/config/tenant_databases.json")
+        if not os.path.exists(config_file):
+            raise RuntimeError(f"Tenant database config file not found: {config_file}")
+        try:
+            with open(config_file) as f:
+                config = json.load(f)
+        except (json.JSONDecodeError, OSError) as exc:
+            raise RuntimeError(f"Failed to load tenant database config from {config_file}") from exc
+
+        # Validate config structure
+        if not isinstance(config, dict) or "tenants" not in config:
+            raise RuntimeError("Invalid tenant database config: missing 'tenants' key")
+
+        bindings = cls._parse_config(config)
+        if not bindings:
+            raise RuntimeError("Tenant database configuration must contain at least one mapping.")
+        return cls(bindings)
+
+    @classmethod
     def from_environment(cls) -> TenantDatabaseResolver:
-        """Load tenant mappings from JSON in an environment variable or secret file."""
+        """Load tenant mappings from config file (preferred) or legacy env var (fallback)."""
+        # Try config file first
+        config_file = os.getenv("TENANT_DATABASES_CONFIG_FILE", "/config/tenant_databases.json")
+        if os.path.exists(config_file):
+            return cls.from_config_file(config_file)
+
+        # Fallback to legacy TENANT_DATABASES_JSON env var
         raw_config = os.getenv("TENANT_DATABASES_JSON", "").strip()
         if not raw_config:
             raw_config = read_secret(
                 "TENANT_DATABASES_JSON",
-                required=True,
+                required=False,
                 error_message=(
                     "Tenant database configuration is required via TENANT_DATABASES_JSON "
                     "or TENANT_DATABASES_JSON_FILE."
@@ -217,8 +244,8 @@ class TenantDatabaseResolver:
 
         if not raw_config:
             raise RuntimeError(
-                "Tenant database configuration is required via TENANT_DATABASES_JSON "
-                "or TENANT_DATABASES_JSON_FILE."
+                "Tenant database configuration not found. "
+                "Provide config file at /config/tenant_databases.json or set TENANT_DATABASES_JSON."
             )
         try:
             parsed = json.loads(raw_config)
@@ -228,6 +255,99 @@ class TenantDatabaseResolver:
         if not bindings:
             raise RuntimeError("Tenant database configuration must contain at least one mapping.")
         return cls(bindings)
+
+    @classmethod
+    def _parse_config(cls, config: dict) -> list[TenantDatabaseConfig]:
+        """Parse the new unified config format."""
+        result: list[TenantDatabaseConfig] = []
+        tenants = config.get("tenants", {})
+
+        for tenant_id, tenant_data in tenants.items():
+            databases = tenant_data.get("databases", {})
+            for database_id, db_config in databases.items():
+                credential_mode = db_config.get("credential_mode", "static")
+
+                # Common fields
+                data_schema = db_config.get("data_schema", "public")
+                metadata_schema = db_config.get("metadata_schema", "meta")
+
+                pool_size = db_config.get("pool_size")
+                if pool_size is not None:
+                    pool_size = int(pool_size)
+                max_overflow = db_config.get("max_overflow")
+                if max_overflow is not None:
+                    max_overflow = int(max_overflow)
+                pool_timeout = db_config.get("pool_timeout")
+                if pool_timeout is not None:
+                    pool_timeout = float(pool_timeout)
+                pool_recycle = db_config.get("pool_recycle")
+                if pool_recycle is not None:
+                    pool_recycle = int(pool_recycle)
+
+                if credential_mode == "static":
+                    connection_string = db_config.get("connection_string")
+                    if not connection_string:
+                        raise ValueError(f"Static mode requires connection_string for {tenant_id}/{database_id}")
+
+                    replica_connection_string = db_config.get("replica_connection_string")
+                    use_read_replica = db_config.get("use_read_replica")
+                    if use_read_replica is None and replica_connection_string:
+                        use_read_replica = True
+
+                    result.append(
+                        TenantDatabaseConfig(
+                            org_id=tenant_id,
+                            database_id=database_id,
+                            credential_mode="static",
+                            connection_string=connection_string,
+                            data_schema=data_schema,
+                            metadata_schema=metadata_schema,
+                            replica_connection_string=replica_connection_string,
+                            use_read_replica=bool(use_read_replica),
+                            pool_size=pool_size,
+                            max_overflow=max_overflow,
+                            pool_timeout=pool_timeout,
+                            pool_recycle=pool_recycle,
+                        )
+                    )
+
+                elif credential_mode == "rotated":
+                    role_name = db_config.get("role_name")
+                    host = db_config.get("host")
+                    port = db_config.get("port", 5432)
+                    db_name = db_config.get("db_name")
+                    creds_dir = db_config.get("creds_dir", "/creds")
+
+                    if not role_name:
+                        raise ValueError(f"Rotated mode requires role_name for {tenant_id}/{database_id}")
+                    if not host:
+                        raise ValueError(f"Rotated mode requires host for {tenant_id}/{database_id}")
+                    if not db_name:
+                        raise ValueError(f"Rotated mode requires db_name for {tenant_id}/{database_id}")
+
+                    result.append(
+                        TenantDatabaseConfig(
+                            org_id=tenant_id,
+                            database_id=database_id,
+                            credential_mode="rotated",
+                            role_name=role_name,
+                            host=host,
+                            port=int(port),
+                            db_name=db_name,
+                            creds_dir=creds_dir,
+                            data_schema=data_schema,
+                            metadata_schema=metadata_schema,
+                            pool_size=pool_size,
+                            max_overflow=max_overflow,
+                            pool_timeout=pool_timeout,
+                            pool_recycle=pool_recycle,
+                        )
+                    )
+
+                else:
+                    raise ValueError(f"Unknown credential_mode: {credential_mode} for {tenant_id}/{database_id}")
+
+        return result
 
     @classmethod
     def _parse_bindings(cls, parsed: object) -> list[TenantDatabaseConfig]:

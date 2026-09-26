@@ -97,8 +97,9 @@ def test_production_configuration_never_uses_legacy_database_url(monkeypatch: py
     monkeypatch.setenv("DATABASE_URL", "sqlite+aiosqlite:///legacy")
     monkeypatch.delenv("TENANT_DATABASES_JSON", raising=False)
     monkeypatch.delenv("TENANT_DATABASES_FILE", raising=False)
+    monkeypatch.delenv("TENANT_DATABASES_CONFIG_FILE", raising=False)
 
-    with pytest.raises(RuntimeError, match="Tenant database configuration is required"):
+    with pytest.raises(RuntimeError, match="Tenant database configuration not found"):
         TenantDatabaseResolver.from_environment()
 
 
