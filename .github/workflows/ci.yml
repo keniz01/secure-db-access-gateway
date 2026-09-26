@@ -95,8 +95,8 @@ jobs:
         uses: anchore/scan-action@v7
         with:
           path: "."
-          format: "sarif"
-          output: "grype-results.sarif"
+          output-format: "sarif"
+          output-file: "grype-results.sarif"
           severity-cutoff: high
           fail-build: false
       - name: Upload Grype results to GitHub Security
