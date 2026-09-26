@@ -123,6 +123,7 @@ services:
       OTEL_SERVICE_NAME: sql-query-api
       OPA_URL: ${OPA_URL:-http://opa:8181}
       OPA_ENABLED: ${OPA_ENABLED:-false}
+      CREDS_DIR: /creds
     networks:
       - backend
     depends_on:
@@ -130,6 +131,10 @@ services:
         condition: service_healthy
       opa:
         condition: service_healthy
+      creds-rotator:
+        condition: service_started
+    volumes:
+      - creds_data:/creds:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
@@ -175,23 +180,65 @@ services:
       start_period: 5s
     restart: unless-stopped
 
-  # Optional bundle server for OPA hot-reload (prod). Serves bundle.tar.gz
-  # built by `scripts/build-opa-bundle.sh`. Enable by uncommenting and
-  # setting OPA to bundle mode (see docker-compose.prod.yml).
-  # opa-bundle-server:
-  #   image: nginx:alpine
-  #   expose:
-  #     - "8080"
-  #   networks:
-  #     - backend
-  #   volumes:
-  #     - ./sql_query_api/bundle.tar.gz:/usr/share/nginx/html/bundle.tar.gz:ro
-  #   healthcheck:
-  #     test: ["CMD", "wget", "--spider", "-q", "http://localhost:8080/bundle.tar.gz"]
-  #     interval: 10s
-  #     timeout: 5s
-  #     retries: 5
-  #   restart: unless-stopped
+  # Credential rotation sidecar - rotates PostgreSQL passwords daily
+  # Writes rotated credentials to shared volume for sql_query_api
+  creds-rotator:
+    image: postgres:16-alpine
+    command: ["/bin/sh", "/rotate_creds.sh", "--loop"]
+    environment:
+      PG_HOST: ${PG_HOST:-postgres}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_ADMIN_USER: ${PG_ROTATOR_ADMIN_USER:-rotator_admin}
+      PG_ADMIN_PASS: ${PG_ROTATOR_ADMIN_PASS}
+      CREDS_DIR: /creds
+      TENANTS_JSON: ${TENANTS_ROTATION_JSON:-}
+      ROTATION_INTERVAL: ${ROTATION_INTERVAL:-86400}
+    volumes:
+      - ./sql_query_api/scripts/rotate_creds.sh:/rotate_creds.sh:ro
+      - creds_data:/creds
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # PostgreSQL for tenant databases (add if not exists)
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
 
   web_app:
     build: ./web-app
@@ -224,8 +271,9 @@ networks:
     # network membership (web_app/frontend cannot reach backend) rather
     # than blocking all external egress.
 
-# volumes:
-#   postgres_data:
+volumes:
+  postgres_data:
+  creds_data:
 
 # Secrets are injected as environment variables from a single env file
 # (GATEWAY_ENV_FILE, default .env) that never enters version control. There are
