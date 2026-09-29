@@ -1,0 +1,13 @@
+{
+  "tenants": {
+    "org-1": {
+      "databases": {
+        "default": {
+          "credential_mode": "static",
+          "data_schema": "music",
+          "metadata_schema": "meta"
+        }
+      }
+    }
+  }
+}

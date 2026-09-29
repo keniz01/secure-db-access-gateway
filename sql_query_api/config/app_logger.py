@@ -1,4 +1,5 @@
 import contextvars
+import hashlib
 import json
 import os
 import re
@@ -38,6 +39,7 @@ def configure_telemetry() -> None:
 
 
 _correlation_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="N/A")
+_audit_hash_chain_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("audit_hash_chain", default="")
 
 _CORRELATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
 
@@ -64,6 +66,21 @@ def reset_current_correlation_id(token: contextvars.Token[str]) -> None:
     _correlation_id_ctx.reset(token)
 
 
+def get_current_audit_hash() -> str:
+    """Retrieve the current audit hash chain value."""
+    return _audit_hash_chain_ctx.get()
+
+
+def set_current_audit_hash(audit_hash: str) -> contextvars.Token[str]:
+    """Set the audit hash chain value; returns a reset token."""
+    return _audit_hash_chain_ctx.set(audit_hash)
+
+
+def reset_current_audit_hash(token: contextvars.Token[str]) -> None:
+    """Restore the audit hash chain context."""
+    _audit_hash_chain_ctx.reset(token)
+
+
 # Add a default 'correlation_id' if not provided
 def ensure_correlation_id(record: dict[str, object]) -> bool:
     """Attach a default correlation ID to every log record."""
@@ -76,15 +93,33 @@ def ensure_correlation_id(record: dict[str, object]) -> bool:
 
 
 def log_audit_event(event_type: str, **payload: object) -> None:
-    """Emit a structured JSON audit event to stdout with correlation metadata."""
+    """Emit a structured JSON audit event to stdout with correlation metadata and hash chaining."""
     cid = get_current_correlation_id()
+    prev_hash = get_current_audit_hash()
+
+    # Create payload without audit metadata for hashing
+    hash_payload = {k: v for k, v in payload.items() if k not in ("audit_hash", "prev_audit_hash")}
+    hash_input = json.dumps(
+        {"event": event_type, "timestamp": datetime.now(timezone.utc).isoformat(), **hash_payload},
+        default=str,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    current_hash = hashlib.sha256((prev_hash + hash_input).encode("utf-8")).hexdigest()
+
     event = {
         "event": event_type,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **payload,
         "correlation_id": cid,
+        "audit_hash": current_hash,
+        "prev_audit_hash": prev_hash,
     }
-    bind_kwargs = {**payload, "correlation_id": cid}
+
+    # Update the hash chain for the next event
+    set_current_audit_hash(current_hash)
+
+    bind_kwargs = {**payload, "correlation_id": cid, "audit_hash": current_hash}
     logger.bind(**bind_kwargs).info(json.dumps(event, default=str, separators=(",", ":")))
 
 

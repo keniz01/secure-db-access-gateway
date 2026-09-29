@@ -2,6 +2,7 @@
 Text-to-SQL service for converting natural language queries to SQL.
 """
 
+import hashlib
 import re
 from typing import Dict, List, Optional, Any
 import httpx
@@ -258,11 +259,9 @@ class TextToSqlService:
             if not sql:
                 raise AIServiceError("LLM returned empty SQL query")
 
-            logger.debug("Raw SQL response from LLM: %s", sql[:200])
-
             ok, precheck_feedback = self._precheck_sql(sql)
             if ok:
-                logger.info("Generated SQL query (raw): %s", sql[:200])
+                logger.info("Generated SQL query (hash=%s)", hashlib.sha256(sql.encode()).hexdigest()[:16])
                 return sql
 
             logger.warning("SQL pre-check failed (attempt %d): %s", attempt, precheck_feedback)
