@@ -107,11 +107,13 @@ async def add_security_headers(request, call_next):
 - Length limit: 10,000 characters max (prevents memory exhaustion)
 - Query type validation: Only `SELECT` statements allowed
 - Existing SQL safety checker: Prevents subqueries, CTEs, DDL, DML
+- **Strict SQL cleaning**: LLM-generated SQL is normalized (markdown fences, `SQL:` prefix, `ELECT`→`SELECT`) but **never repaired or synthesized** — invalid queries are rejected, not rewritten
 
 **Files Modified:**
 - `sql_query_api/routes/sql_query_controller.py`
 - `sql_query_api/repositories/sql_validators/sql_safety_checker.py`
 - `sql_query_api/services/query_gateway.py`
+- `sql_query_api/repositories/sql_validators/sql_cleaner.py`
 
 **Implementation:**
 ```python
@@ -126,7 +128,80 @@ if not sql.lower().startswith("select"):
     raise ValueError("Only SELECT statements are allowed.")
 ```
 
-### 5. Error Handling ✅
+#### Per-Tenant Overload Quotas
+- **Issue**: Unbounded concurrent queries can exhaust database resources.
+- **Solution**: Per-tenant semaphore-based concurrency control with configurable limits.
+
+**Measures:**
+- `TENANT_CONCURRENT_LIMIT` (default: 5) — max simultaneous queries per tenant
+- `TENANT_QUEUE_LIMIT` (default: 10) — max queued queries per tenant
+- Returns `429`-style `PermissionError` with descriptive message when limits exceeded
+- Semaphore released on success, validation error, or policy denial
+
+**Files Modified:**
+- `sql_query_api/services/query_gateway.py`
+
+#### Layered Rate Limiting
+- **Issue**: IP-only rate limiting can be bypassed or unfairly penalize shared IPs.
+- **Solution**: Multi-dimensional rate limiting with independent budgets.
+
+**Measures:**
+- `RATE_LIMIT_IP_MAX` (default: 120/min) — client IP budget
+- `RATE_LIMIT_PRINCIPAL_MAX` (default: 60/min) — authenticated user budget
+- `RATE_LIMIT_TENANT_MAX` (default: 200/min) — tenant/org budget
+- `RATE_LIMIT_DATABASE_MAX` (default: 100/min) — logical database budget
+- Request rejected if **ANY** dimension limit exceeded
+- Legacy `RATE_LIMIT_MAX_REQUESTS` maintained for backward compatibility
+
+**Files Modified:**
+- `sql_query_api/middlewares/rate_limit_middleware.py`
+
+#### Correlation ID Propagation
+- **Issue**: Distributed tracing requires consistent correlation IDs across services.
+- **Solution**: End-to-end correlation ID flow from nginx → FastAPI → OPA → audit logs.
+
+**Measures:**
+- Middleware extracts/validates/generates correlation IDs (charset/length validated)
+- Invalid client-supplied IDs rejected; new UUID generated
+- `X-Correlation-ID` header included in all responses (success + error)
+- OPA evaluator propagates correlation ID in HTTP requests
+- Correlation ID included in structured audit events
+
+**Files Modified:**
+- `sql_query_api/middlewares/correlation_middleware.py`
+- `sql_query_api/config/app_logger.py`
+- `sql_query_api/services/opa_policy_engine.py`
+
+### 5. Audit Logging & Tamper Evidence ✅
+
+#### Structured Audit Events with Hash Chaining
+- **Issue**: Audit logs can be modified or deleted without detection.
+- **Solution**: SHA256 hash chaining where each event includes hash of previous event + current payload.
+
+**Measures:**
+- `log_audit_event()` emits `audit_hash` (SHA256 of `prev_hash + payload`) and `prev_audit_hash`
+- Chain starts empty; each event links to previous — tampering breaks the chain
+- Raw SQL excluded from audit by default (`AUDIT_LOG_RAW_SQL=false`)
+- Audit payload includes: `event`, `timestamp`, `correlation_id`, `audit_hash`, `prev_audit_hash`, plus event-specific metadata
+- Audit events for: `sql_query`, `policy_denied`, `sql_validation_failed`, `sql_query_started`, `query_rejected_overload`
+
+**Files Modified:**
+- `sql_query_api/config/app_logger.py`
+
+**Implementation:**
+```python
+def log_audit_event(event_type: str, **payload: object) -> None:
+    cid = get_current_correlation_id()
+    prev_hash = get_current_audit_hash()
+    hash_input = json.dumps({"event": event_type, "timestamp": ..., **payload}, sort_keys=True)
+    current_hash = hashlib.sha256((prev_hash + hash_input).encode()).hexdigest()
+    set_current_audit_hash(current_hash)
+    event = {"event": event_type, "timestamp": ..., **payload, "correlation_id": cid,
+             "audit_hash": current_hash, "prev_audit_hash": prev_hash}
+    logger.bind(...).info(json.dumps(event))
+```
+
+### 6. Error Handling ✅
 
 #### Sensitive Information Protection
 - **Issue**: Detailed error messages expose internal implementation details.
@@ -327,6 +402,12 @@ curl -I http://localhost:8001/api/health
 - [ ] Firewall rules configured
 - [ ] Regular security updates scheduled
 - [ ] Backup and recovery plan documented
+- [ ] Per-tenant quotas configured (`TENANT_CONCURRENT_LIMIT`, `TENANT_QUEUE_LIMIT`)
+- [ ] Layered rate limits configured (`RATE_LIMIT_IP_MAX`, `RATE_LIMIT_PRINCIPAL_MAX`, `RATE_LIMIT_TENANT_MAX`, `RATE_LIMIT_DATABASE_MAX`)
+- [ ] Correlation ID propagation verified (nginx → FastAPI → OPA → audit)
+- [ ] Audit hash chaining enabled (`AUDIT_LOG_RAW_SQL=false` default)
+- [ ] CI actions pinned to immutable SHAs (verify `.github/workflows/ci.yml`)
+- [ ] Tenant config validation script runs in CI (`validate_tenant_config.py`)
 
 ## Future Security Enhancements
 
@@ -339,7 +420,7 @@ curl -I http://localhost:8001/api/health
 7. **Penetration Testing** - Regular security audits
 8. **Security Monitoring** - Real-time threat detection
 
-Already implemented (not future): edge rate limiting (`nginx/nginx.conf:11 nginx: api_limit 60r/m burst 20, auth_limit 5r/m burst 3`), comprehensive audit logging (`sql_query_api/services/audit`), RBAC + ABAC policy engine.
+Already implemented (not future): edge rate limiting (`nginx/nginx.conf:11 nginx: api_limit 60r/m burst 20, auth_limit 5r/m burst 3`), comprehensive audit logging (`sql_query_api/services/audit`), RBAC + ABAC policy engine, **per-tenant overload quotas**, **layered rate limiting**, **correlation ID propagation**, **audit hash chaining**, **strict SQL cleaning (no repair)**.
 
 ## Security Contact
 
@@ -351,5 +432,5 @@ For security issues, please report responsibly:
 ---
 
 **Last Updated:** September 2026  
-**Security Patch Version:** 1.2.0  
+**Security Patch Version:** 1.3.0  
 **Status:** Development

@@ -54,7 +54,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 ### SQL safety & query execution
 
 - `sql_query_api` is strictly SELECT-only. Any new query path must go through the governed pipeline (safety/AST validation, tenant resolution, auto-LIMIT, read-only transaction flags, masking, audit) — see `services/query_gateway.py` and `middlewares/rbac_middleware.py`.
-- `clean_sql()` in `sql_cleaner.py` may prepend `SELECT * ` if the cleaned query doesn't start with SELECT but contains FROM/JOIN — beware widening scans.
+- `clean_sql()` in `sql_cleaner.py` **no longer prepends `SELECT *`** — it only strips markdown fences, `SQL:` prefixes, fixes `ELECT`→`SELECT`, normalizes whitespace, and rejects queries that don't start with SELECT or WITH. Invalid queries are rejected, not repaired.
 - The GraphQL `SqlStatementRequest.database_id` defaults to `"default"` — verify this is a valid database_id for the org; otherwise tenant resolution may succeed unexpectedly.
 - Cost threshold defaults to score 16 → deny (`SQL_QUERY_COST_THRESHOLD`); row limit default 5000 (`SQL_QUERY_MAX_ROW_LIMIT`); result size limit default 5MB (`SQL_QUERY_MAX_RESULT_BYTES`); query timeout default 30s (`SQL_QUERY_TIMEOUT_SECONDS`).
 - GraphQL introspection (`__schema`/`__type`) is disabled in production via `DisableIntrospection` extension; always-on in dev.
@@ -74,12 +74,15 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - GraphQL depth limiter: max depth 6; alias limiter: max 100 aliases.
 - Introspection disabled in production — but `get_table_schema` and `introspect_schema` remain available to authenticated users; no per-query rate limiting beyond nginx IP limits.
 - Query cost, timeout, and row/byte limits are the primary DB-enforced DoS guards.
+- **Per-tenant overload quotas**: `TENANT_CONCURRENT_LIMIT` (default 5) concurrent queries, `TENANT_QUEUE_LIMIT` (default 10) queued queries per `(org_id, database_id)` — returns `PermissionError` when exceeded.
+- **Layered rate limiting**: IP (`RATE_LIMIT_IP_MAX`), Principal (`RATE_LIMIT_PRINCIPAL_MAX`), Tenant (`RATE_LIMIT_TENANT_MAX`), Database (`RATE_LIMIT_DATABASE_MAX`) — request rejected if ANY limit exceeded.
 
 ### Audit logging
 
-- `log_audit_event` is called for: `sql_query`, `schema_embedding_lookup`, `schema_introspection`, `auth_failed`, `tenant_resolution_failed`, `sql_query_started`, `sql_validation_failed`, `simulate_policy_evaluated`.
-- Audit payload includes `user`, `org_id`, `database_id`, `query_hash`, `tables_touched`, `reason`, `decision_allowed`, `decision_reason`.
-- Raw SQL included in audit when `AUDIT_LOG_RAW_SQL=true` — disable in production.
+- `log_audit_event` is called for: `sql_query`, `schema_embedding_lookup`, `schema_introspection`, `auth_failed`, `tenant_resolution_failed`, `sql_query_started`, `sql_validation_failed`, `simulate_policy_evaluated`, `query_rejected_overload`, `policy_denied`.
+- Audit payload includes `user`, `org_id`, `database_id`, `query_hash`, `tables_touched`, `reason`, `decision_allowed`, `decision_reason`, `audit_hash`, `prev_audit_hash`, `correlation_id`.
+- **Hash chaining**: each event includes `audit_hash` (SHA256 of `prev_hash + payload`) and `prev_audit_hash` — tampering breaks the chain.
+- Raw SQL included in audit when `AUDIT_LOG_RAW_SQL=true` — disable in production (default `false`).
 - Policy denies and `permission_error` events may not all be logged — verify coverage if audit compliance is required.
 
 ### Dependency / supply-chain risk
