@@ -10,6 +10,7 @@ import httpx
 from loguru import logger
 
 from auth import Principal
+from config.app_logger import get_current_correlation_id
 from services.policy_engine import EffectiveAccess, PolicyDecision
 
 
@@ -125,6 +126,13 @@ class OpaPolicyEvaluator:
             )
         return self._client
 
+    def _get_correlation_header(self) -> dict[str, str]:
+        """Get correlation ID header for OPA requests."""
+        cid = get_current_correlation_id()
+        if cid and cid != "N/A":
+            return {"X-Correlation-ID": cid}
+        return {}
+
     async def close(self) -> None:
         """Close the HTTP client."""
         if self._client and not self._client.is_closed:
@@ -138,9 +146,12 @@ class OpaPolicyEvaluator:
         """Send a query to OPA and return the result, or None on failure."""
         try:
             client = await self._get_client()
+            headers = {"Content-Type": "application/json"}
+            headers.update(self._get_correlation_header())
             response = await client.post(
                 f"/v1/data{path}",
                 json={"input": input_doc},
+                headers=headers,
             )
             response.raise_for_status()
             data = response.json()
