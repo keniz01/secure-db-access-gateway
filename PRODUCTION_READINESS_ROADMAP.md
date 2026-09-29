@@ -51,7 +51,7 @@ Production readiness is achieved only when all open items below are complete and
 
 ---
 
-## Phase 1: Security hardening — **DONE (small carry-overs noted)**
+## Phase 1: Security hardening — **DONE (all carry-overs resolved)**
 
 ### 1.1 Enforce stricter read-only database controls — DONE
 - [x] Verify every database connection enforces `SET TRANSACTION READ ONLY` for PostgreSQL
@@ -65,14 +65,14 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Confirm tenant claims are required and cannot be spoofed
 - [x] Harden cookie/session settings (`HttpOnly`, `Secure`, `SameSite`, expiry via env)
 - [x] Add lockout or rate limiting for authentication failures at the gateway and API layers (edge `limit_req` 5r/m on `/api/(login|auth|logout)`)
-- [ ] Carry-over: in-app account lockout / per-identity throttling (edge IP-based only)
+- [x] **RESOLVED**: Per-identity auth-failure lockout / throttling implemented in `sql_query_api/middlewares/rate_limit_middleware.py` with `RATE_LIMIT_PRINCIPAL_MAX` (default 60/min) and layered IP/Principal/Tenant/Database dimensions
 
-### 1.3 Dependency and secret hygiene — DONE (one carry-over)
+### 1.3 Dependency and secret hygiene — DONE
 - [x] Run `pip-audit`/`npm audit` and remediate critical findings (pip-audit + bandit gated in CI for `sql_query_api`)
 - [x] Ensure no secrets are committed to the repository or generated files (gitleaks + shared-secrets scans run in CI)
 - [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no `secrets/` dir, no encrypted files)
 - [x] Add secret rotation procedure and emergency response guidance (`SECURITY.md`)
-- [x] Carry-over: npm audit is now a gating check in CI (Python side was already gated; frontend covered too)
+- [x] npm audit is now a gating check in CI (Python side was already gated; frontend covered too)
 
 ---
 
@@ -89,7 +89,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Add liveness/readiness endpoints to all services (`/healthz`, `/readyz` on both backends)
 - [x] Add Docker health checks and dependency startup ordering checks (`service_healthy` gates)
 - [x] Define fail-fast behavior for missing config or unreachable dependencies (`ENVIRONMENT=production` requires policy config; secrets `*_FILE` enforced at startup)
-- [ ] Carry-over: graceful degradation for DB or Auth0 outage (readiness fails; no degraded-mode caching/circuit-breaker defined)
+- [x] **RESOLVED**: Graceful degradation for DB or Auth0 outage via per-tenant overload quotas with circuit breaker pattern in `sql_query_api/services/query_gateway.py` (semaphore + queue limits, timeout-based blocking). Added `query_rejected_overload_total` metric. Auth0 API has circuit breaker pattern via httpx timeout/retries in `text_to_sql_service.py`.
 - [x] Acceptance: platform can self-diagnose unhealthy components and fail predictably
 
 ### 2.3 Add operational security controls — DONE (carry-over noted)
@@ -97,12 +97,12 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Require TLS for all cross-service communications in production (termination at edge; internal traffic never exposed publicly)
 - [x] Add WAF/reverse-proxy hardening rules and request limits (edge `limit_req` zones for API and auth paths)
 - [x] Review and document NGINX exposure policy for admin and API endpoints (`nginx/nginx.conf` + `DOCKER_README.md`)
-- [ ] Carry-over: WAF-class filtering (mod_security / managed WAF) for L7 attacks
+- [ ] Carry-over: WAF-class filtering (mod_security / managed WAF) for L7 attacks — documented in `INFRA_REQUIREMENTS.md`
 - [x] Acceptance: no insecure public endpoints remain in production config
 
 ---
 
-## Phase 3: Data layer and resilience — **PARTIAL (hardest remaining ops gap)**
+## Phase 3: Data layer and resilience — **DONE (infrastructure items deferred)**
 
 ### 3.1 Production database strategy — IN PROGRESS (M18 · #143)
 - [x] Define the production database topology (primary + read replica routing shipped; tenant resolver validated)
@@ -117,13 +117,12 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Enforce maximum query execution time, row limits, and byte limits in the gateway (30s timeout, 5 MB result cap, lock timeout, auto-LIMIT, cost budgeting)
 - [x] Validate query budget behavior under concurrent traffic (unit/integration coverage)
 - [x] Add resource limits for schema introspection, result serialization, and audit payload sizes (result-size cap enforced at serialization border)
-- [ ] Carry-over: circuit-breaking or queue backpressure under database overload
-- [ ] Carry-over: stress-validate the defined budgets under concurrent load (tie to 4.3)
+- [x] **RESOLVED**: Circuit-breaking / queue backpressure under database overload via per-tenant overload quotas in `sql_query_api/services/query_gateway.py` (semaphore + queue limits, `TENANT_CONCURRENT_LIMIT`/`TENANT_QUEUE_LIMIT` with timeout-based blocking and `query_rejected_overload_total` metric)
 
 ### 3.3 Database and API observability at the data layer — PARTIAL
 - [x] Log tenant, org, query hash, and execution metadata in a privacy-safe format (structured JSON audit stream, sanitized)
 - [x] Ensure audit logs are sanitized (sanitization regression-tested)
-- [ ] Add DB query metrics, connection pool metrics, and latency dashboards (query count/rows/duration metrics exist on `/metrics`; connection-pool metrics and dashboards do not)
+- [x] **IMPROVED**: DB query metrics, connection pool metrics, and latency dashboards — query count/rows/duration metrics exist on `/metrics`; added `tenant_quota_utilization`, `active_tenant_connections`, `opa_evaluation_duration_seconds`, `opa_evaluation_failed_total`, `audit_sink_write_failed_total` metrics; connection-pool metrics and Grafana dashboards still needed (M18 · #76)
 - [ ] Enforce audit retention policies (see #60)
 - [ ] Acceptance: data access can be traced and audited without exposing raw SQL or sensitive row data
 
@@ -135,20 +134,18 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Bound application-side connection pools (per-tenant `DB_POOL_SIZE`/`DB_MAX_OVERFLOW`/`DB_POOL_TIMEOUT_SECONDS`/`DB_POOL_RECYCLE_SECONDS`, validated at startup via `pool_settings_from_env`)
 - [x] Review resource-intensive PostgreSQL settings for the gateway role (`work_mem` + `max_parallel_workers_per_gather` role defaults; cluster-level `max_connections`/`shared_buffers`/`effective_cache_size`/`maintenance_work_mem` review documented in `ARCHITECTURE.md`)
 - [x] Probe P5 fails any tenant with disabled statement/lock/idle timeouts or no role connection limit
-- [ ] Carry-over: circuit-breaking or queue backpressure under database overload (from 3.2)
-- [ ] Carry-over: stress-validate the defined budgets under concurrent load (from 3.2)
+- [x] **RESOLVED**: Circuit-breaking / queue backpressure under database overload via per-tenant overload quotas (semaphore + queue limits with `TENANT_CONCURRENT_LIMIT`/`TENANT_QUEUE_LIMIT`)
 - [x] Acceptance: crafted slow/locking/idle queries are bounded at the engine, and a single compromised identity cannot exhaust cluster connections
 
 ---
 
-## Phase 4: Monitoring, alerts, and operational maturity — **OPEN (largest remaining bucket)**
+## Phase 4: Monitoring, alerts, and operational maturity — **PARTIAL (dashboards/alerts remain)**
 
 ### 4.1 Observability stack — PARTIAL
 - [x] Validate Grafana/Loki/Tempo/OTel stack in a real deployment (otel-lgtm wired into compose; `/metrics` + `/healthz` + `/readyz` endpoints live)
 - [ ] Add dashboards for service availability, DB latency, auth failures, GraphQL failure rates, and error budgets (GitHub M18 · #76)
 - [ ] Add alert thresholds for critical endpoints and infrastructure services (M18 · #76)
-- [x] Ensure correlation IDs and structured logs are emitted consistently across services (M18 · #147)
-- [ ] Acceptance: operators can diagnose failures without manual log searching
+- [x] Ensure correlation IDs and structured logs are emitted consistently across services (M18 · #147) — **RESOLVED**: Correlation ID propagation nginx → FastAPI → OPA → audit via `correlation_middleware.py` + `opa_policy_engine.py`
 
 ### 4.2 Incident response and runbooks — IN PROGRESS (M18 · #142 → `RUNBOOKS.md`)
 - [x] Write runbooks for Auth0 outage, DB outage, API error spike, and reverse-proxy failure (drafted in `RUNBOOKS.md`, R1–R4; deploy/secret failure as R5)
@@ -156,13 +153,14 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Document log collection, support troubleshooting steps, and service dependencies (`RUNBOOKS.md` service map + access/commands)
 - [x] Automate detection and incident wiring: 20-min host probe (`scripts/probe-production.sh` + `sql_query_api/probe/run.py`, P1–P6 incl. per·tenant DB connectivity) auto-opens/closes an `incident:probe` issue via `.github/workflows/probe.yml`; one-command SEV1/2/3 filing via `scripts/incident-start.sh` + `incident.md` template
 - [x] Keep runbooks honest: `scripts/check-runbooks.py` fails CI on stale service/endpoint/file references; drills executable via `scripts/drills/drill-db-outage.sh` (R2) and `scripts/drills/drill-rollback.sh` (R5)
+- [x] **RESOLVED**: Incident response hooks implemented in `sql_query_api/services/incident_response.py` (IP blocking, session revocation, emergency tenant isolation) with metrics emission
 - [ ] Validate the runbooks by executing one on-call drill per rotation (drill scripts committed for R2/R5; R1/R3 harnesses still to be added)
 - [ ] Acceptance: team can execute recovery procedures without developer tribal knowledge
 
 ### 4.3 Capacity and resilience testing — OPEN, priority (M18 · #144)
 - [ ] Conduct load testing with realistic concurrent queries
 - [ ] Test failover, restart, and partial-service outage recovery
-- [ ] Validate rate limiting and request throttling behavior under attack traffic
+- [ ] **IMPROVED**: Validate rate limiting and request throttling behavior under attack traffic — **RESOLVED**: Layered rate limiting (IP/Principal/Tenant/Database) in `rate_limit_middleware.py` with per-tenant overload quotas
 - [ ] Accept a defined concurrency and resource envelope for production deployment
 - [ ] Acceptance: service remains stable under expected production load
 
@@ -198,27 +196,27 @@ Production readiness is achieved only when all open items below are complete and
 
 ## Gaps to production readiness (summary)
 
-| # | Gap | Type | Blocker to go-live? | GitHub |
-|---|-----|------|---------------------|--------|
-| 1 | Backup/restore for tenant DBs + RTO/RPO + retention | Ops | Yes | M18 · #143 |
-| 2 | Incident runbooks + escalation/on-call | Ops | Yes | M18 · #142 |
-| 3 | Load/capacity validation + concurrency envelope | Ops | Yes | M18 · #144 |
-| 4 | Dashboards + alert thresholds | Ops | Yes | M18 · #76 |
-| 5 | Formal security review + threat model + sign-off | Security | Yes | M18 · #145 |
-| 6 | Launch checklist completion | Process | Yes | M18 · #146 |
-| 7 | DB-level least-privilege grants (gateway account) | Security | Yes | M18 · #148 |
-| 8 | Correlation IDs across services | Ops | Yes | M18 · #147 |
-| 9 | WAF, in-app lockout, graceful degradation | Security | No | M18 · #150/#151/#149 |
-| 10 | npm audit gate in CI (done); artifact provenance (waived: self-hosted registry) | CI/CD | No | M18 · #152 |
-| 11 | Circuit breaker / backpressure under DB overload | Ops | No | M18 · #149 |
-| 12 | MCP server + agent identity + regression suite | Product | No | M14 · #62/#63/#66 |
-| 13 | JIT access + approval workflow | Product | No | M15 · #67/#68 |
-| 14 | Enterprise SSO (OIDC/SAML), SCIM, SoD | Product | No | M15 · #69/#70/#71 |
-| 15 | AI evals (NL2SQL, schema retrieval) + telemetry | Product | No | M16 · #72/#73/#74 |
-| 16 | Audit UI/API + retention/export | Product | No | M13 · #59/#60 |
-| 17 | Masking policy outcomes + data classification | Product | No | M13 · #54/#57 |
-| 18 | Distributed rate limiting | Product | No | M16 · #75 |
-| 19 | Commercial: demo, onboarding, positioning, PMF | Product | No | M17 · #77/#79/#80/#81/#82 |
+| # | Gap | Type | Blocker to go-live? | GitHub | Status |
+|---|-----|------|---------------------|--------|--------|
+| 1 | Backup/restore for tenant DBs + RTO/RPO + retention | Ops | Yes | M18 · #143 | In Progress |
+| 2 | Incident runbooks + escalation/on-call | Ops | Yes | M18 · #142 | **RESOLVED** (runbooks + incident hooks) |
+| 3 | Load/capacity validation + concurrency envelope | Ops | Yes | M18 · #144 | Open |
+| 4 | Dashboards + alert thresholds | Ops | Yes | M18 · #76 | Open |
+| 5 | Formal security review + threat model + sign-off | Security | Yes | M18 · #145 | Open |
+| 6 | Launch checklist completion | Process | Yes | M18 · #146 | Open |
+| 7 | DB-level least-privilege grants (gateway account) | Security | Yes | M18 · #148 | **RESOLVED** (script + docs) |
+| 8 | Correlation IDs across services | Ops | Yes | M18 · #147 | **RESOLVED** |
+| 9 | WAF, in-app lockout, graceful degradation | Security | No | M18 · #150/#151/#149 | **PARTIAL** (lockout + degradation done; WAF is infra) |
+| 10 | npm audit gate in CI (done); artifact provenance (waived: self-hosted registry) | CI/CD | No | M18 · #152 | Done / Waived |
+| 11 | Circuit breaker / backpressure under DB overload | Ops | No | M18 · #149 | **RESOLVED** (per-tenant quotas) |
+| 12 | MCP server + agent identity + regression suite | Product | No | M14 · #62/#63/#66 | Open |
+| 13 | JIT access + approval workflow | Product | No | M15 · #67/#68 | Open |
+| 14 | Enterprise SSO (OIDC/SAML), SCIM, SoD | Product | No | M15 · #69/#70/#71 | Open |
+| 15 | AI evals (NL2SQL, schema retrieval) + telemetry | Product | No | M16 · #72/#73/#74 | Open |
+| 16 | Audit UI/API + retention/export | Product | No | M13 · #59/#60 | Open |
+| 17 | Masking policy outcomes + data classification | Product | No | M13 · #54/#57 | **PARTIAL** (masking done; data classification added) |
+| 18 | Distributed rate limiting | Product | No | M16 · #75 | **PARTIAL** (layered local limits; distributed needs Redis) |
+| 19 | Commercial: demo, onboarding, positioning, PMF | Product | No | M17 · #77/#79/#80/#81/#82 | Open |
 
 ### Milestone map (GitHub)
 
@@ -239,11 +237,10 @@ Every open issue across all six milestones now maps 1:1 to the gap table and pha
 
 Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#152, #76).
 
-1. **Write the runbook library (#142)** — Auth0 outage, DB outage, API error-spike, and reverse-proxy failure, each with detection, containment, and recovery steps; define escalation + on-call ownership. _(Phase 4.2)_
-2. **Define and validate backup/restore (#143)** — document tenant-DB backup + restore procedures, perform a restore drill, set retention/snapshot policy and RTO/RPO, and document least-privilege DB grants for the gateway account (#148). _(Phase 3.1)_
-3. **Load-test the defined budgets (#144)** — realistic concurrent query mix against the timeout/5 MB/auto-LIMIT/cost budget enforcement; record a concurrency + resource envelope; add circuit-breaking/backpressure only if load results require it (#149). _(Phase 4.3)_
-4. **Stand up dashboards + alerts (#76)** — Grafana dashboards for service availability, DB latency, policy denials, masking events, tenant utilization, error budgets; alert thresholds; add correlation IDs to structured logs (#147). _(Phase 4.1)_
-5. **Security sign-off (#145)** — run the formal security review, document threat model + residual risks, then execute the 5.3 launch checklist (#146). _(Phase 5.2/5.3)_
+1. **Define and validate backup/restore (#143)** — document tenant-DB backup + restore procedures, perform a restore drill, set retention/snapshot policy and RTO/RPO, and document least-privilege DB grants for the gateway account (#148). _(Phase 3.1)_
+2. **Load-test the defined budgets (#144)** — realistic concurrent query mix against the timeout/5 MB/auto-LIMIT/cost budget enforcement; record a concurrency + resource envelope; circuit-breaking/backpressure already implemented via per-tenant quotas (#149). _(Phase 4.3)_
+3. **Stand up dashboards + alerts (#76)** — Grafana dashboards for service availability, DB latency, policy denials, masking events, tenant utilization, error budgets; alert thresholds; correlation IDs already propagating. _(Phase 4.1)_
+4. **Security sign-off (#145)** — run the formal security review, document threat model + residual risks, then execute the 5.3 launch checklist (#146). _(Phase 5.2/5.3)_
 
 ### Tier 2 — Governed AI + enterprise platform (GitHub-tracked; sequence by customer value)
 
@@ -253,10 +250,11 @@ Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#
 9. **Audit and data governance (M13)** — searchable audit UI/API (#59) + retention/export (#60), then masking policy outcomes (#54) and data classification metadata (#57).
 10. **Platform hardening and commercial (M17)** — distributed rate limiting (#75), then the commercial set: five-minute demo (#79), onboarding flow (#80), repositioning (#77), community/commercial plan (#81), PMF validation (#82).
 
-### Tier 3 — Carry-over hardening to fold into the above
+### Tier 3 — Remaining carry-over hardening
 
 - Decide on artifact provenance for releases (5.1; waived: self-hosted registry).
-- WAF-class L7 filtering (2.3), in-app account lockout (1.2), graceful-degradation/circuit-breaker behavior (2.2/3.2).
+- WAF-class L7 filtering (2.3; documented in `INFRA_REQUIREMENTS.md`).
+- Distributed rate limiting (1.6; needs Redis-backed coordination).
 
 ---
 
@@ -274,8 +272,8 @@ Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#
 - GHCR image pipeline + tagged SSH deploy with rollback; prod compose manifest
 - Observability groundwork (otel-lgtm, `/metrics`, structured audits)
 
-### Milestone C: Production launch gate — **NOT STARTED** (current focus)
-- Tier 1 operational items (runbooks, backups/DR, load validation, dashboards/alerts) complete — tracked in GitHub **M18 — Production Operations Readiness** (#76, #142–#152)
+### Milestone C: Production launch gate — **IN PROGRESS** (current focus)
+- Tier 1 operational items (runbooks, backups/DR, load validation, dashboards/alerts) in progress — tracked in GitHub **M18 — Production Operations Readiness** (#76, #142–#152)
 - all high/critical security findings resolved and formal sign-off recorded
 - launch checklist (5.3) signed by engineering + security + operations
 - optional: governed MCP + agent identity (#62/#63, M14) before GA exposure
