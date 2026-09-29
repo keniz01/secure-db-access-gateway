@@ -13,7 +13,15 @@ from typing import Any, Protocol, Union
 
 from auth import Principal
 from config.app_logger import log_audit_event
-from metrics import observe_query
+from metrics import (
+    observe_query,
+    record_auth_failed,
+    record_policy_denied,
+    record_query_rejected_overload,
+    record_query_validation_failed,
+    set_tenant_quota_utilization,
+    set_active_tenant_connections,
+)
 from repositories.sql_validators.sql_safety_checker import SqlSafetyChecker
 from services.abstract_sql_query_service import ISqlQueryService
 from services.policy_engine import (
@@ -114,8 +122,12 @@ class GovernedQueryGateway:
                 self._audit("query_rejected_overload", user=request.principal.email,
                             org_id=request.principal.org_id, database_id=binding.database_id,
                             reason="Tenant query queue limit exceeded", queue_limit=quota.queue_limit)
+                record_query_rejected_overload(request.principal.org_id, binding.database_id)
                 raise PermissionError(f"Tenant query queue full (limit: {quota.queue_limit}). Please retry later.")
             quota.current_queued += 1
+            # Update quota utilization metrics
+            set_tenant_quota_utilization(request.principal.org_id, binding.database_id, "queued", quota.current_queued / quota.queue_limit)
+            set_active_tenant_connections(request.principal.org_id, binding.database_id, quota.current_queued)
 
         # Acquire semaphore with timeout to prevent indefinite blocking
         semaphore_acquired = False
@@ -124,10 +136,14 @@ class GovernedQueryGateway:
             try:
                 await asyncio.wait_for(quota.semaphore.acquire(), timeout=30.0)
                 semaphore_acquired = True
+                # Update active connections metric
+                set_active_tenant_connections(request.principal.org_id, binding.database_id, 
+                                             quota.max_concurrent - quota.semaphore._value)
             except asyncio.TimeoutError:
                 self._audit("query_rejected_overload", user=request.principal.email,
                             org_id=request.principal.org_id, database_id=binding.database_id,
                             reason="Tenant concurrency limit timeout", concurrent_limit=quota.max_concurrent)
+                record_query_rejected_overload(request.principal.org_id, binding.database_id)
                 raise PermissionError(f"Tenant concurrency limit busy (limit: {quota.max_concurrent}). Please retry later.")
 
             cleaned_sql = self._safety_checker.clean_and_validate_sql(request.sql)
@@ -136,6 +152,7 @@ class GovernedQueryGateway:
                 self._audit("policy_denied", user=request.principal.email, org_id=request.principal.org_id,
                             database_id=binding.database_id, reason=decision.reason,
                             policy_ids=list(decision.policy_ids))
+                record_policy_denied(request.principal.org_id, decision.reason)
                 raise PermissionError(decision.reason)
 
             # Row scoping is injected per-SELECT at the AST level so every branch,
@@ -178,8 +195,13 @@ class GovernedQueryGateway:
         finally:
             if semaphore_acquired:
                 quota.semaphore.release()
+                # Update metrics on release
+                set_active_tenant_connections(request.principal.org_id, binding.database_id,
+                                             quota.max_concurrent - quota.semaphore._value)
             async with self._quotas_lock:
                 quota.current_queued = max(0, quota.current_queued - 1)
+                set_tenant_quota_utilization(request.principal.org_id, binding.database_id, "queued", 
+                                             quota.current_queued / quota.queue_limit)
 
     async def evaluate(self, request: GovernedQueryRequest, sql: str | None = None) -> PolicyDecision:
         """Evaluate the policy decision for a request against the given statement."""

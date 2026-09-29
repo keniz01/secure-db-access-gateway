@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,10 @@ from loguru import logger
 
 from auth import Principal
 from config.app_logger import get_current_correlation_id
+from metrics import (
+    observe_opa_evaluation,
+    record_opa_evaluation_failed,
+)
 from services.policy_engine import EffectiveAccess, PolicyDecision
 
 
@@ -21,6 +26,12 @@ class OpaConfig:
     url: str
     timeout: float = 5.0
     enabled: bool = True
+    # mTLS configuration
+    mtls_enabled: bool = False
+    mtls_cert_path: str | None = None
+    mtls_key_path: str | None = None
+    mtls_ca_path: str | None = None
+    mtls_verify: bool = True
 
     @classmethod
     def from_environment(cls) -> OpaConfig:
@@ -43,6 +54,13 @@ class OpaConfig:
         enabled = raw_enabled in ("true", "1", "yes")
         production = is_environment_production()
 
+        # mTLS configuration
+        mtls_enabled = os.getenv("OPA_MTLS_ENABLED", "").strip().lower() in ("true", "1", "yes")
+        mtls_cert_path = os.getenv("OPA_MTLS_CERT_PATH") or read_secret("OPA_MTLS_CERT_PATH", required=False)
+        mtls_key_path = os.getenv("OPA_MTLS_KEY_PATH") or read_secret("OPA_MTLS_KEY_PATH", required=False)
+        mtls_ca_path = os.getenv("OPA_MTLS_CA_PATH") or read_secret("OPA_MTLS_CA_PATH", required=False)
+        mtls_verify = os.getenv("OPA_MTLS_VERIFY", "").strip().lower() not in ("false", "0", "no")
+
         if not raw_url:
             if production and not os.getenv("CI"):
                 logger.warning(
@@ -51,7 +69,7 @@ class OpaConfig:
                     "Preferred: set OPA_ENABLED=true and OPA_URL=http://opa:8181 "
                     "and serve policies via bundle (scripts/build-opa-bundle.sh)."
                 )
-            return cls(url="", timeout=5.0, enabled=False)
+            return cls(url="", timeout=5.0, enabled=False, mtls_enabled=mtls_enabled)
 
         # Log bundle hint in production so operators migrate off inline JSON
         if production and os.getenv("POLICY_POLICIES_JSON"):
@@ -60,7 +78,16 @@ class OpaConfig:
                 "OPA bundle (sql_query_api/opa/config.yaml + BUNDLE_SERVICE_URL)."
             )
 
-        return cls(url=raw_url.rstrip("/"), timeout=5.0, enabled=enabled)
+        return cls(
+            url=raw_url.rstrip("/"),
+            timeout=5.0,
+            enabled=enabled,
+            mtls_enabled=mtls_enabled,
+            mtls_cert_path=mtls_cert_path,
+            mtls_key_path=mtls_key_path,
+            mtls_ca_path=mtls_ca_path,
+            mtls_verify=mtls_verify,
+        )
 
 
 class OpaPolicyEvaluator:
@@ -117,13 +144,22 @@ class OpaPolicyEvaluator:
         return cls(config=config)
 
     async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create the HTTP client for OPA communication."""
+        """Get or create the HTTP client for OPA communication with optional mTLS."""
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
-                base_url=self._config.url,
-                timeout=self._config.timeout,
-                headers={"Content-Type": "application/json"},
-            )
+            client_kwargs = {
+                "base_url": self._config.url,
+                "timeout": self._config.timeout,
+                "headers": {"Content-Type": "application/json"},
+            }
+            if self._config.mtls_enabled:
+                if not self._config.mtls_cert_path or not self._config.mtls_key_path:
+                    raise RuntimeError("OPA mTLS enabled but cert/key paths not configured")
+                client_kwargs["cert"] = (self._config.mtls_cert_path, self._config.mtls_key_path)
+                if self._config.mtls_ca_path:
+                    client_kwargs["verify"] = self._config.mtls_ca_path
+                else:
+                    client_kwargs["verify"] = self._config.mtls_verify
+            self._client = httpx.AsyncClient(**client_kwargs)
         return self._client
 
     def _get_correlation_header(self) -> dict[str, str]:
@@ -142,8 +178,11 @@ class OpaPolicyEvaluator:
         self,
         path: str,
         input_doc: dict[str, Any],
+        org_id: str,
+        database_id: str,
     ) -> dict[str, Any] | None:
         """Send a query to OPA and return the result, or None on failure."""
+        started = time.perf_counter()
         try:
             client = await self._get_client()
             headers = {"Content-Type": "application/json"}
@@ -155,15 +194,19 @@ class OpaPolicyEvaluator:
             )
             response.raise_for_status()
             data = response.json()
+            observe_opa_evaluation(org_id, database_id, time.perf_counter() - started)
             return data.get("result")
         except httpx.TimeoutException:
             logger.error("OPA query timed out for path: {}", path)
+            record_opa_evaluation_failed(org_id, database_id)
             return None
         except httpx.HTTPStatusError as exc:
             logger.error("OPA returned HTTP {}: {}", exc.response.status_code, exc.response.text)
+            record_opa_evaluation_failed(org_id, database_id)
             return None
         except Exception:
             logger.exception("OPA query failed for path: {}", path)
+            record_opa_evaluation_failed(org_id, database_id)
             return None
 
     async def evaluate(
@@ -192,7 +235,7 @@ class OpaPolicyEvaluator:
             "referenced_columns": sorted(referenced_columns) if referenced_columns else [],
         }
 
-        result = await self._query_opa("/gateway/evaluate", input_doc)
+        result = await self._query_opa("/gateway/evaluate", input_doc, principal.org_id, database_id)
 
         if result is None:
             # Fail closed: OPA unreachable or returned invalid response
@@ -245,7 +288,7 @@ class OpaPolicyEvaluator:
             "query_type": "effective_access",
         }
 
-        result = await self._query_opa("/gateway/effective_access", input_doc)
+        result = await self._query_opa("/gateway/effective_access", input_doc, principal.org_id, database_id)
 
         if result is None:
             # Fail closed

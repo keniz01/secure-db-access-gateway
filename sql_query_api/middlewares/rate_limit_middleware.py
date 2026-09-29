@@ -8,6 +8,8 @@ from fastapi import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from metrics import record_rate_limit_exceeded
+
 
 class RateLimitMiddleware:
     """
@@ -157,21 +159,25 @@ class RateLimitMiddleware:
             # IP limit
             if keys["ip"]:
                 if not await self._check_limit(keys["ip"], self.ip_max_requests, self._ip_requests, cutoff, now):
+                    record_rate_limit_exceeded("ip")
                     return False, "ip"
 
             # Principal limit
             if keys["principal"]:
                 if not await self._check_limit(keys["principal"], self.principal_max_requests, self._principal_requests, cutoff, now):
+                    record_rate_limit_exceeded("principal")
                     return False, "principal"
 
             # Tenant limit
             if keys["tenant"]:
                 if not await self._check_limit(keys["tenant"], self.tenant_max_requests, self._tenant_requests, cutoff, now):
+                    record_rate_limit_exceeded("tenant")
                     return False, "tenant"
 
             # Database limit (if available)
             if keys["database"]:
                 if not await self._check_limit(keys["database"], self.database_max_requests, self._database_requests, cutoff, now):
+                    record_rate_limit_exceeded("database")
                     return False, "database"
 
             return True, ""
@@ -187,6 +193,7 @@ class RateLimitMiddleware:
                 requests.popleft()
 
             if len(requests) >= self._legacy_max:
+                record_rate_limit_exceeded("legacy")
                 return False
 
             requests.append(now)

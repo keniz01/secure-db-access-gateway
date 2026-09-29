@@ -10,6 +10,7 @@ from config.app_logger import (
     sanitize_correlation_id,
     set_current_correlation_id,
 )
+from metrics import SQL_QUERY_DURATION_SECONDS, SQL_QUERY_TOTAL
 
 try:
     from opentelemetry import trace
@@ -55,6 +56,11 @@ async def correlation_id_middleware(
         response.headers["X-Request-ID"] = correlation_id
         response.headers["X-Execution-Time"] = f"{execution_time:.4f}s"
         response.headers["X-Query-Status"] = "Success"
+
+        # Record metrics for GraphQL requests
+        if request.url.path.startswith("/graphql"):
+            SQL_QUERY_TOTAL.labels("gateway").inc()
+            SQL_QUERY_DURATION_SECONDS.labels("gateway").observe(execution_time)
 
         # Log the request/response summary while the context still carries the ID
         logger.info(

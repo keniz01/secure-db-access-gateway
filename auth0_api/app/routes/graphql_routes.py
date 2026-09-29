@@ -9,8 +9,32 @@ from app.config.settings import settings
 from app.routes.user_routes import get_authenticated_session
 from app.schemas.responses import ErrorResponse
 from app.security.csrf import csrf_failure_reason
+from app.utils.mtls_client import create_mtls_client
 
 router = APIRouter(prefix="/api", tags=["graphql"])
+
+
+# Module-level client for connection pooling
+_graphql_client: httpx.AsyncClient | None = None
+
+
+async def _get_graphql_client() -> httpx.AsyncClient:
+    """Get or create the GraphQL client with mTLS support."""
+    global _graphql_client
+    if _graphql_client is None or _graphql_client.is_closed:
+        _graphql_client = create_mtls_client(
+            base_url=settings.SQL_QUERY_API_URL,
+            timeout=30.0,
+        )
+    return _graphql_client
+
+
+async def _close_graphql_client() -> None:
+    """Close the GraphQL client."""
+    global _graphql_client
+    if _graphql_client and not _graphql_client.is_closed:
+        await _graphql_client.aclose()
+        _graphql_client = None
 
 
 @router.post("/graphql")
@@ -38,10 +62,10 @@ async def proxy_graphql(request: Request):
         headers["X-Correlation-ID"] = cid
         headers["X-Request-ID"] = cid
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        upstream = await client.post(
-            settings.SQL_QUERY_API_URL,
-            content=await request.body(),
-            headers=headers,
-        )
+    client = await _get_graphql_client()
+    upstream = await client.post(
+        settings.SQL_QUERY_API_URL,
+        content=await request.body(),
+        headers=headers,
+    )
     return Response(content=upstream.content, status_code=upstream.status_code, media_type=upstream.headers.get("content-type"))
