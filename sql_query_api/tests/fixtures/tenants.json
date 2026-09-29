@@ -1,0 +1,35 @@
+{
+  "tenants": {
+    "org-prod-001": {
+      "databases": {
+        "default": {
+          "credential_mode": "static",
+          "connection_string": "postgresql+asyncpg://gateway_readonly:secret@prod-db.example.com:5432/analytics",
+          "data_schema": "music",
+          "metadata_schema": "meta",
+          "pool_size": 5,
+          "max_overflow": 2
+        },
+        "reports": {
+          "credential_mode": "rotated",
+          "role_name": "gateway_readonly",
+          "host": "prod-db.example.com",
+          "port": 5432,
+          "db_name": "reports",
+          "data_schema": "public",
+          "metadata_schema": "meta"
+        }
+      }
+    },
+    "org-dev-002": {
+      "databases": {
+        "default": {
+          "credential_mode": "static",
+          "connection_string": "sqlite+aiosqlite:///:memory:",
+          "data_schema": "main",
+          "metadata_schema": "meta"
+        }
+      }
+    }
+  }
+}

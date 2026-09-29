@@ -1,0 +1,24 @@
+{
+  "tenants": {
+    "org-prod": {
+      "databases": {
+        "default": {
+          "credential_mode": "static",
+          "connection_string": "postgresql+asyncpg://user:pass@prod-host:5432/db",
+          "data_schema": "public",
+          "metadata_schema": "meta"
+        }
+      }
+    },
+    "org-dev": {
+      "databases": {
+        "default": {
+          "credential_mode": "static",
+          "connection_string": "postgresql+asyncpg://user:pass@dev-host:5432/db",
+          "data_schema": "public",
+          "metadata_schema": "meta"
+        }
+      }
+    }
+  }
+}
