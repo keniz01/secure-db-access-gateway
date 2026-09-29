@@ -22,6 +22,7 @@ from middlewares.logging_middleware import LoggingMiddleware
 from middlewares.rate_limit_middleware import RateLimitMiddleware
 from middlewares.rbac_middleware import RBACMiddleware
 from routes.health_routes import router as health_router
+from routes.admin_routes import router as admin_router
 
 
 def setup_cors_middleware(app: FastAPI) -> None:
@@ -140,7 +141,28 @@ def setup_routes(app: FastAPI) -> None:
             media_type="text/plain; version=0.7.0; charset=utf-8",
         )
 
+    @app.post("/csp-report")
+    async def csp_report_endpoint(request: Request) -> Response:
+        """CSP violation reporting endpoint.
+
+        Browsers POST CSP violation reports here when 'report-uri' or 'report-to'
+        is configured in the Content-Security-Policy header.
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+
+        # Log CSP violation with correlation ID
+        from config.app_logger import log_audit_event
+        cid = getattr(request.state, "correlation_id", "N/A")
+        log_audit_event("csp_violation", csp_report=body, path=request.url.path, correlation_id=cid)
+
+        # Return 204 No Content as per CSP reporting spec
+        return Response(status_code=204)
+
     app.include_router(health_router)
+    app.include_router(admin_router)
     app.include_router(GraphQLRouter(make_schema()), prefix="/graphql")
 
 

@@ -1,0 +1,134 @@
+# Dependabot configuration for automated dependency updates
+# This file enables automated PRs for dependency updates with auto-merge for patches
+
+version: 2
+updates:
+  # Python dependencies for sql_query_api
+  - package-ecosystem: "pip"
+    directory: "/sql_query_api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "python"
+      - "sql-query-api"
+    commit-message:
+      prefix: "deps(sql-query-api)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      # Ignore major version updates that may break compatibility
+      - dependency-name: "*"
+        update-type: "version-update:semver-major"
+
+  # Python dependencies for auth0_api
+  - package-ecosystem: "pip"
+    directory: "/auth0_api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "python"
+      - "auth0-api"
+    commit-message:
+      prefix: "deps(auth0-api)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      - dependency-name: "*"
+        update-type: "version-update:semver-major"
+
+  # Node.js dependencies for web-app
+  - package-ecosystem: "npm"
+    directory: "/web-app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "nodejs"
+      - "web-app"
+    commit-message:
+      prefix: "deps(web-app)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"
+    allow:
+      - dependency-type: "direct"
+      - dependency-type: "indirect"
+    ignore:
+      - dependency-name: "*"
+        update-type: "version-update:semver-major"
+
+  # Docker dependencies
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"
+
+  # GitHub Actions dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(github-actions)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"
+
+  # Terraform dependencies (if any)
+  - package-ecosystem: "terraform"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "terraform"
+    commit-message:
+      prefix: "deps(terraform)"
+    reviewers:
+      - "keniz01"
+    assignees:
+      - "keniz01"

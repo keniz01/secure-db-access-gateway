@@ -1,0 +1,282 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+      - "8443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    networks:
+      - frontend
+    depends_on:
+      auth0_api:
+        condition: service_healthy
+      web_app:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then exec redis-server --requirepass \"$REDIS_PASSWORD\" --save \"\" --appendonly no; else exec redis-server --save \"\" --appendonly no; fi"]
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    expose:
+      - "6379"
+    networks:
+      - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  otel-lgtm:
+    image: grafana/otel-lgtm:0.11.1
+    ports:
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:9090:9090"
+    environment:
+      OTEL_SERVICE_NAME: read-only-database-explorer
+    networks:
+      - backend
+      - frontend
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  auth0_api:
+    build:
+      context: .
+      dockerfile: auth0_api/Dockerfile
+    env_file: ${GATEWAY_ENV_FILE:-.env}
+    environment:
+      AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+      AI_DISABLE_REASONING: ${AI_DISABLE_REASONING:-true}
+      EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS:-768}
+      SQL_QUERY_API_URL: http://sql_query_api:8002/graphql
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,https://localhost:5173,https://localhost:8443,http://web-app:5173}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_SERVICE_NAME: auth0-api
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    networks:
+      - frontend
+      - backend
+    depends_on:
+      redis:
+        condition: service_healthy
+      sql_query_api:
+        condition: service_healthy
+      otel-lgtm:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=3).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  sql_query_api:
+    build:
+      context: .
+      dockerfile: sql_query_api/Dockerfile
+    env_file: ${GATEWAY_ENV_FILE:-.env}
+    environment:
+      SQL_DATA_SCHEMA: ${SQL_DATA_SCHEMA:-music}
+      SQL_QUERY_COST_THRESHOLD: ${SQL_QUERY_COST_THRESHOLD:-16}
+      SQL_PRESENTATION_ENABLED: ${SQL_PRESENTATION_ENABLED:-true}
+      AI_BASE_URL: ${AI_BASE_URL:-https://openrouter.ai/api/v1}
+      AI_DISABLE_REASONING: ${AI_DISABLE_REASONING:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173,https://localhost:5173,https://localhost:8443}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
+      OTEL_SERVICE_NAME: sql-query-api
+      OPA_URL: ${OPA_URL:-http://opa:8181}
+      OPA_ENABLED: ${OPA_ENABLED:-false}
+      CREDS_DIR: /creds
+      TENANT_DATABASES_CONFIG_FILE: /config/tenant_databases.json
+    networks:
+      - backend
+    depends_on:
+      otel-lgtm:
+        condition: service_healthy
+      opa:
+        condition: service_healthy
+      creds-rotator:
+        condition: service_started
+    volumes:
+      - creds_data:/creds:ro
+      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=3).read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  opa:
+    image: openpolicyagent/opa:1.8.0
+    expose:
+      - "8181"
+    volumes:
+      - ./sql_query_api/opa/policies:/etc/opa/policies:ro
+      - ./sql_query_api/opa/data.json:/etc/opa/data.json:ro
+      - ./sql_query_api/opa/config.yaml:/etc/opa/config.yaml:ro
+    networks:
+      - backend
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - "run"
+      - "--server"
+      - "--addr=:8181"
+      - "--log-level=info"
+      - "/etc/opa/policies"
+      - "/etc/opa/data.json"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  creds-rotator:
+    image: postgres:16-alpine
+    command: ["/bin/sh", "/rotate_creds.sh", "--loop"]
+    environment:
+      CONFIG_FILE: /config/tenant_databases.json
+      CREDS_DIR: /creds
+      ADMIN_PASSWORD_FILE: /run/secrets/pg_rotator_admin_pass
+    volumes:
+      - ./sql_query_api/scripts/rotate_creds.sh:/rotate_creds.sh:ro
+      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
+      - creds_data:/creds
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    secrets:
+      - pg_rotator_admin_pass
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    read_only: false
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  web_app:
+    build: ./web-app
+    environment:
+      VITE_API_BASE_URL: https://localhost:8443
+      VITE_SQL_GRAPHQL_BASE_URL: https://localhost:8443/api/graphql
+    networks:
+      - frontend
+    ports:
+      - "5173:5173"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:5173/',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      - auth0_api
+
+networks:
+  frontend:
+    name: gateway-frontend
+    driver: bridge
+  backend:
+    name: gateway-backend
+    driver: bridge
+    # Note: not `internal: true` — sql_query_api needs egress to
+    # host.docker.internal:5432 (Postgres) and openrouter.ai, and OPA
+    # needs egress for bundle fetches (S3/GCS). Isolation is via
+    # network membership (web_app/frontend cannot reach backend) rather
+    # than blocking all external egress.
+
+volumes:
+  postgres_data:
+  creds_data:
+
+secrets:
+  pg_rotator_admin_pass:
+    file: ${PG_ROTATOR_ADMIN_PASS_FILE:-./secrets/pg_rotator_admin_pass.txt}
+
+# Secrets are injected as environment variables from a single env file
+# (GATEWAY_ENV_FILE, default .env) that never enters version control. There are
+# no secret files in this repository. Copy .env.example to .env (dev) or to
+# /etc/gateway/gateway.env (production) and fill in real values manually.

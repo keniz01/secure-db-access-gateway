@@ -1,0 +1,26 @@
+# Semgrep ignore rules with justifications
+# These patterns are intentional and reviewed for security implications
+
+# explore.py - CLI tool that re-execs itself in venv (intentional design)
+explore.py
+
+# scripts/backup-databases.py - uses shell=True for pg_dump command (intentional, pg_dump requires shell)
+scripts/backup-databases.py
+
+# sql_query_api/repositories/sql_query_repository.py - uses sqlalchemy.text() for SET ROLE and PRAGMA commands (intentional, required for DB session setup)
+sql_query_api/repositories/sql_query_repository.py
+
+# auth0_api/app/routes/auth_routes.py - logs token exchange details (intentional for debugging, no secrets logged)
+auth0_api/app/routes/auth_routes.py
+
+# nginx/nginx.conf - add_header in location block (intentional, required for CSP/CORS headers)
+nginx/nginx.conf
+
+# web-app/src/components/auth-callback.tsx - uses setTimeout with dynamic URL (intentional, controlled redirect)
+web-app/src/components/auth-callback.tsx
+
+# explore.py - uses urllib with dynamic URL (intentional, CLI tool with controlled input)
+explore.py
+
+# explore.py - uses os.execv to re-exec in venv (intentional, CLI tool design)
+explore.py

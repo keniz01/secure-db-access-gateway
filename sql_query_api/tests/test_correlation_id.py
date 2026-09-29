@@ -177,7 +177,7 @@ async def test_opa_query_includes_correlation_header():
     
     token = set_current_correlation_id("test-opa-query-correlation")
     try:
-        await evaluator._query_opa("/gateway/evaluate", {"input": "test"})
+        await evaluator._query_opa("/gateway/evaluate", {"input": "test"}, "org-1", "default")
         
         # Verify the call was made with correlation header
         call_args = mock_client.post.call_args

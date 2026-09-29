@@ -9,15 +9,27 @@ The project is structured as a three-part system:
 
 ## What’s included
 
-- SELECT-only SQL validation with blocking of DML/DDL and unsafe patterns (fail-closed `clean_sql` - no `SELECT *` synthesis)
-- Automatic query limits, cost/timeout/row-byte guards and audit logging for every SQL execution
-- Dynamic schema introspection filtered by `EffectiveAccess` (OPA/policy engine)
-- Auth0 JWT validation (`RS256`, `leeway=2s`, scope `openid/profile/email` enforced) with RBAC1 hierarchy (`admin` -> `viewer`) and SoD via OPA
-- Tenant-aware principal mapping using required `https://app.secure-db-access-gateway.org/tenant_id` claim, spoofable `X-User/Org/Tenant` headers stripped at edge + middleware
-- Server-side tenant database resolution via opaque `database_id` (no connection strings from client)
-- OPA bundle policy management (`sql_query_api/opa/policies/gateway.rego` + `data.json`, hot-reload via `scripts/build-opa-bundle.sh`, fail-closed on unreachable)
-- Docker Compose with `frontend`/`backend` network segmentation, Redis `requirepass`, pinned images, and hardened nginx TLS (Mozilla intermediate)
-- CI with SHA-pinned actions, `bandit`/`pip-audit` (both services) and `npm audit` supply-chain gates
+ - SELECT-only SQL validation with blocking of DML/DDL and unsafe patterns (fail-closed `clean_sql` - no `SELECT *` synthesis)
+ - Automatic query limits, cost/timeout/row-byte guards and audit logging for every SQL execution
+ - Dynamic schema introspection filtered by `EffectiveAccess` (OPA/policy engine)
+ - Auth0 JWT validation (`RS256`, `leeway=2s`, scope `openid/profile/email` enforced) with RBAC1 hierarchy (`admin` -> `viewer`) and SoD via OPA
+ - Tenant-aware principal mapping using required `https://app.secure-db-access-gateway.org/tenant_id` claim, spoofable `X-User/Org/Tenant` headers stripped at edge + middleware
+ - Server-side tenant database resolution via opaque `database_id` (no connection strings from client)
+ - OPA bundle policy management (`sql_query_api/opa/policies/gateway.rego` + `data.json`, hot-reload via `scripts/build-opa-bundle.sh`, fail-closed on unreachable)
+ - Docker Compose with `frontend`/`backend` network segmentation, Redis `requirepass`, pinned images, and hardened nginx TLS (Mozilla intermediate)
+ - CI with SHA-pinned actions, `bandit`/`pip-audit` (both services) and `npm audit` supply-chain gates
+ - **Per-tenant overload quotas** (concurrent query + queue limits with `429` responses)
+ - **Layered rate limiting** (IP, principal, tenant, database dimensions)
+ - **Correlation ID propagation** (nginx → FastAPI → OPA → audit logs)
+ - **Audit log hash chaining** (SHA256 chain with `audit_hash`/`prev_audit_hash`)
+ - **Envelope encryption** for data at rest (AES256-GCM with KEK wrapping via AWS KMS/GCP KMS/Vault)
+ - **Incident response hooks** (IP blocking, session revocation, emergency tenant isolation)
+ - **CSP violation reporting** endpoint
+ - **Admin access review API** (tenant bindings, OPA policies, effective access)
+ - **Data classification labels** on audit events (PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED)
+ - **SAST/DAST pipeline** (Trivy, Semgrep, OWASP ZAP)
+ - **SLSA provenance** for container images
+ - **Dependabot** automated dependency updates with patch auto-merge
 
 ## Current architecture
 
