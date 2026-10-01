@@ -5,7 +5,7 @@ from typing import Final
 
 from loguru import logger
 from punq import Container
-from shared_secrets import is_environment_production
+from shared_secrets import is_ci, is_environment_production
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from repositories.abstract_sql_query_repository import ISqlQueryRepository
@@ -182,7 +182,7 @@ def setup_container(
         # itself is powerless to stop a compromised application from writing.
         enforce_readonly_role_guardrail(
             connection_string,
-            production=is_environment_production() and not os.getenv("CI"),
+            production=is_environment_production() and not is_ci(),
         )
         # Create database engine
         logger.debug("Creating async SQLAlchemy engine...")

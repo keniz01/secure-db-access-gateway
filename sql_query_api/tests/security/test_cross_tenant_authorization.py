@@ -40,6 +40,7 @@ from dependencies.tenant_service_provider import TenantServiceProvider
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from routes import sql_query_controller
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from tests.policy_stubs import permissive_policy_evaluator
 from services.tenant_database_resolver import (
     TenantDatabaseConfig,
     TenantDatabaseResolutionError,
@@ -598,7 +599,11 @@ class TestConfusedDeputy:
         service_mock.repository.database_target = "primary"
         service_mock.execute_sql_statement = AsyncMock(return_value=[{"dummy": 1}])
 
-        gateway = GovernedQueryGateway(provider, DefaultSqlSafetyChecker())
+        gateway = GovernedQueryGateway(
+            provider,
+            DefaultSqlSafetyChecker(),
+            policy_evaluator=permissive_policy_evaluator(),
+        )
         import asyncio
 
         result = asyncio.run(
@@ -624,7 +629,11 @@ class TestConfusedDeputy:
             def resolve(self, p: Principal, database_id: str | None) -> TenantDatabaseConfig:
                 return resolver.resolve(p, database_id)
 
-        gateway = GovernedQueryGateway(DenyProvider(), DefaultSqlSafetyChecker())
+        gateway = GovernedQueryGateway(
+            DenyProvider(),
+            DefaultSqlSafetyChecker(),
+            policy_evaluator=permissive_policy_evaluator(),
+        )
         import asyncio
 
         with pytest.raises(TenantDatabaseResolutionError):

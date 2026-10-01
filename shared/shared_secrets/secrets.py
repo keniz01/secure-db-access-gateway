@@ -28,6 +28,27 @@ def is_environment_production() -> bool:
     return os.getenv("ENVIRONMENT", "production").lower() in {"production", "prod"}
 
 
+def is_ci() -> bool:
+    """Return whether the process is running inside a CI system.
+
+    Used to relax *test-only* configuration gates. Only the canonical CI
+    variables count, and each is compared against an explicit allow-list of
+    truthy spellings.
+
+    This must never be implemented as a truthiness check on ``os.getenv("CI")``:
+    that treats ``CI=false``, ``CI=0``, ``CI=no`` and ``CI=off`` as *true*,
+    because any non-empty string is truthy. An operator (or a base image, or a
+    systemd unit) exporting ``CI=false`` would then silently disable every
+    production fail-fast the gate is meant to bypass.
+    """
+    if os.getenv("GITHUB_ACTIONS", "").strip().lower() in {"true", "1", "yes"}:
+        return True
+    for name in ("CI", "CONTINUOUS_INTEGRATION", "BUILD_NUMBER"):
+        if os.getenv(name, "").strip().lower() in {"true", "1", "yes"}:
+            return True
+    return False
+
+
 def _source_file(name: str) -> str | None:
     path = os.getenv(f"{name}_FILE", "").strip()
     if not path:

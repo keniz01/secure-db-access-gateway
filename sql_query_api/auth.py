@@ -5,9 +5,9 @@ from typing import Any
 import jwt
 from fastapi import Request
 from jwt import InvalidTokenError, PyJWKClient
-from shared_secrets import is_environment_production, read_secret
+from shared_secrets import is_ci, is_environment_production, read_secret
 
-_REQUIRED_AUTH_SECRETS = is_environment_production() and not os.getenv("CI")
+_REQUIRED_AUTH_SECRETS = is_environment_production() and not is_ci()
 _LEGACY_API_AUDIENCE = os.getenv("AUTH0_API_AUDIENCE", "")
 
 AUTH0_DOMAIN = read_secret("AUTH0_DOMAIN", required=_REQUIRED_AUTH_SECRETS)

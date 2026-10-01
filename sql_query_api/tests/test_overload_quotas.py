@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from auth import Principal
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest, TenantQuota
+from tests.policy_stubs import permissive_policy_evaluator
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.tenant_database_resolver import TenantDatabaseConfig
 
@@ -59,6 +60,7 @@ def gateway(safety_checker, binding, service):
     return GovernedQueryGateway(
         provider=provider,
         safety_checker=safety_checker,
+        policy_evaluator=permissive_policy_evaluator(),
         tenant_concurrent_limit=2,
         tenant_queue_limit=3
     )
@@ -128,6 +130,7 @@ async def test_different_tenants_independent_quotas(gateway, safety_checker, bin
     gateway2 = GovernedQueryGateway(
         provider=provider2,
         safety_checker=safety_checker,
+        policy_evaluator=permissive_policy_evaluator(),
         tenant_concurrent_limit=2,
         tenant_queue_limit=3
     )
