@@ -108,7 +108,7 @@ class TestIsCiIsStrict:
         with patch.dict("os.environ", {"GITHUB_ACTIONS": "false", "CI": ""}, clear=True):
             assert is_ci() is False
 
-    def test_ci_false_does_not_disable_production_policy_gate(self) -> None:
+    def test_ci_false_does_not_disable_production_policy_gate(self, non_ci_env: None) -> None:
         """The headline A1 regression: CI=false must not unlock the fail-fast.
 
         Asserted on the *outcome* rather than a specific exception, so the test
@@ -164,7 +164,7 @@ class TestIsCiIsStrict:
 class TestProductionRequiresOpaUrl:
     """A2: missing OPA_URL in production must fail startup, not downgrade."""
 
-    def test_production_without_opa_url_raises(self) -> None:
+    def test_production_without_opa_url_raises(self, non_ci_env: None) -> None:
         env = {"ENVIRONMENT": "production", "CI": "", "OPA_URL": "", "OPA_ENABLED": ""}
         with patch.dict("os.environ", env, clear=False):
             import os
@@ -174,7 +174,7 @@ class TestProductionRequiresOpaUrl:
             with pytest.raises(RuntimeError, match="OPA_URL is required"):
                 OpaConfig.from_environment()
 
-    def test_production_with_opa_enabled_but_no_url_raises(self) -> None:
+    def test_production_with_opa_enabled_but_no_url_raises(self, non_ci_env: None) -> None:
         """The specific silent-downgrade bug: OPA_ENABLED=true, no URL."""
         env = {"ENVIRONMENT": "production", "CI": "", "OPA_ENABLED": "true"}
         with patch.dict("os.environ", env, clear=False):
@@ -185,7 +185,7 @@ class TestProductionRequiresOpaUrl:
             with pytest.raises(RuntimeError, match="OPA_URL is required"):
                 OpaConfig.from_environment()
 
-    def test_explicit_opa_disabled_is_an_accepted_opt_out(self) -> None:
+    def test_explicit_opa_disabled_is_an_accepted_opt_out(self, non_ci_env: None) -> None:
         """OPA_ENABLED=false is a deliberate operator choice, so it must not raise."""
         env = {"ENVIRONMENT": "production", "CI": "", "OPA_ENABLED": "false"}
         with patch.dict("os.environ", env, clear=False):
