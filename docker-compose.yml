@@ -175,7 +175,13 @@ services:
       - "/etc/opa/policies"
       - "/etc/opa/data.json"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8181/health"]
+      # The openpolicyagent/opa image ships no shell and no wget, so a
+      # `["CMD", "wget", ...]` probe can never succeed: the container stays
+      # unhealthy forever and everything depending on `opa: service_healthy`
+      # never starts. Probe with the only binary the image is guaranteed to
+      # have, /opa, and make it meaningful: load the same policies and data the
+      # server loads, so broken Rego or bad data is what makes this unhealthy.
+      test: ["CMD", "/opa", "eval", "--fail", "-d", "/etc/opa/data.json", "-d", "/etc/opa/policies", "data.gateway.role_hierarchy"]
       interval: 10s
       timeout: 5s
       retries: 5

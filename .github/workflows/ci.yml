@@ -157,6 +157,39 @@ jobs:
           check zap-fail-action-false "dast/Scan ZAP" "sets .fail_action:"
           echo "gate rejects every known downgrade shape"
 
+  opa-policy:
+    name: OPA Policy (compile, format, test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The same image tag the compose stack runs, so this validates the policy
+      # as it is actually served rather than against some other OPA version.
+      - name: Validate the gateway policy
+        run: |
+          set -euo pipefail
+          OPA=openpolicyagent/opa:1.8.0
+          # fmt --fail so the committed policy is canonically formatted.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" fmt --fail /w
+          # check catches anything that does not compile at all. This is the
+          # gate that was missing while gateway.rego sat broken against OPA
+          # 1.8.0 - OPA crash-looped in production and nothing complained.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" check /w
+          # test runs against the whole directory so data.json is loaded as
+          # data; testing policies/ alone would assert against zero policies.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" test /w
+          # build is what scripts/build-opa-bundle.sh produces for production.
+          # Output goes to a mounted dir via -o: a container-local path would
+          # vanish with the container, and a positional path is read as an
+          # input to load rather than a destination.
+          mkdir -p "$RUNNER_TEMP/opa-out"
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" -v "$RUNNER_TEMP/opa-out:/out" \
+            --entrypoint /opa "$OPA" build -b /w --ignore=tests -o /out/bundle.tar.gz
+          test -s "$RUNNER_TEMP/opa-out/bundle.tar.gz"
+          echo "bundle built: $(wc -c < "$RUNNER_TEMP/opa-out/bundle.tar.gz") bytes"
+
   grype-sbom:
     name: Vulnerability Scan & SBOM (Grype + Syft)
     runs-on: ubuntu-latest

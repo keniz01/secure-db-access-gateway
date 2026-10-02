@@ -12,7 +12,10 @@ MANIFEST_REVISION="${1:-dev}"
 # Avoid dirtying tracked sql_query_api/opa/.manifest — build from temp copy
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
-cp -R "$OPA_DIR"/* "$TMP_DIR"/ 2>/dev/null || cp -R "$OPA_DIR"/. "$TMP_DIR"/
+# Copy everything except tests/: *_test.rego is not policy and must never
+# reach the bundle the production OPA API serves.
+cp -R "$OPA_DIR"/. "$TMP_DIR"/
+rm -rf "$TMP_DIR/tests"
 # Ensure manifest reflects requested revision in temp build dir
 echo "{\"roots\": [\"gateway\", \"policies\"], \"revision\": \"$MANIFEST_REVISION\"}" > "$TMP_DIR/.manifest"
 
@@ -37,5 +40,9 @@ echo "  OPA_BUNDLE_URL is not set by the app; OPA fetches bundles directly."
 # Verify
 if command -v opa >/dev/null 2>&1; then
   echo "Verifying bundle..."
-  opa test "$OPA_DIR/policies" -v || true
+  # Whole directory, not policies/: data.json lives one level up, so
+  # testing policies/ alone loads no policies and every allow-case fails.
+  # No `|| true`: a failing policy test must fail the build, not print
+  # red text a human has to learn to ignore.
+  opa test "$OPA_DIR" -v
 fi
