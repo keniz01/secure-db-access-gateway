@@ -3,7 +3,9 @@
 .DS_Store
 
 # Never ship secrets into a build context: the local env file (real values),
-# any TLS key material, and the legacy secrets/ directory.
+# any TLS key material, and the gitignored secrets/ directory (which holds the
+# pg_rotator_admin_pass.txt file creds-rotator mounts; it must never be baked
+# into an image).
 .env
 .env.*
 certs/

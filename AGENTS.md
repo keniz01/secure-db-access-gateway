@@ -52,7 +52,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - `ENVIRONMENT` defaults to `production` in `sql_query_api/main.py`. In production (and not `CI`), startup fails fast if `POLICY_POLICIES_JSON` or `POLICY_POLICIES_JSON_FILE` is missing (`services/policy_engine.py`). For local dev runs set `ENVIRONMENT=dev` (also enables uvicorn reload).
 - `TENANT_DATABASES_JSON` or `TENANT_DATABASES_JSON_FILE` is required — there is no single-database fallback. It maps `org_id`/`database_id` → connection strings; clients send only a logical `database_id`, never connection strings.
 - Every token must carry the trusted tenant claim `https://app.secure-db-access-gateway.org/tenant_id`; RBAC middleware enforces it.
-- Secrets come only from env vars (or a `*_FILE` path injected by an orchestrator). The `shared_secrets.read_secret` loader checks: env var → `*_FILE` path → default. Real values live in a single gitignored env file — `.env` for dev (copied from `.env.example` by `scripts/bootstrap-dev.sh`), `/etc/gateway/gateway.env` on a host (manual provisioning). There is no `secrets/` directory and no encrypted secret files. Never hardcode credentials.
+- Secrets come only from env vars (or a `*_FILE` path injected by an orchestrator). The `shared_secrets.read_secret` loader checks: env var → `*_FILE` path → default. Real values live in a single gitignored env file — `.env` for dev (copied from `.env.example` by `scripts/bootstrap-dev.sh`), `/etc/gateway/gateway.env` on a host (manual provisioning). There are no encrypted secret files. One exception to "env vars only": the `creds-rotator` service mounts a gitignored file `secrets/pg_rotator_admin_pass.txt` (`docker-compose.yml:282`, and again in the `docker-compose.test.yml:271` overlay that CI uses), and `scripts/bootstrap-dev.sh` does NOT create it — a fresh clone needs that file (or a `PG_ROTATOR_ADMIN_PASS_FILE` override) before `docker compose up` can bring the stack up. Note `docker compose config` does **not** catch this: it validates clean with an empty `secrets/`, so the missing file only surfaces later, in `creds-rotator`. Never hardcode credentials.
 
 ### SQL safety & query execution
 
@@ -101,7 +101,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 ### Open Policy Agent (OPA)
 
 - OPA sidecar (`openpolicyagent/opa:latest`) runs on port 8181 (`expose` only, not host-mapped) for centralized policy evaluation.
-- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; set `OPA_ENABLED=true` to enable.
+- `OPA_ENABLED=false` by default in `docker-compose.yml:125` and `.env.example:154`; set `OPA_ENABLED=true` to enable.
 - OPA policy files are mounted from `sql_query_api/opa/policies/` and evaluated at `/v1/data/gateway/evaluate`.
 - When OPA is unreachable, the evaluator **fails closed** (denies all requests).
 - The `OpaPolicyEvaluator` class implements the same interface as `PolicyEvaluator` for seamless switching.

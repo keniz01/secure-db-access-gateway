@@ -282,6 +282,10 @@ secrets:
     file: ${PG_ROTATOR_ADMIN_PASS_FILE:-./secrets/pg_rotator_admin_pass.txt}
 
 # Secrets are injected as environment variables from a single env file
-# (GATEWAY_ENV_FILE, default .env) that never enters version control. There are
-# no secret files in this repository. Copy .env.example to .env (dev) or to
+# (GATEWAY_ENV_FILE, default .env) that never enters version control. No secret
+# values are committed to this repository. Copy .env.example to .env (dev) or to
 # /etc/gateway/gateway.env (production) and fill in real values manually.
+#
+# One file is required on top of the env file: secrets/pg_rotator_admin_pass.txt
+# (gitignored, mounted by creds-rotator). Override with
+# PG_ROTATOR_ADMIN_PASS_FILE. No script creates it.

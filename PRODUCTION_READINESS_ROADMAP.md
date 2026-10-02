@@ -70,7 +70,7 @@ Production readiness is achieved only when all open items below are complete and
 ### 1.3 Dependency and secret hygiene — DONE
 - [x] Run `pip-audit`/`npm audit` and remediate critical findings (pip-audit + bandit gated in CI for `sql_query_api`)
 - [x] Ensure no secrets are committed to the repository or generated files (gitleaks + shared-secrets scans run in CI)
-- [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no `secrets/` dir, no encrypted files)
+- [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no committed secret values, no encrypted files). One gitignored file remains by design: `secrets/pg_rotator_admin_pass.txt`, mounted into `creds-rotator` and created by no script.
 - [x] Add secret rotation procedure and emergency response guidance (`SECURITY.md`)
 - [x] npm audit is now a gating check in CI (Python side was already gated; frontend covered too)
 

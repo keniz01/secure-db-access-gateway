@@ -78,13 +78,16 @@ stores session cookies with the `Secure` flag.
 
 ## Secrets Management
 
-There are no secret files in the repository. All credentials live in a single
+No secret values are committed to the repository. All credentials live in a single
 env file injected by Compose:
 
 - **Dev**: `.env` (created from `.env.example` by `scripts/bootstrap-dev.sh`)
 - **Production**: `/etc/gateway/gateway.env` (provisioned manually, `chmod 600`)
 - Compose injects it into `auth0_api` and `sql_query_api` via `env_file`
   (override the path with `GATEWAY_ENV_FILE`)
+- Exception: `docker compose up` additionally needs the gitignored
+  `secrets/pg_rotator_admin_pass.txt`, which `creds-rotator` mounts
+  (`PG_ROTATOR_ADMIN_PASS_FILE` overrides the path). No script creates it.
 - Both services read values with the shared `read_secret` loader
   (`shared/shared_secrets`), which checks the env var first and then an
   optional `NAME_FILE` path for orchestrators that mount secrets as files

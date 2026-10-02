@@ -24,7 +24,7 @@ services:
       - SETGID
       - SETUID
       - NET_BIND_SERVICE
-    
+
     restart: unless-stopped
 
   redis:
@@ -42,7 +42,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    
+
     healthcheck:
       test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 5s
@@ -66,7 +66,7 @@ services:
     read_only: true
     cap_drop:
       - ALL
-    
+
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
       interval: 10s
@@ -161,7 +161,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    
+
     command:
       - "run"
       - "--server"
@@ -201,7 +201,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    
+
     restart: unless-stopped
 
   postgres:
@@ -228,7 +228,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    
+
     restart: unless-stopped
 
   web_app:
@@ -271,6 +271,9 @@ secrets:
     file: ${PG_ROTATOR_ADMIN_PASS_FILE:-./secrets/pg_rotator_admin_pass.txt}
 
 # Secrets are injected as environment variables from a single env file
-# (GATEWAY_ENV_FILE, default .env) that never enters version control. There are
-# no secret files in this repository. Copy .env.example to .env (dev) or to
+# (GATEWAY_ENV_FILE, default .env) that never enters version control. No secret
+# values are committed to this repository. Copy .env.example to .env (dev) or to
 # /etc/gateway/gateway.env (production) and fill in real values manually.
+#
+# This overlay also requires secrets/pg_rotator_admin_pass.txt (gitignored,
+# mounted by creds-rotator). Override with PG_ROTATOR_ADMIN_PASS_FILE.

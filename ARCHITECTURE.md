@@ -147,7 +147,7 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 
 **Configuration:**
 - `OPA_URL=http://opa:8181` — OPA sidecar endpoint
-- `OPA_ENABLED=false` by default in `docker-compose.yml:92` and `.env.example:126`; `docker-compose.prod.yml` sets `true`. Set `OPA_ENABLED=true` to delegate to OPA
+- `OPA_ENABLED=false` by default in `docker-compose.yml:125` and `.env.example:154`; `docker-compose.prod.yml:42` sets `true`. Set `OPA_ENABLED=true` to delegate to OPA
 - Prod bundle: `BUNDLE_SERVICE_URL=http://opa-bundle-server:8080` + `sql_query_api/opa/config.yaml` (`bundles.gateway.resource: bundle.tar.gz`, polling 10-20s)
 
 **Policy Evaluation:**
