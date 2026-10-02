@@ -24,8 +24,7 @@ services:
       - SETGID
       - SETUID
       - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
+    
     restart: unless-stopped
 
   redis:
@@ -43,8 +42,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    security_opt:
-      - no-new-privileges:true
+    
     healthcheck:
       test: ["CMD", "sh", "-c", "if [ -n \"$REDIS_PASSWORD\" ]; then redis-cli -a \"$REDIS_PASSWORD\" ping; else redis-cli ping; fi"]
       interval: 5s
@@ -68,8 +66,7 @@ services:
     read_only: true
     cap_drop:
       - ALL
-    security_opt:
-      - no-new-privileges:true
+    
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
       interval: 10s
@@ -164,8 +161,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    security_opt:
-      - no-new-privileges:true
+    
     command:
       - "run"
       - "--server"
@@ -205,8 +201,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    security_opt:
-      - no-new-privileges:true
+    
     restart: unless-stopped
 
   postgres:
@@ -233,8 +228,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
-    security_opt:
-      - no-new-privileges:true
+    
     restart: unless-stopped
 
   web_app:
