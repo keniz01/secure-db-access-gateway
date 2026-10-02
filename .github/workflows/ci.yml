@@ -607,6 +607,14 @@ jobs:
             -out certs/web_tls_cert.pem \
             -subj "/CN=localhost" \
             -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
+          # nginx runs with `cap_drop: ALL`, so its root has no DAC_OVERRIDE
+          # and cannot read a 0600 file owned by another uid - which is what
+          # openssl writes by default. Without this nginx crash-loops with
+          # `cannot load certificate key ...: Permission denied`.
+          # 644 is acceptable only because this is a throwaway one-day
+          # self-signed leaf that never leaves the runner; a real deployment
+          # must ship the key group-readable to nginx instead.
+          chmod 644 certs/web_tls_key.pem
           openssl x509 -in certs/web_tls_cert.pem -noout -subject -dates
 
       - name: Create throwaway creds-rotator secret
