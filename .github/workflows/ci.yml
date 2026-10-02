@@ -163,7 +163,20 @@ jobs:
         # artifact, which is the failure mode this step exists to prevent.
         with:
           path: "."
-          format: "cyclonedx-json=sbom.cdx.json"
+          # Do not embed the filename in `format`. sbom-action parses `format`
+          # to work out where its output landed, so
+          # `cyclonedx-json=sbom.cdx.json` made it report "No Syft output" after
+          # a scan that had in fact succeeded. The misconfiguration was on main
+          # and was masked there by `continue-on-error: true`; 0950383 removed
+          # that mask, so from that commit the step failed visibly instead.
+          format: "cyclonedx-json"
+          # output-file writes into the workspace, which is what the blocking
+          # upload step below reads. artifact-name alone only labels the
+          # action's own artifact in the runner temp dir.
+          output-file: "sbom.cdx.json"
+          # The explicit upload step below owns retention, so do not let the
+          # action publish a second copy with its own default retention.
+          upload-artifact: "false"
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Upload SBOM as artifact
         uses: actions/upload-artifact@v4
@@ -171,6 +184,8 @@ jobs:
           name: sbom-cyclonedx
           path: sbom.cdx.json
           retention-days: 30
+          # Default is `warn`, which would let a missing SBOM pass silently.
+          if-no-files-found: error
 
   trivy-fs:
     name: Trivy Filesystem Scan
