@@ -11,7 +11,7 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
 1. **Preconditions**
    - Verify `gh auth status` shows a logged-in account and `git remote get-url origin` exists. Refuse if either is missing.
    - Verify there are uncommitted changes (`git status --porcelain` non-empty). Refuse with a hint if the tree is clean.
-   - Never commit files: `.env` / `gateway.env` (gitignored real secrets), anything under `certs/` or a legacy `secrets/`, nothing that looks like a credential.
+   - Never commit files: `.env` / `gateway.env` (gitignored real secrets), anything under `certs/`, anything under `secrets/` (gitignored; holds the `pg_rotator_admin_pass.txt` file that `creds-rotator` mounts), nothing that looks like a credential.
 
 2. **Fetch and branch off main**
    - `git fetch origin main` (use a generous timeout if the network is slow).
@@ -38,7 +38,7 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
    - `git add -A`.
    - Review `git diff --cached --stat` and confirm only intended files are staged. Verify no `.env`/`certs/`/`secrets/` leaked (`git diff --cached --name-only | grep -E "^\.env$|^certs/|^secrets/"` must be empty).
    - Commit with a conventional message (`feat:`/`fix:`/`chore:` prefix + short summary) matching the repo style.
-   - **Important**: the pre-commit hook runs the opencode code-review gate and can take 60-120s (plus retries). Give the commit command a tool timeout of **no less than 600000 ms** and do NOT skip or work around the hook. If the commit times out after 400000 ms, retry once with 600000 ms. If the review reports `REVIEW_VERDICT: REQUEST_CHANGES` with `REQUIRED_FIXES`, fix those before pushing - do not push with blocking findings. If `APPROVE` or only `SUGGESTED`, proceed.
+   - **Important**: the pre-commit hook runs the opencode code-review gate and can take 60-120s (plus retries). It now also chains the `pre-commit` framework hooks (ruff diff-aware check, trailing-whitespace, ...), so the *first* commit on a fresh machine additionally installs the hook environments over the network (~1-2 min, cached in `~/.cache/pre-commit` afterwards). Give the commit command a tool timeout of **no less than 600000 ms** and do NOT skip or work around the hook. If the commit times out after 400000 ms, retry once with 600000 ms. If the review reports `REVIEW_VERDICT: REQUEST_CHANGES` with `REQUIRED_FIXES`, fix those before pushing - do not push with blocking findings. If `APPROVE` or only `SUGGESTED`, proceed.
 
 5. **Push**
    - `git push -u origin <branch>`.

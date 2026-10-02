@@ -393,17 +393,31 @@ jobs:
     # It is NOT a claim that the web surface is scanned; nothing is scanning it.
     #
     # To make this real, in order:
-    #   1. Bootstrap the stack. `docker compose up` currently aborts with
-    #      "env file .env not found". Needs .env from .env.example (via
-    #      scripts/bootstrap-dev.sh), mkcert certs for the ./certs mount, and
-    #      the secrets/pg_rotator_admin_pass.txt file creds-rotator mounts.
+    #   1. Bootstrap the stack. `docker compose up` aborts with
+    #      "env file .env not found". Partially handled by
+    #      scripts/bootstrap-dev.sh, which COPY-creates .env from .env.example
+    #      (override the path with GATEWAY_ENV_FILE) and mkcert-generates
+    #      certs/. Two gaps remain for CI:
+    #        a. `mkcert -install` writes the CA into the OS trust store and
+    #           prompts for an admin password, so it cannot run unattended.
+    #           CI needs certs generated another way, or ZAP pointed at
+    #           http://nginx:80 via the plaintext /nginx-health surface.
+    #        b. compose also requires secrets/pg_rotator_admin_pass.txt for the
+    #           creds-rotator service, and bootstrap-dev.sh does NOT create it.
+    #           Either commit a throwaway CI-only value or drop creds-rotator
+    #           from the CI overlay.
     #   2. Wait on real health, not `sleep 30` - the API services must pass
     #      /readyz before a scan is meaningful.
-    #   3. Note that sql_query_api refuses to start with ENVIRONMENT=production
-    #      and no OPA_URL, so CI env must set OPA_URL or use a non-production
-    #      ENVIRONMENT for the DAST stack.
-    #   4. Drop `continue-on-error: true` from the scan step so findings block,
+    #   3. Drop `continue-on-error: true` from the scan step so findings block,
     #      and triage whatever the first real scan reports.
+    #
+    # Note: this job will NOT trip the OPA production guard on the way up.
+    # sql_query_api only refuses to start when ENVIRONMENT=production AND
+    # OPA_URL is empty AND OPA_ENABLED is not explicitly false, and
+    # docker-compose.yml already sets OPA_URL=http://opa:8181 (line 124)
+    # with OPA_ENABLED=false (line 125). Do not rely on `is_ci()` here:
+    # compose does not forward CI/GITHUB_ACTIONS into the container, so
+    # is_ci() is False inside sql_query_api.
     continue-on-error: true
     steps:
       - name: Checkout repository

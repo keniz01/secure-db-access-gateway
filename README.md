@@ -27,7 +27,7 @@ The project is structured as a three-part system:
  - **CSP violation reporting** endpoint
  - **Admin access review API** (tenant bindings, OPA policies, effective access)
  - **Data classification labels** on audit events (PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED)
- - **SAST/DAST pipeline** (Trivy, Semgrep, OWASP ZAP)
+ - **SAST pipeline** (Trivy, Semgrep, CodeQL). DAST via OWASP ZAP is wired up but non-blocking and currently detects nothing — see threat model CI-5
  - **SLSA provenance** for container images
  - **Dependabot** automated dependency updates with patch auto-merge
 
@@ -153,7 +153,7 @@ npm run dev
 
 ## Environment and secrets
 
-There are no secret files in this repository. Values are injected as
+No secret values are committed to this repository. Values are injected as
 environment variables from a single gitignored env file:
 
 - **Dev**: `.env` — copied from `.env.example` by `scripts/bootstrap-dev.sh`
@@ -163,6 +163,12 @@ Compose injects the file into both backend services via `env_file` (override
 the path with `GATEWAY_ENV_FILE`), and the shared `read_secret` loader
 (`shared/shared_secrets`) reads the values, falling back to an optional
 `NAME_FILE` path for orchestrators that mount secrets as files.
+
+**One prerequisite the bootstrap does not cover**: `docker compose up` also
+needs `secrets/pg_rotator_admin_pass.txt`, a gitignored file that the
+`creds-rotator` service mounts (see `.env.example` for `PG_ROTATOR_ADMIN_PASS`
+and the `PG_ROTATOR_ADMIN_PASS_FILE` override). `scripts/bootstrap-dev.sh`
+does not create it, and `docker compose config` will not flag it as missing.
 
 ```dotenv
 # .env (gitignored; real values) - see .env.example for full list

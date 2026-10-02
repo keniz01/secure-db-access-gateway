@@ -1,7 +1,7 @@
 # Threat Model — Secure DB Access Gateway
 
-**Version:** 1.0
-**Date:** 2026-09-26
+**Version:** 1.1
+**Date:** 2026-10-02
 **Methodology:** PASTA (high-level workflow) → STRIDE (per-component threat enumeration) → DREAD (scoring & prioritization)
 **Scope:** All services in `docker-compose.yml` plus the nginx TLS edge and external dependencies (Auth0, PostgreSQL tenants, OpenRouter AI, OPA sidecar)
 
@@ -155,6 +155,7 @@
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
 | CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR | No reproducible build verification; no SBOM generation |
 | CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |
+| CI-5 | No dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | None in CI — the `zap-dast` job is `continue-on-error` and the stack cannot start in CI | **Accepted 2026-10-02**; see §5.3. Remediation steps in `.github/workflows/ci.yml` (`zap-dast`) |
 
 ### 2.10 Infrastructure / Container Runtime
 
@@ -272,6 +273,7 @@
 | X-1 Auth0 compromise | External SaaS; mitigate via MFA, breach monitoring, short token TTL |
 | I-3 Host kernel exploit | Mitigated by cloud provider (AWS Nitro / GCP Shielded VMs); accept |
 | CI-4 Pre-commit bypass | Social control; `BLOCK=false` only for emergencies |
+| CI-5 No DAST | Postponed by decision 2026-10-02, not mitigated. Re-open if the web surface gains user-controlled input; until then treat SAST + edge-config review as the compensating controls |
 
 ---
 
@@ -299,4 +301,4 @@
 
 ---
 
-*Generated using PASTA/STRIDE/DREAD methodology. This model reflects the architecture as of the codebase state on 2026-09-26.*
+*Generated using PASTA/STRIDE/DREAD methodology. This model reflects the architecture as of the codebase state on 2026-10-02.*
