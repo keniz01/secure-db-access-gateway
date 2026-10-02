@@ -155,7 +155,7 @@
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
 | CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR; image SBOM + SLSA provenance attestations; CycloneDX SBOM published in CI | Build provenance is attested, not re-verified by a consumer; no signed bundle verification |
 | CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |
-| CI-5 | No dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | None in CI — the `zap-dast` job is `continue-on-error` and the stack cannot start in CI | **Accepted 2026-10-02**; see §5.3. Registered as `SEC-EXC-001` in `.github/security-exceptions.yml` (owner Platform Security, expires 2026-12-01), enforced by `scripts/check-security-exceptions.py`; remediation steps in `.github/workflows/ci.yml` (`zap-dast`) |
+| CI-5 | Dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | `zap-dast` boots the real stack, waits on the TLS edge answering over HTTPS, runs a ZAP baseline scan, publishes JSON/MD/HTML reports, and fails if it crawled nothing | **Alerts do not block yet** (`SEC-EXC-002`, expires 2026-10-16, tracked in #194) while the pipeline is proven. Baseline is passive and only crawls the unauthenticated surface, so the GraphQL API, the governed SQL path and authenticated flows are not exercised dynamically |
 
 ### 2.10 Infrastructure / Container Runtime
 
@@ -273,7 +273,7 @@
 | X-1 Auth0 compromise | External SaaS; mitigate via MFA, breach monitoring, short token TTL |
 | I-3 Host kernel exploit | Mitigated by cloud provider (AWS Nitro / GCP Shielded VMs); accept |
 | CI-4 Pre-commit bypass | Social control; `BLOCK=false` only for emergencies |
-| CI-5 No DAST | Postponed by decision 2026-10-02, not mitigated. Re-open if the web surface gains user-controlled input; until then treat SAST + edge-config review as the compensating controls |
+| CI-5 DAST | Baseline (passive) scanning only, and only of the unauthenticated surface. Authenticated flows, the GraphQL API and the governed SQL path are not exercised dynamically. Treat SAST and edge-config review as the controls for those |
 
 ---
 

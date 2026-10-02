@@ -31,9 +31,10 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - Auth0 API tests: `python -m pytest`.
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
 - Shared secrets smoke test (CI only): `python -m pip install -e ./shared` then run inline assertions.
+- **OPA policy is validated in CI.** `sql_query_api/opa/policies/gateway.rego` is Rego v1 and is compiled, formatted, tested and bundled by the `opa-policy` job (`opa fmt --fail`, `opa check`, `opa test`, `opa build`) against the same OPA image the compose stack runs. Run `opa test sql_query_api/opa` after editing the policy. It had **no** validation at all until 2026-10-02, which is how it sat broken against OPA 1.8.0 while production ran `OPA_ENABLED=true`.
 - CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build, plus blocking Grype/Trivy/Syft and the security-exception-policy job. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`; Grype, Trivy and Syft block.
 - **Dependency resolution is lock-authoritative.** Both Dockerfiles and both CI service jobs resolve with `uv export --locked`, so a stale `uv.lock` fails the build instead of silently falling back to unpinned resolution. Run `uv lock` in the service dir before building; `uv lock --check` is what CI effectively asserts.
-- **Non-blocking security controls are registered, not anonymous.** Any `continue-on-error: true`, Grype `fail-build: false` or Trivy `exit-code: "0"` must appear in `.github/security-exceptions.yml` with an owner, reason, tracking reference and an expiry no more than 180 days out. `scripts/check-security-exceptions.py` (run as the `security-exception-policy` CI job) fails on unregistered *and* on stale entries. ZAP is currently the only exception (`SEC-EXC-001`); see the header of that file for the check's known limits.
+- **Non-blocking security controls are registered, not anonymous.** Any `continue-on-error: true`, Grype `fail-build: false`, Trivy `exit-code: "0"` or ZAP `fail_action` false/omitted must appear in `.github/security-exceptions.yml` with an owner, reason, tracking reference and an expiry no more than 180 days out. `scripts/check-security-exceptions.py` (run as the `security-exception-policy` CI job) fails on unregistered *and* on stale entries. **One entry is live**: `SEC-EXC-002` covers DAST *enforcement* only (the job runs and self-verifies but does not fail on alerts yet, expires 2026-10-16, tracked in #194). `SEC-EXC-001` is deleted. See the header of that file for the check's known limits.
 - Web app Node version: 20. Python services: 3.12.
 
 ## Ruff is diff-aware only
@@ -48,6 +49,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - **The hook also chains the `pre-commit` framework.** `.githooks/pre-commit` occupies the same `.git/hooks/pre-commit` path the framework installs its own shim to, so the hook runs `pre-commit run` inside `sql_query_api/` first (ruff diff-aware check, `check-yaml`, `trailing-whitespace`, ...). Do NOT run `pre-commit install` in `sql_query_api/` — it overwrites this hook and disables the review gate.
 - `pre-commit` must be on `PATH` (e.g. `pipx install pre-commit`) or commits are blocked when `BLOCK=true`. The first commit warms the hook environments (~1-2 min, then cached).
 - Toggle to advisory with `BLOCK=false` (set in `.githooks/pre-commit` or exported for one commit); uninstall with `rm .git/hooks/pre-commit`.
+- **The gate is the most expensive step in this repo: budget for it.** A review commonly runs 10-25 min and often returns `REQUEST_CHANGES`, so one commit-per-fix loop can cost many times the change itself. Verify locally *before* committing (the reviewer cannot run `docker`, `grype`, `trivy`, `opa`, `pip-audit` or `npm`, so it will ask you to prove those), fix every `REQUIRED_FIXES` item, then commit **once**. Run the commit detached and poll the log rather than blocking a tool call on it. Full checklist in `.opencode/command/ship-this.md` step 4.
 
 ## Env & config gotchas
 
@@ -71,7 +73,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 - Rate limits: `api_limit` (60r/m burst 20), `auth_limit` (5r/m burst 3 for login/auth/logout). IP-based only; no per-user granularity.
 - `/nginx-health` on port 80 (plaintext) is the only open HTTP endpoint; it just returns `OK`.
-- HSTS (`preload`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (`frame-ancestors 'none'`), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Embedder/Resource-Policy` all enforced at `nginx/nginx.conf:102` and mirrored in FastAPI for dev.
+- HSTS (`preload`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (`frame-ancestors 'none'`), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Embedder/Resource-Policy` all enforced at `nginx/nginx.conf:115` and mirrored in FastAPI for dev.
 - Correlation ID headers (`X-Correlation-ID`, `X-Request-ID`) are charset/length-validated at the nginx boundary; spoofable headers (`X-User-*`, `X-Org-*`, `X-Tenant-*`) are stripped by both nginx and RBAC middleware.
 
 ### DoS / resource exhaustion

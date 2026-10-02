@@ -17,6 +17,14 @@ services:
       web_app:
         condition: service_healthy
     read_only: true
+    # nginx needs writable scratch space even on a read-only rootfs:
+    # `mkdir() /var/cache/nginx/client_temp failed (30: Read-only file
+    # system)`, and it writes its pid to /var/run. tmpfs keeps the
+    # hardening - the rootfs stays read-only.
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     cap_drop:
       - ALL
     cap_add:
@@ -64,15 +72,35 @@ services:
       - backend
       - frontend
     read_only: true
+    # The image insists on creating /data (Grafana) and touching
+    # /tmp/ready, so the container cannot start on a read-only rootfs:
+    # `mkdir: cannot create directory '/data': Read-only file system`.
+    # tmpfs keeps the hardening - the rootfs stays read-only, only these
+    # two paths are writable in memory.
+    tmpfs:
+      - /data
+      - /tmp
     cap_drop:
       - ALL
 
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      # This image has no wget (verified: `command -v wget` is empty), so this
+      # probe could never pass and every service depending on
+      # `otel-lgtm: service_healthy` was dead on arrival.
+      # curl verified present: `docker run --rm grafana/otel-lgtm:0.11.1 sh -c
+      # 'command -v curl; command -v wget'` prints only /usr/bin/curl, and
+      # `curl -fsS http://localhost:3000/api/health` returns 200 live.
+      # Grafana's health API is /api/health; plain /health is a 404 here.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      # run-all.sh starts six daemons in parallel and run-grafana.sh sets
+      # GF_PLUGINS_PREINSTALL=grafana-llm-app, which blocks Grafana startup on a
+      # network download. The old 10s start_period + 5 retries gave ~60s, which
+      # a cold 4-core runner can exceed; compose treats an exhausted healthcheck
+      # as a hard failure, so the DAST job flaked with no retry.
+      retries: 10
+      start_period: 60s
     restart: unless-stopped
 
   auth0_api:
@@ -170,7 +198,13 @@ services:
       - "/etc/opa/policies"
       - "/etc/opa/data.json"
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8181/health"]
+      # The openpolicyagent/opa image ships no shell and no wget, so a
+      # `["CMD", "wget", ...]` probe can never succeed: the container stays
+      # unhealthy forever and everything depending on `opa: service_healthy`
+      # never starts. Probe with the only binary the image is guaranteed to
+      # have, /opa, and make it meaningful: load the same policies and data the
+      # server loads, so broken Rego or bad data is what makes this unhealthy.
+      test: ["CMD", "/opa", "eval", "--fail", "-d", "/etc/opa/data.json", "-d", "/etc/opa/policies", "data.gateway.role_hierarchy"]
       interval: 10s
       timeout: 5s
       retries: 5

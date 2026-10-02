@@ -38,7 +38,14 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
    - `git add -A`.
    - Review `git diff --cached --stat` and confirm only intended files are staged. Verify no `.env`/`certs/`/`secrets/` leaked (`git diff --cached --name-only | grep -E "^\.env$|^certs/|^secrets/"` must be empty).
    - Commit with a conventional message (`feat:`/`fix:`/`chore:` prefix + short summary) matching the repo style.
-   - **Important**: the pre-commit hook runs the opencode code-review gate and can take 60-120s (plus retries). It now also chains the `pre-commit` framework hooks (ruff diff-aware check, trailing-whitespace, ...), so the *first* commit on a fresh machine additionally installs the hook environments over the network (~1-2 min, cached in `~/.cache/pre-commit` afterwards). Give the commit command a tool timeout of **no less than 600000 ms** and do NOT skip or work around the hook. If the commit times out after 400000 ms, retry once with 600000 ms. If the review reports `REVIEW_VERDICT: REQUEST_CHANGES` with `REQUIRED_FIXES`, fix those before pushing - do not push with blocking findings. If `APPROVE` or only `SUGGESTED`, proceed.
+   - **Important**: the pre-commit hook runs the opencode code-review gate, which commonly runs 10-25 min (plus retries). It now also chains the `pre-commit` framework hooks (ruff diff-aware check, trailing-whitespace, ...), so the *first* commit on a fresh machine additionally installs the hook environments over the network (~1-2 min, cached in `~/.cache/pre-commit` afterwards). Do NOT skip or work around the hook. If the review reports `REVIEW_VERDICT: REQUEST_CHANGES` with `REQUIRED_FIXES`, fix those before pushing - do not push with blocking findings. If `APPROVE` or only `SUGGESTED`, proceed.
+   - **Token discipline - the gate is the most expensive step in this repo.** A full review commonly runs 10-25 minutes and frequently returns `REQUEST_CHANGES`, so each commit-then-fix round costs a large multiple of the change itself. Therefore:
+     1. **Verify locally before you commit, not after.** The reviewer runs in a restricted sandbox: it typically cannot run `docker`, `grype`, `trivy`, `opa`, `pip-audit` or `npm`. Anything it cannot check, it will ask you to prove - and it will often reject work it could not verify. Run those checks yourself first and put the results in the commit message.
+     2. **Batch into one commit.** Fix every `REQUIRED_FIXES` item, re-verify locally, then commit **once**. Never one commit per small fix: that multiplies the gate cost by the number of fixes.
+     3. **Run the commit detached and poll.** Do not block a tool call on it. `nohup bash -c '... git commit ... > /tmp/gate.log 2>&1; echo EXIT=$? >> /tmp/gate.log' &` then poll the log. A blocking call just burns the timeout and returns nothing.
+     4. Prefer one well-verified commit per logical change over several small ones. If a change is large, split it into a few large commits, not many small ones.
+     5. The gate has **no timeout** and some models hang indefinitely; `.githooks/pre-commit` documents the
+     behaviour and the `REVIEW_MODEL` override. If a review exceeds ~30 min with no output, kill it and retry with `REVIEW_MODEL=<a model that answers>`.
 
 5. **Push**
    - `git push -u origin <branch>`.
@@ -60,7 +67,7 @@ Turn the uncommitted work in this repo into a clean, reviewable PR and land it o
      - SQL/Auth0 Python failures → run the hermetic suites from inside each service dir (`workdir=sql_query_api .venv/bin/python -m pytest -q`, `workdir=auth0_api .venv/bin/python -m pytest -q`).
      - Web failures → `npm run lint`, then `npm test` (typecheck). If the failure is only in Playwright e2e, try `npm run test:e2e` when browsers are installed, otherwise read the `gh run view` logs.
      - Diagnose the root cause and fix it at the source. Never weaken the governed query pipeline, security gates, or tests to turn a check green.
-   - Re-run the applicable quick verification (including `docker compose config` if compose changed), then commit with a conventional message (`fix(ci):`, `fix(<area>):`, …). The pre-commit review hook runs again — keep timeouts **>= 600000 ms**, don't skip it. If commit times out, retry once with larger timeout.
+   - Re-run the applicable quick verification (including `docker compose config` if compose changed), then commit with a conventional message (`fix(ci):`, `fix(<area>):`, …). The pre-commit review hook runs again — don't skip it, and run it detached and poll per step 4. Fix every finding in this cycle and commit **once**; do not commit once per fix.
    - Push, then re-run `gh pr checks <branch> --watch --interval 30`. If green, merge per step 7. If still red and this was fewer than 3 fix cycles, repeat from the top of this step.
    - After 3 failed fix cycles: stop. Print the remaining failing checks, summarize what was tried, and hand off to the user. Do not merge and do not bypass CI.
 

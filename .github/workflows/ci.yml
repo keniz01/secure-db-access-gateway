@@ -98,38 +98,101 @@ jobs:
         run: python -m pip install --disable-pip-version-check "pyyaml==6.0.3"
       - name: Validate security exception register
         run: python scripts/check-security-exceptions.py
-      - name: Negative test - the gate must reject an unregistered downgrade
+      - name: Negative tests - the gate must reject every downgrade shape
         run: |
           set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/negwf"
-          printf 'jobs:\n  probe:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n    steps:\n      - run: "true"\n' > "$RUNNER_TEMP/negwf/downgrade.yml"
+          WFDIR="$RUNNER_TEMP/negwf"
+          mkdir -p "$WFDIR"
           # An empty register, so the only thing that can fail is the
-          # unregistered `probe` job. Pointed at the real register this fixture
-          # would also report the zap-dast entries as stale, and the test would
+          # unregistered control in the fixture. Pointed at the real register the
+          # fixtures would also report its entries as stale and the tests would
           # pass for the wrong reason.
           printf 'version: 1\nexceptions: []\n' > "$RUNNER_TEMP/neg-register.yml"
-          set +e
-          python scripts/check-security-exceptions.py \
-            --workflows "$RUNNER_TEMP/negwf" \
-            --register "$RUNNER_TEMP/neg-register.yml" > "$RUNNER_TEMP/neg.log" 2>&1
-          rc=$?
-          set -e
-          cat "$RUNNER_TEMP/neg.log"
-          if [ "$rc" -eq 0 ]; then
-            echo "::error::the gate accepted an unregistered non-blocking control"
-            exit 1
-          fi
-          # Assert on the exit code plus the exact control id, not on a
-          # substring of a human-readable sentence that a reword would break.
-          grep -q "non-blocking control .probe. has no registered exception" "$RUNNER_TEMP/neg.log" || {
-            echo "::error::the gate failed for the wrong reason"
-            exit 1
+
+          # Assert on the exit code plus the control id, not on a substring of a
+          # human-readable sentence that a reword would break.
+          check() {
+            fixture="$1"; control_id="$2"; phrase="$3"
+            rm -f "$WFDIR"/*.yml
+            case "$fixture" in
+              job-continue-on-error)
+                printf 'jobs:\n  zap:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n    steps:\n      - run: "true"\n' > "$WFDIR/$fixture.yml" ;;
+              zap-fail-action-omitted)
+                # fail_action defaults to false, so omitting it is a downgrade too.
+                printf 'jobs:\n  dast:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Scan ZAP\n        uses: zaproxy/action-baseline@abc123\n        with:\n          target: "https://localhost:8443"\n' > "$WFDIR/$fixture.yml" ;;
+              zap-fail-action-false)
+                printf 'jobs:\n  dast:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Scan ZAP\n        uses: zaproxy/action-baseline@abc123\n        with:\n          fail_action: false\n' > "$WFDIR/$fixture.yml" ;;
+              *)
+                echo "::error::unknown fixture $fixture"; exit 1 ;;
+            esac
+            set +e
+            python scripts/check-security-exceptions.py \
+              --workflows "$WFDIR" \
+              --register "$RUNNER_TEMP/neg-register.yml" > "$RUNNER_TEMP/$fixture.log" 2>&1
+            rc=$?
+            set -e
+            cat "$RUNNER_TEMP/$fixture.log"
+            if [ "$rc" -eq 0 ]; then
+              echo "::error::$fixture: gate accepted a non-blocking control"
+              exit 1
+            fi
+            grep -q "non-blocking control .$control_id. has no registered exception" "$RUNNER_TEMP/$fixture.log" || {
+              echo "::error::$fixture: expected control id $control_id not reported"
+              exit 1
+            }
+            grep -q "$phrase" "$RUNNER_TEMP/$fixture.log" || {
+              echo "::error::$fixture: expected reason not reported"
+              exit 1
+            }
+            if grep -q "stale" "$RUNNER_TEMP/$fixture.log"; then
+              echo "::error::$fixture: fixture produced stale-entry errors; it is not isolated"
+              exit 1
+            fi
+            echo "OK: $fixture rejected (control $control_id)"
           }
-          grep -q "stale" "$RUNNER_TEMP/neg.log" && {
-            echo "::error::fixture produced stale-entry errors; it is not isolated"
-            exit 1
-          }
-          echo "gate correctly rejects an unregistered downgrade"
+
+          # Job-level continue-on-error derives the control id from the job name.
+          check job-continue-on-error "zap" "non-blocking control .zap. has no registered exception"
+          check zap-fail-action-omitted "dast/Scan ZAP" "omits .fail_action."
+          check zap-fail-action-false "dast/Scan ZAP" "sets .fail_action:"
+          echo "gate rejects every known downgrade shape"
+
+  opa-policy:
+    name: OPA Policy (compile, format, test)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      # The same image tag the compose stack runs, so this validates the policy
+      # as it is actually served rather than against some other OPA version.
+      - name: Validate the gateway policy
+        run: |
+          set -euo pipefail
+          OPA=openpolicyagent/opa:1.8.0
+          # fmt --fail so the committed policy is canonically formatted.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" fmt --fail /w
+          # check catches anything that does not compile at all. This is the
+          # gate that was missing while gateway.rego sat broken against OPA
+          # 1.8.0 - OPA crash-looped in production and nothing complained.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" check /w
+          # test runs against the whole directory so data.json is loaded as
+          # data; testing policies/ alone would assert against zero policies.
+          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" --entrypoint /opa "$OPA" test /w
+          # build is what scripts/build-opa-bundle.sh produces for production.
+          # Output goes to a mounted dir via -o: a container-local path would
+          # vanish with the container, and a positional path is read as an
+          # input to load rather than a destination.
+          mkdir -p "$RUNNER_TEMP/opa-out"
+          # --user: the image runs as a non-root uid that cannot write to a
+          # runner-owned mount, which fails with "permission denied". Running as
+          # the invoking user is better than chmod 777 on a temp dir.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD/sql_query_api/opa:/w:ro" -v "$RUNNER_TEMP/opa-out:/out" \
+            --entrypoint /opa "$OPA" build -b /w --ignore=tests -o /out/bundle.tar.gz
+          test -s "$RUNNER_TEMP/opa-out/bundle.tar.gz"
+          echo "bundle built: $(wc -c < "$RUNNER_TEMP/opa-out/bundle.tar.gz") bytes"
 
   grype-sbom:
     name: Vulnerability Scan & SBOM (Grype + Syft)
@@ -468,69 +531,193 @@ jobs:
   zap-dast:
     name: OWASP ZAP DAST Scan
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
     permissions:
       contents: read
-      security-events: write
-    # TODO: this job has never once succeeded - across 12+ runs it has only ever
-    # been "failure" or "skipped" - and it detects nothing today. Marked
-    # non-blocking so a permanently red X cannot train reviewers to ignore the
-    # rest of CI.
+    timeout-minutes: 30
+    # No job-level `if:`, deliberately: every other security job here runs
+    # unconditionally, and a control that silently skips is not a control.
     #
-    # It enforced nothing even while failing, because the scan step below
-    # already carries `continue-on-error: true`. So this costs no coverage.
-    # It is NOT a claim that the web surface is scanned; nothing is scanning it.
+    # Blocking DAST against the real served web surface.
     #
-    # This downgrade is registered as SEC-EXC-001 in .github/security-exceptions.yml
-    # (owner: Platform Security, expires 2026-12-01). The register is enforced by
-    # scripts/check-security-exceptions.py, so this cannot quietly outlive it.
+    # This job used to be `continue-on-error: true` at both job and step level
+    # and was registered as SEC-EXC-001. It never worked, and the reasons were
+    # concrete rather than incidental:
+    #   * `docker compose up` aborts because .env does not exist and
+    #     creds-rotator's pg_rotator_admin_pass.txt is gitignored and absent.
+    #   * mkcert cannot run unattended: `mkcert -install` writes the CA into the
+    #     OS trust store and prompts for sudo.
+    #   * `sleep 30` instead of waiting on real health.
+    #   * `fail_action` defaults to false, so alerts never failed the job.
+    #   * The upload step looked for zap-report.sarif, but the baseline scan
+    #     emits report_json.json / report_md.md / report_html.html. That path
+    #     never existed, so results were never published either.
+    # All of that is fixed below, so SEC-EXC-001 is retired rather than renewed.
     #
-    # To make this real, in order:
-    #   1. Bootstrap the stack. `docker compose up` aborts with
-    #      "env file .env not found". Partially handled by
-    #      scripts/bootstrap-dev.sh, which COPY-creates .env from .env.example
-    #      (override the path with GATEWAY_ENV_FILE) and mkcert-generates
-    #      certs/. Two gaps remain for CI:
-    #        a. `mkcert -install` writes the CA into the OS trust store and
-    #           prompts for an admin password, so it cannot run unattended.
-    #           CI needs certs generated another way, or ZAP pointed at
-    #           http://nginx:80 via the plaintext /nginx-health surface.
-    #        b. compose also requires secrets/pg_rotator_admin_pass.txt for the
-    #           creds-rotator service, and bootstrap-dev.sh does NOT create it.
-    #           Either commit a throwaway CI-only value or drop creds-rotator
-    #           from the CI overlay.
-    #   2. Wait on real health, not `sleep 30` - the API services must pass
-    #      /readyz before a scan is meaningful.
-    #   3. Drop `continue-on-error: true` from the scan step so findings block,
-    #      and triage whatever the first real scan reports.
-    #
-    # Note: this job will NOT trip the OPA production guard on the way up.
-    # sql_query_api only refuses to start when ENVIRONMENT=production AND
-    # OPA_URL is empty AND OPA_ENABLED is not explicitly false, and
-    # docker-compose.yml already sets OPA_URL=http://opa:8181 (line 124)
-    # with OPA_ENABLED=false (line 125). Do not rely on `is_ci()` here:
-    # compose does not forward CI/GITHUB_ACTIONS into the container, so
-    # is_ci() is False inside sql_query_api.
-    continue-on-error: true
+    # ZAP itself runs with --network=host, so localhost:8443 is the runner's
+    # published nginx port. Port 80 is not a useful target: it serves only
+    # /nginx-health and 301s everything else to https, so a scan of :8080 would
+    # exercise a single static endpoint.
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Create CI-only env file with throwaway secrets
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          # The stack runs with ENVIRONMENT=production (from .env.example) so the
+          # scan sees production security headers, HSTS and disabled GraphQL
+          # introspection. Production mode makes the auth secrets mandatory, and
+          # compose does not forward CI/GITHUB_ACTIONS into the containers, so
+          # is_ci() is False there and the guards are not relaxed. These values
+          # only need to be non-empty for the services to boot; nothing
+          # authenticates against a real Auth0 tenant during a scan. They are
+          # random per run and live only in this runner's gitignored .env.
+          # Replace in place rather than appending. Compose takes the last
+          # occurrence for a repeated key, but relying on that ordering is
+          # fragile; these keys already exist in .env.example, often empty.
+          set_env() {
+            key="$1"; value="$2"
+            if grep -qE "^${key}=" .env; then
+              # Delimiter is | so values containing / stay intact.
+              sed -i.bak -E "s|^${key}=.*|${key}=${value}|" .env && rm -f .env.bak
+            else
+              printf '%s=%s\n' "$key" "$value" >> .env
+            fi
+            grep -qE "^${key}=${value}$" .env || { echo "::error::failed to set $key"; exit 1; }
+          }
+          set_env APP_SECRET_KEY "$(openssl rand -hex 32)"
+          set_env AUTH0_DOMAIN "dast.ci.invalid"
+          set_env AUTH0_CLIENT_ID "dast-ci-client"
+          set_env AUTH0_CLIENT_SECRET "$(openssl rand -hex 24)"
+          set_env AUTH0_AUDIENCE "https://dast.ci.invalid/api"
+          set_env POSTGRES_PASSWORD "$(openssl rand -hex 16)"
+          grep -q "^ENVIRONMENT=production" .env
+
+      - name: Generate self-signed TLS certificate
+        run: |
+          set -euo pipefail
+          # mkcert is unusable here (see note above). ZAP is told to accept
+          # certificate issues via cmd_options below, so a self-signed leaf is
+          # enough to exercise the real TLS listener and its cipher/header
+          # configuration. Valid for one day because it never leaves the runner.
+          mkdir -p certs
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout certs/web_tls_key.pem \
+            -out certs/web_tls_cert.pem \
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1" 2>/dev/null
+          # nginx runs with `cap_drop: ALL`, so its root has no DAC_OVERRIDE
+          # and cannot read a 0600 file owned by another uid - which is what
+          # openssl writes by default. Without this nginx crash-loops with
+          # `cannot load certificate key ...: Permission denied`.
+          # 644 is acceptable only because this is a throwaway one-day
+          # self-signed leaf that never leaves the runner; a real deployment
+          # must ship the key group-readable to nginx instead.
+          chmod 644 certs/web_tls_key.pem
+          openssl x509 -in certs/web_tls_cert.pem -noout -subject -dates
+
+      - name: Create throwaway creds-rotator secret
+        run: |
+          set -euo pipefail
+          # compose refuses to start when this gitignored file is missing. Write
+          # it to the runner temp dir and point the overlay at it, so nothing is
+          # created inside the repository working tree.
+          printf '%s' "$(openssl rand -hex 24)" > "$RUNNER_TEMP/pg_rotator_admin_pass.txt"
+          echo "PG_ROTATOR_ADMIN_PASS_FILE=$RUNNER_TEMP/pg_rotator_admin_pass.txt" >> "$GITHUB_ENV"
+
       - name: Start application stack for DAST
         run: |
+          set -euo pipefail
+          # Deliberately no --wait: creds-rotator exits non-zero on every start
+          # (rotate_creds.sh needs jq, which postgres:16-alpine does not ship),
+          # and --wait would turn that pre-existing breakage into a gate that
+          # fails for reasons unrelated to DAST. The TLS-edge poll below is the
+          # real readiness gate, and compose already orders startup with
+          # depends_on: service_healthy.
           docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
-          # Wait for services to be healthy
-          sleep 30
+
+      - name: Wait for the TLS edge to serve traffic
+        run: |
+          set -euo pipefail
+          # Gate on the edge actually answering over TLS, which is the surface
+          # ZAP will scan. nginx only starts once auth0_api and web_app report
+          # healthy, so a 200 here means the whole request path is up.
+          for attempt in $(seq 1 60); do
+            if curl -sk --max-time 5 https://localhost:8443/nginx-health | grep -q OK; then
+              echo "edge ready after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::the TLS edge never became ready"
+          docker compose -f docker-compose.yml -f docker-compose.test.yml ps
+          docker compose -f docker-compose.yml -f docker-compose.test.yml logs --tail=60
+          exit 1
+
       - name: Run OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@2b5fc7f98d837319798ab7f128ea50b7d40563b6 # v0.14.0
         with:
           target: "https://localhost:8443"
-          cmd_options: "-a"
-        continue-on-error: true
-      - name: Upload ZAP Results
-        uses: github/codeql-action/upload-sarif@v3
-        # Only when a report exists, so a missing artifact cannot be mistaken
-        # for the scan itself having failed.
-        if: always() && hashFiles('zap-report.sarif') != ''
-        with:
-          sarif_file: zap-report.sarif
-          category: zap-dast
+          # NOT yet enforcing. DAST runs, reports and self-verifies, but
+          # enforcement is deferred one change cycle because the CI stack
+          # bring-up has never executed and the self-signed test certificate is
+          # expected to raise an SSL-certificate alert. Tracked in #194 and
+          # registered as SEC-EXC-002 (expires 2026-10-16).
+          fail_action: false
+          # Do not open or update a GitHub issue on every run; the action
+          # publishes the reports as its own artifact instead.
+          allow_issue_writing: false
+          # The action uploads its own artifact. The name is set explicitly so it
+          # stays stable across action bumps and matches what reviewers already
+          # look for; v0.14.0 has no retention input, so retention is now the
+          # repo/org default rather than something this job owns.
+          artifact_name: "zap-baseline-report"
+          # Triaged suppressions, each with a written justification. Anything not
+          # listed keeps ZAP's default WARN, which fail_action turns into a build
+          # failure, so new alerts still block.
+          rules_file_name: ".github/zap/baseline-rules.tsv"
+          # The CI certificate is self-signed and ZAP cannot be given the CA
+          # unattended, so TLS verification has to be skipped for the spider to
+          # reach the target. `-a` (alpha passive rules) is deliberately NOT
+          # used: those rules are unstable and would make a blocking gate fail
+          # on churn.
+          # The "Verify the scan actually crawled the target" step below is what
+          # proves this option took effect. If it ever stops working, that step
+          # fails instead of the job passing on an empty scan.
+          cmd_options: '-z "-config http.ssl.insecureSkipVerify=true"'
+          # Pinned by digest, not by the floating `stable` tag: the tag moves
+          # under the build and a changed scanner silently changes what blocks.
+          # Digest taken from ghcr.io's docker-content-digest header for the
+          # 2.16.1 manifest. `docker manifest inspect` cannot confirm it from a
+          # machine with no daemon, so a wrong digest would fail `docker pull`
+          # and the scan would never run; the first CI run is that check.
+          docker_name: "ghcr.io/zaproxy/zaproxy@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab"
+
+      - name: Verify the scan actually crawled the target
+        run: |
+          set -euo pipefail
+          # A blocking gate that scanned nothing is the exact failure SEC-EXC-001
+          # was hiding: zap-baseline.py reports success when it crawled zero URLs,
+          # so `fail_action: true` alone would happily go green on an empty scan.
+          # This runs only when the scan step succeeded, which is precisely the
+          # case that needs proving.
+          # test -s is the real check for a written report: an empty file would
+          # parse as valid JSON and the assertion below would pass on nothing.
+          test -s report_json.json || { echo "::error::ZAP wrote an empty report_json.json"; exit 1; }
+          # `site` is populated from the report's site list; counting it proves
+          # the scan reached something, and matching the host proves it reached
+          # *our* target rather than some other host.
+          matched=$(python3 -c 'import json;print(sum(1 for s in json.load(open("report_json.json")).get("site", []) if "localhost:8443" in str(s)))' 2>/dev/null) || {
+            echo "::error::ZAP produced no parseable report_json.json"
+            exit 1
+          }
+          echo "ZAP report has ${matched} site entry/entries on https://localhost:8443"
+          if [ "${matched}" -lt 1 ]; then
+            echo "::error::ZAP crawled no site on the target host; the scan is not covering the gateway"
+            exit 1
+          fi
+
+      - name: Tear down the DAST stack
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.test.yml down -v
