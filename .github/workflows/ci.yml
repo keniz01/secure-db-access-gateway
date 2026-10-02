@@ -82,6 +82,55 @@ jobs:
           failure-threshold: error
           recursive: true
 
+  security-exception-policy:
+    name: Security Exception Policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Install validator dependency
+        run: python -m pip install --disable-pip-version-check "pyyaml==6.0.3"
+      - name: Validate security exception register
+        run: python scripts/check-security-exceptions.py
+      - name: Negative test - the gate must reject an unregistered downgrade
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/negwf"
+          printf 'jobs:\n  probe:\n    runs-on: ubuntu-latest\n    continue-on-error: true\n    steps:\n      - run: "true"\n' > "$RUNNER_TEMP/negwf/downgrade.yml"
+          # An empty register, so the only thing that can fail is the
+          # unregistered `probe` job. Pointed at the real register this fixture
+          # would also report the zap-dast entries as stale, and the test would
+          # pass for the wrong reason.
+          printf 'version: 1\nexceptions: []\n' > "$RUNNER_TEMP/neg-register.yml"
+          set +e
+          python scripts/check-security-exceptions.py \
+            --workflows "$RUNNER_TEMP/negwf" \
+            --register "$RUNNER_TEMP/neg-register.yml" > "$RUNNER_TEMP/neg.log" 2>&1
+          rc=$?
+          set -e
+          cat "$RUNNER_TEMP/neg.log"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::the gate accepted an unregistered non-blocking control"
+            exit 1
+          fi
+          # Assert on the exit code plus the exact control id, not on a
+          # substring of a human-readable sentence that a reword would break.
+          grep -q "non-blocking control .probe. has no registered exception" "$RUNNER_TEMP/neg.log" || {
+            echo "::error::the gate failed for the wrong reason"
+            exit 1
+          }
+          grep -q "stale" "$RUNNER_TEMP/neg.log" && {
+            echo "::error::fixture produced stale-entry errors; it is not isolated"
+            exit 1
+          }
+          echo "gate correctly rejects an unregistered downgrade"
+
   grype-sbom:
     name: Vulnerability Scan & SBOM (Grype + Syft)
     runs-on: ubuntu-latest
@@ -92,14 +141,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Run Grype (filesystem scan)
-        uses: anchore/scan-action@v7
-        continue-on-error: true
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        # Blocking. Downgrading this control requires a registered, owned and
+        # expiring entry in .github/security-exceptions.yml; see
+        # scripts/check-security-exceptions.py.
         with:
           path: "."
           output-format: "sarif"
           output-file: "grype-results.sarif"
           severity-cutoff: high
-          fail-build: false
+          fail-build: true
       - name: Upload Grype results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -108,7 +159,8 @@ jobs:
           category: grype-fs
       - name: Generate SBOM with Syft
         uses: anchore/sbom-action@v0
-        continue-on-error: true
+        # Blocking: a silently missing SBOM is a silently missing supply-chain
+        # artifact, which is the failure mode this step exists to prevent.
         with:
           path: "."
           format: "cyclonedx-json=sbom.cdx.json"
@@ -130,14 +182,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Run Trivy (filesystem scan)
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        # Blocking. Downgrading this control requires a registered, owned and
+        # expiring entry in .github/security-exceptions.yml.
         with:
           scan-type: "fs"
           scan-ref: "."
           format: "sarif"
           output: "trivy-results.sarif"
           severity: "HIGH,CRITICAL"
-          exit-code: "0"
+          exit-code: "1"
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -268,10 +322,20 @@ jobs:
         run: |
           cd sql_query_api
           python -m pip install --upgrade pip
+          # Install exactly what the Dockerfiles install, via uv.lock. A bare
+          # `pip install -e .` re-resolves to whatever is newest on PyPI, so
+          # pip-audit graded a dependency set that is never shipped and the
+          # lockfile stayed decorative.
+          pip install "uv==0.12.22"
+          uv export --locked --no-emit-project \
+            --no-emit-package shared-secrets -o /tmp/requirements.txt
+          python -m pip install -r /tmp/requirements.txt
           python -m pip install -e .
-          python -m pip install pytest pytest-asyncio pytest-mock httpx aiosqlite
-          # Security tools
-          python -m pip install bandit pip-audit
+          # The locked export above already provides pytest, pytest-asyncio,
+          # pytest-mock, httpx and aiosqlite. Installing them again unpinned
+          # would upgrade the locked set and make pip-audit grade something
+          # other than what the images ship. Only the scanners are added here.
+          python -m pip install "bandit==1.9.4" "pip-audit==2.10.1"
 
       - name: Run Bandit
         run: |
@@ -280,7 +344,7 @@ jobs:
 
       - name: Run pip-audit
         run: |
-          pip-audit --desc --ignore-vuln PYSEC-2026-1325
+          pip-audit --desc
 
       - name: Run pytest
         run: |
@@ -309,8 +373,18 @@ jobs:
         run: |
           cd auth0_api
           python -m pip install --upgrade pip
+          # Install exactly what the Dockerfiles install, via uv.lock. A bare
+          # `pip install -e .` re-resolves to whatever is newest on PyPI, so
+          # pip-audit graded a dependency set that is never shipped and the
+          # lockfile stayed decorative.
+          pip install "uv==0.12.22"
+          uv export --locked --no-emit-project \
+            --no-emit-package shared-secrets -o /tmp/requirements.txt
+          python -m pip install -r /tmp/requirements.txt
           python -m pip install -e .
-          python -m pip install pytest pytest-asyncio pytest-mock pytest-cov httpx bandit pip-audit
+          # See the SQL job above: the locked export already provides the test
+          # tooling, so only the scanners are added here.
+          python -m pip install "bandit==1.9.4" "pip-audit==2.10.1"
 
       - name: Run Bandit
         run: |
@@ -319,7 +393,7 @@ jobs:
 
       - name: Run pip-audit
         run: |
-          pip-audit --desc --ignore-vuln PYSEC-2026-1325
+          pip-audit --desc
 
       - name: Run pytest
         run: |
@@ -391,6 +465,10 @@ jobs:
     # It enforced nothing even while failing, because the scan step below
     # already carries `continue-on-error: true`. So this costs no coverage.
     # It is NOT a claim that the web surface is scanned; nothing is scanning it.
+    #
+    # This downgrade is registered as SEC-EXC-001 in .github/security-exceptions.yml
+    # (owner: Platform Security, expires 2026-12-01). The register is enforced by
+    # scripts/check-security-exceptions.py, so this cannot quietly outlive it.
     #
     # To make this real, in order:
     #   1. Bootstrap the stack. `docker compose up` aborts with

@@ -8,15 +8,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build context is the repository root (see docker-compose.yml). Preserve the
-# repo layout so the compiled `../shared` path dependency resolves.
+# repo layout so the `../shared` path dependency is still resolvable.
 COPY shared /app/shared
 COPY auth0_api/pyproject.toml auth0_api/uv.lock /app/auth0_api/
 
-RUN pip install --no-cache-dir uv && \
+RUN pip install --no-cache-dir "uv==0.12.22" && \
     uv venv /opt/venv && \
     cd /app/auth0_api && \
-    uv pip compile pyproject.toml -o /tmp/requirements.txt && \
-    VIRTUAL_ENV=/opt/venv uv pip install --no-cache -r /tmp/requirements.txt
+    uv export --locked --no-dev --no-emit-project \
+        --no-emit-package shared-secrets \
+        -o /tmp/requirements.txt && \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache -r /tmp/requirements.txt && \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --no-deps /app/shared
 
 # Stage 2: Minimal runtime
 FROM python:3.12-slim AS runner

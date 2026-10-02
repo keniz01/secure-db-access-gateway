@@ -31,7 +31,9 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - Auth0 API tests: `python -m pytest`.
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
 - Shared secrets smoke test (CI only): `python -m pip install -e ./shared` then run inline assertions.
-- CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`.
+- CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build, plus blocking Grype/Trivy/Syft and the security-exception-policy job. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`; Grype, Trivy and Syft block.
+- **Dependency resolution is lock-authoritative.** Both Dockerfiles and both CI service jobs resolve with `uv export --locked`, so a stale `uv.lock` fails the build instead of silently falling back to unpinned resolution. Run `uv lock` in the service dir before building; `uv lock --check` is what CI effectively asserts.
+- **Non-blocking security controls are registered, not anonymous.** Any `continue-on-error: true`, Grype `fail-build: false` or Trivy `exit-code: "0"` must appear in `.github/security-exceptions.yml` with an owner, reason, tracking reference and an expiry no more than 180 days out. `scripts/check-security-exceptions.py` (run as the `security-exception-policy` CI job) fails on unregistered *and* on stale entries. ZAP is currently the only exception (`SEC-EXC-001`); see the header of that file for the check's known limits.
 - Web app Node version: 20. Python services: 3.12.
 
 ## Ruff is diff-aware only

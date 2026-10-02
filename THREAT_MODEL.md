@@ -153,9 +153,9 @@
 |----|--------|--------|-------------|-------------------|-----|
 | CI-1 | Malicious dependency injection | **T**, **E** | Compromised PyPI/npm package | `pip-audit` (Python), `npm audit` (Node); `uv.lock` pinned | No SLSA provenance verification; no sigstore verification |
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
-| CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR | No reproducible build verification; no SBOM generation |
+| CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR; image SBOM + SLSA provenance attestations; CycloneDX SBOM published in CI | Build provenance is attested, not re-verified by a consumer; no signed bundle verification |
 | CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |
-| CI-5 | No dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | None in CI — the `zap-dast` job is `continue-on-error` and the stack cannot start in CI | **Accepted 2026-10-02**; see §5.3. Remediation steps in `.github/workflows/ci.yml` (`zap-dast`) |
+| CI-5 | No dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | None in CI — the `zap-dast` job is `continue-on-error` and the stack cannot start in CI | **Accepted 2026-10-02**; see §5.3. Registered as `SEC-EXC-001` in `.github/security-exceptions.yml` (owner Platform Security, expires 2026-12-01), enforced by `scripts/check-security-exceptions.py`; remediation steps in `.github/workflows/ci.yml` (`zap-dast`) |
 
 ### 2.10 Infrastructure / Container Runtime
 
@@ -164,7 +164,7 @@
 | I-1 | Container escape | **E** | Breakout from SQL API / Auth0 / OPA | `read_only: true`; `cap_drop ALL`; `no-new-privileges`; non-root users | `NET_BIND_SERVICE` cap for nginx; `host.docker.internal` egress |
 | I-2 | Network lateral movement | **E**, **I** | Compromised service attacks peers | Two networks: `frontend` (web+nginx) and `backend` (apis+redis+opa+pg); web cannot reach backend | Backend services can reach each other freely; no zero-trust mesh |
 | I-3 | Host kernel exploit | **E** | Container → host | Docker default seccomp; `no-new-privileges` | No gVisor/Kata; host kernel shared |
-| I-4 | Image vulnerability | **E** | Base image CVE | `nginx:1.27-alpine`, `redis:7.4-alpine`, `postgres:16-alpine`, `python:3.12-slim`; `pip-audit` + `bandit` in CI | No daily base image rebuild; no `trivy`/`grype` in CI |
+| I-4 | Image vulnerability | **E** | Base image CVE | `nginx:1.27-alpine`, `redis:7.4-alpine`, `postgres:16-alpine`, `python:3.12-slim`; blocking `pip-audit`, `bandit`, blocking Grype and Trivy filesystem scans | No daily base image rebuild; filesystem scans do not cover the published image contents |
 
 ### 2.11 External Dependencies
 
