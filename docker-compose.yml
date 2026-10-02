@@ -64,16 +64,36 @@ services:
       - backend
       - frontend
     read_only: true
+    # The image insists on creating /data (Grafana) and touching
+    # /tmp/ready, so the container cannot start on a read-only rootfs:
+    # `mkdir: cannot create directory '/data': Read-only file system`.
+    # tmpfs keeps the hardening - the rootfs stays read-only, only these
+    # two paths are writable in memory.
+    tmpfs:
+      - /data
+      - /tmp
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      # This image has no wget (verified: `command -v wget` is empty), so this
+      # probe could never pass and every service depending on
+      # `otel-lgtm: service_healthy` was dead on arrival.
+      # curl verified present: `docker run --rm grafana/otel-lgtm:0.11.1 sh -c
+      # 'command -v curl; command -v wget'` prints only /usr/bin/curl, and
+      # `curl -fsS http://localhost:3000/api/health` returns 200 live.
+      # Grafana's health API is /api/health; plain /health is a 404 here.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://localhost:3000/api/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 10s
+      # run-all.sh starts six daemons in parallel and run-grafana.sh sets
+      # GF_PLUGINS_PREINSTALL=grafana-llm-app, which blocks Grafana startup on a
+      # network download. The old 10s start_period + 5 retries gave ~60s, which
+      # a cold 4-core runner can exceed; compose treats an exhausted healthcheck
+      # as a hard failure, so the DAST job flaked with no retry.
+      retries: 10
+      start_period: 60s
     restart: unless-stopped
 
   auth0_api:

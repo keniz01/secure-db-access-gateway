@@ -185,7 +185,11 @@ jobs:
           # vanish with the container, and a positional path is read as an
           # input to load rather than a destination.
           mkdir -p "$RUNNER_TEMP/opa-out"
-          docker run --rm -v "$PWD/sql_query_api/opa:/w:ro" -v "$RUNNER_TEMP/opa-out:/out" \
+          # --user: the image runs as a non-root uid that cannot write to a
+          # runner-owned mount, which fails with "permission denied". Running as
+          # the invoking user is better than chmod 777 on a temp dir.
+          docker run --rm --user "$(id -u):$(id -g)" \
+            -v "$PWD/sql_query_api/opa:/w:ro" -v "$RUNNER_TEMP/opa-out:/out" \
             --entrypoint /opa "$OPA" build -b /w --ignore=tests -o /out/bundle.tar.gz
           test -s "$RUNNER_TEMP/opa-out/bundle.tar.gz"
           echo "bundle built: $(wc -c < "$RUNNER_TEMP/opa-out/bundle.tar.gz") bytes"
