@@ -16,7 +16,16 @@ repos:
       - id: ruff-diff-check
         name: ruff (diff-aware check)
         description: Run Ruff linter only on changed lines
-        entry: python .pre-commit-scripts/ruff-diff-check.py
+        # `language: system` runs this via the ambient PATH, where a bare
+        # `python` does not exist on macOS/most runners — the hook died with
+        # FileNotFoundError before ruff was ever invoked. python3 is the
+        # portable spelling.
+        #
+        # The path is relative to the *git root*, not sql_query_api: pre-commit
+        # always executes hooks with cwd set to the top-level repository root,
+        # so a bare `.pre-commit-scripts/...` could never resolve. `ruff` itself
+        # is still resolved from PATH by the script.
+        entry: python3 sql_query_api/.pre-commit-scripts/ruff-diff-check.py
         language: system
         types: [python]
         pass_filenames: true
