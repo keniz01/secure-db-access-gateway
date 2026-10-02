@@ -15,6 +15,14 @@ services:
       web_app:
         condition: service_healthy
     read_only: true
+    # nginx needs writable scratch space even on a read-only rootfs:
+    # `mkdir() /var/cache/nginx/client_temp failed (30: Read-only file
+    # system)`, and it writes its pid to /var/run. tmpfs keeps the
+    # hardening - the rootfs stays read-only.
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
     cap_drop:
       - ALL
     cap_add:
