@@ -656,7 +656,7 @@ jobs:
           exit 1
 
       - name: Run OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@66042c8e7e24680119199a017e5b0e8603bf4dae # v0.12.0
+        uses: zaproxy/action-baseline@2b5fc7f98d837319798ab7f128ea50b7d40563b6 # v0.14.0
         with:
           target: "https://localhost:8443"
           # NOT yet enforcing. DAST runs, reports and self-verifies, but
@@ -665,9 +665,14 @@ jobs:
           # expected to raise an SSL-certificate alert. Tracked in #194 and
           # registered as SEC-EXC-002 (expires 2026-10-16).
           fail_action: false
-          # Do not open or update a GitHub issue on every run; the reports are
-          # published as an artifact below instead.
+          # Do not open or update a GitHub issue on every run; the action
+          # publishes the reports as its own artifact instead.
           allow_issue_writing: false
+          # The action uploads its own artifact. The name is set explicitly so it
+          # stays stable across action bumps and matches what reviewers already
+          # look for; v0.14.0 has no retention input, so retention is now the
+          # repo/org default rather than something this job owns.
+          artifact_name: "zap-baseline-report"
           # Triaged suppressions, each with a written justification. Anything not
           # listed keeps ZAP's default WARN, which fail_action turns into a build
           # failure, so new alerts still block.
@@ -697,8 +702,8 @@ jobs:
           # so `fail_action: true` alone would happily go green on an empty scan.
           # This runs only when the scan step succeeded, which is precisely the
           # case that needs proving.
-          # The action touches these files before scanning, so test -f would
-          # always pass; test -s is the real check for a written report.
+          # test -s is the real check for a written report: an empty file would
+          # parse as valid JSON and the assertion below would pass on nothing.
           test -s report_json.json || { echo "::error::ZAP wrote an empty report_json.json"; exit 1; }
           # `site` is populated from the report's site list; counting it proves
           # the scan reached something, and matching the host proves it reached
@@ -712,20 +717,6 @@ jobs:
             echo "::error::ZAP crawled no site on the target host; the scan is not covering the gateway"
             exit 1
           fi
-
-      - name: Publish ZAP reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-baseline-report
-          # The baseline scan emits JSON, Markdown and HTML, not SARIF, so
-          # codeql-action/upload-sarif was never given a file to read.
-          path: |
-            report_json.json
-            report_md.md
-            report_html.html
-          retention-days: 30
-          if-no-files-found: error
 
       - name: Tear down the DAST stack
         if: always()
