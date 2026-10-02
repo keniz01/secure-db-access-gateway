@@ -162,10 +162,18 @@ jobs:
             p/secrets
             p/python
             p/typescript
-          generate-sarif: "true"
+      # NOTE: this job does not currently produce SARIF. `generate-sarif` is not
+      # an input of semgrep/semgrep-action@v1 (it warned "Unexpected input(s)"
+      # and was ignored), and the action's `args` input is forwarded to
+      # `docker run` as container arguments rather than appended to `semgrep ci`
+      # -- passing --sarif there fails with `exec: "--sarif": executable file
+      # not found in $PATH`. Emitting SARIF needs semgrep invoked directly.
+      #
+      # The scan itself is the gate and still fails on findings. The upload is
+      # conditional so a missing report can never fail an otherwise clean job.
       - name: Upload Semgrep results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: semgrep.sarif
           category: semgrep
@@ -375,6 +383,28 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    # TODO: this job has never once succeeded - across 12+ runs it has only ever
+    # been "failure" or "skipped" - and it detects nothing today. Marked
+    # non-blocking so a permanently red X cannot train reviewers to ignore the
+    # rest of CI.
+    #
+    # It enforced nothing even while failing, because the scan step below
+    # already carries `continue-on-error: true`. So this costs no coverage.
+    # It is NOT a claim that the web surface is scanned; nothing is scanning it.
+    #
+    # To make this real, in order:
+    #   1. Bootstrap the stack. `docker compose up` currently aborts with
+    #      "env file .env not found". Needs .env from .env.example (via
+    #      scripts/bootstrap-dev.sh), mkcert certs for the ./certs mount, and
+    #      the secrets/pg_rotator_admin_pass.txt file creds-rotator mounts.
+    #   2. Wait on real health, not `sleep 30` - the API services must pass
+    #      /readyz before a scan is meaningful.
+    #   3. Note that sql_query_api refuses to start with ENVIRONMENT=production
+    #      and no OPA_URL, so CI env must set OPA_URL or use a non-production
+    #      ENVIRONMENT for the DAST stack.
+    #   4. Drop `continue-on-error: true` from the scan step so findings block,
+    #      and triage whatever the first real scan reports.
+    continue-on-error: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -391,7 +421,9 @@ jobs:
         continue-on-error: true
       - name: Upload ZAP Results
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        # Only when a report exists, so a missing artifact cannot be mistaken
+        # for the scan itself having failed.
+        if: always() && hashFiles('zap-report.sarif') != ''
         with:
           sarif_file: zap-report.sarif
           category: zap-dast
