@@ -21,6 +21,7 @@ from services.policy_engine import (
     rewrite_masked_columns,
 )
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from tests.policy_stubs import permissive_policy_evaluator
 from services.tenant_database_resolver import (
     TenantDatabaseConfig,
     TenantDatabaseResolutionError,
@@ -225,6 +226,7 @@ class TestAdversarialTenantIsolation:
         gateway = GovernedQueryGateway(
             provider=provider,
             safety_checker=DefaultSqlSafetyChecker(),
+            policy_evaluator=permissive_policy_evaluator(),
         )
 
         result = await gateway.execute(

@@ -5,6 +5,7 @@ import pytest
 from auth import Principal
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from tests.policy_stubs import permissive_policy_evaluator
 from services.tenant_database_resolver import TenantDatabaseConfig
 
 
@@ -19,7 +20,12 @@ async def test_gateway_runs_validation_execution_and_audit_in_one_path() -> None
     provider.resolve.return_value = (binding, service)
     audit = MagicMock()
 
-    gateway = GovernedQueryGateway(provider, DefaultSqlSafetyChecker(), audit=audit)
+    gateway = GovernedQueryGateway(
+        provider,
+        DefaultSqlSafetyChecker(),
+        audit=audit,
+        policy_evaluator=permissive_policy_evaluator(),
+    )
     result = await gateway.execute(
         GovernedQueryRequest(
             principal=principal,
@@ -48,7 +54,11 @@ async def test_gateway_rejects_mutation_before_resolving_or_executing() -> None:
         TenantDatabaseConfig("org-1", "analytics", "sqlite+aiosqlite:///:memory:"),
         service,
     )
-    gateway = GovernedQueryGateway(provider, DefaultSqlSafetyChecker())
+    gateway = GovernedQueryGateway(
+        provider,
+        DefaultSqlSafetyChecker(),
+        policy_evaluator=permissive_policy_evaluator(),
+    )
 
     with pytest.raises(ValueError, match="safety validation"):
         await gateway.execute(

@@ -2,6 +2,7 @@
 
 from shared_secrets.secrets import (
     MissingSecretError,
+    is_ci,
     is_environment_production,
     read_file_secret,
     read_secret,
@@ -9,6 +10,7 @@ from shared_secrets.secrets import (
 
 __all__ = [
     "MissingSecretError",
+    "is_ci",
     "is_environment_production",
     "read_file_secret",
     "read_secret",

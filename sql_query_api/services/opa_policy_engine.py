@@ -19,6 +19,33 @@ from metrics import (
 from services.policy_engine import EffectiveAccess, PolicyDecision
 
 
+class _InvalidOpaResponse(TypeError):
+    """Raised when an OPA decision document has an unexpected shape."""
+
+
+def _as_str_tuple(value: Any, field: str) -> tuple[str, ...]:
+    """Coerce an OPA array field to a tuple of strings, or raise.
+
+    Rejects strings outright: iterating a str yields characters, so a policy
+    document returning ``"masked_columns": "ssn"`` would otherwise be silently
+    interpreted as masking the columns ``s``, ``s``, ``n``.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise _InvalidOpaResponse(f"'{field}' must be an array, got {type(value).__name__}")
+    return tuple(str(item) for item in value)
+
+
+def _as_str_mapping(value: Any, field: str) -> dict[str, str]:
+    """Coerce an OPA object field to a dict of strings, or raise."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise _InvalidOpaResponse(f"'{field}' must be an object, got {type(value).__name__}")
+    return {str(key): str(item) for key, item in value.items()}
+
+
 @dataclass(frozen=True, slots=True)
 class OpaConfig:
     """Configuration for the OPA sidecar connection."""
@@ -41,7 +68,7 @@ class OpaConfig:
         + BUNDLE_SERVICE_URL). OPA_URL/OPA_ENABLED control the gateway->OPA
         data-plane; bundles are fetched by OPA itself, not the app.
         """
-        from shared_secrets import is_environment_production, read_secret
+        from shared_secrets import is_ci, is_environment_production, read_secret
 
         raw_url = os.getenv("OPA_URL", "").strip()
         if not raw_url:
@@ -49,9 +76,12 @@ class OpaConfig:
 
         raw_enabled = os.getenv("OPA_ENABLED", "").strip().lower()
         if not raw_enabled:
-            raw_enabled = read_secret("OPA_ENABLED", required=False) or "false"
+            raw_enabled = read_secret("OPA_ENABLED", required=False) or ""
 
         enabled = raw_enabled in ("true", "1", "yes")
+        # Distinguish "operator never mentioned OPA" from "operator explicitly
+        # turned it off". Only the former is a misconfiguration worth failing on.
+        explicitly_disabled = raw_enabled in ("false", "0", "no", "off")
         production = is_environment_production()
 
         # mTLS configuration
@@ -62,12 +92,28 @@ class OpaConfig:
         mtls_verify = os.getenv("OPA_MTLS_VERIFY", "").strip().lower() not in ("false", "0", "no")
 
         if not raw_url:
-            if production and not os.getenv("CI"):
+            if production and not explicitly_disabled and not is_ci():
+                # Fail closed at startup. Previously an empty OPA_URL silently
+                # downgraded to the deprecated in-process evaluator regardless of
+                # OPA_ENABLED - and that evaluator is ALLOW-ALL when no
+                # POLICY_POLICIES_JSON is set, so a misconfigured production host
+                # would serve ALLOW-ALL while /readyz still reported healthy.
+                #
+                # To legitimately run the deprecated inline evaluator, the operator
+                # must say so with OPA_ENABLED=false. An undeclared OPA_URL
+                # absence in production is a misconfiguration, not an opt-out.
+                raise RuntimeError(
+                    "OPA_URL is required when ENVIRONMENT=production. Refusing to "
+                    "fall back to the deprecated in-process policy evaluator, which "
+                    "cannot enforce RBAC1 hierarchy or separation-of-duties. Set "
+                    "OPA_URL (e.g. http://opa:8181) with OPA_ENABLED=true, or set "
+                    "OPA_ENABLED=false explicitly to opt out."
+                )
+            if production and explicitly_disabled:
                 logger.warning(
-                    "OPA_URL is not set in production. "
-                    "Falling back to in-process policy evaluator. "
-                    "Preferred: set OPA_ENABLED=true and OPA_URL=http://opa:8181 "
-                    "and serve policies via bundle (scripts/build-opa-bundle.sh)."
+                    "OPA_ENABLED=false in production: using the deprecated "
+                    "in-process policy evaluator. It does NOT implement RBAC1 "
+                    "hierarchy or separation-of-duties."
                 )
             return cls(url="", timeout=5.0, enabled=False, mtls_enabled=mtls_enabled)
 
@@ -136,6 +182,14 @@ class OpaPolicyEvaluator:
         self._config = config or OpaConfig.from_environment()
         self._enabled = enabled and self._config.enabled and self._config.url != ""
         self._client: httpx.AsyncClient | None = None
+
+    @property
+    def is_enabled(self) -> bool:
+        """Whether this evaluator will actually consult OPA.
+
+        When False, evaluate() denies every request (fail-closed).
+        """
+        return self._enabled
 
     @classmethod
     def from_environment(cls) -> OpaPolicyEvaluator:
@@ -244,24 +298,36 @@ class OpaPolicyEvaluator:
                 "OPA policy evaluation failed (unreachable or invalid response).",
             )
 
+        if not isinstance(result, dict):
+            # Fail closed: a valid-JSON non-object (bool/list/str) has no .get,
+            # and AttributeError is not caught by the handler below.
+            logger.error("Invalid OPA response structure (not an object): type={}", type(result).__name__)
+            record_opa_evaluation_failed(principal.org_id, database_id)
+            return PolicyDecision(False, "Invalid OPA response structure.")
+
         try:
-            allowed = bool(result.get("allowed", False))
+            # Strict boolean: anything other than the literal JSON `true` denies.
+            # A previous `bool(result.get("allowed", False))` allowed a truthy
+            # string such as "false" or "no" through as an ALLOW decision.
+            allowed = result.get("allowed") is True
             reason = str(result.get("reason", "No reason provided."))
-            policy_ids = tuple(str(pid) for pid in result.get("policy_ids", []))
-            row_restrictions = dict(result.get("row_restrictions", {}))
-            masked_columns = frozenset(
-                str(col) for col in result.get("masked_columns", [])
-            )
+            policy_ids = _as_str_tuple(result.get("policy_ids", []), "policy_ids")
+            row_restrictions = _as_str_mapping(result.get("row_restrictions", {}), "row_restrictions")
+            masked_columns = _as_str_tuple(result.get("masked_columns", []), "masked_columns")
+
+            if not allowed:
+                logger.debug("OPA denied request: {}", reason)
 
             return PolicyDecision(
                 allowed=allowed,
                 reason=reason,
                 policy_ids=policy_ids,
                 row_restrictions=row_restrictions,
-                masked_columns=masked_columns,
+                masked_columns=frozenset(masked_columns),
             )
-        except (TypeError, ValueError):
-            logger.error("Invalid OPA response structure: {}", result)
+        except _InvalidOpaResponse as exc:
+            logger.error("Invalid OPA response structure: {}", exc)
+            record_opa_evaluation_failed(principal.org_id, database_id)
             return PolicyDecision(False, "Invalid OPA response structure.")
 
     async def effective_access(
@@ -298,14 +364,33 @@ class OpaPolicyEvaluator:
                 masked_columns=frozenset(),
             )
 
+        if not isinstance(result, dict):
+            logger.error(
+                "Invalid OPA effective_access response (not an object): type={}",
+                type(result).__name__,
+            )
+            record_opa_evaluation_failed(principal.org_id, database_id)
+            return EffectiveAccess(
+                accessible_tables=frozenset(),
+                allowed_columns=frozenset(),
+                masked_columns=frozenset(),
+            )
+
         try:
             return EffectiveAccess(
-                accessible_tables=frozenset(result.get("accessible_tables", [])),
-                allowed_columns=frozenset(result.get("allowed_columns", [])),
-                masked_columns=frozenset(result.get("masked_columns", [])),
+                accessible_tables=frozenset(
+                    _as_str_tuple(result.get("accessible_tables", []), "accessible_tables")
+                ),
+                allowed_columns=frozenset(
+                    _as_str_tuple(result.get("allowed_columns", []), "allowed_columns")
+                ),
+                masked_columns=frozenset(
+                    _as_str_tuple(result.get("masked_columns", []), "masked_columns")
+                ),
             )
-        except (TypeError, ValueError):
-            logger.error("Invalid OPA effective_access response: {}", result)
+        except _InvalidOpaResponse as exc:
+            logger.error("Invalid OPA effective_access response: {}", exc)
+            record_opa_evaluation_failed(principal.org_id, database_id)
             return EffectiveAccess(
                 accessible_tables=frozenset(),
                 allowed_columns=frozenset(),

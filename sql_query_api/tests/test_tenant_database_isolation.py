@@ -103,11 +103,12 @@ def test_production_configuration_never_uses_legacy_database_url(monkeypatch: py
         TenantDatabaseResolver.from_environment()
 
 
-def test_policy_configuration_is_required_only_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_policy_configuration_is_required_only_in_production(
+    monkeypatch: pytest.MonkeyPatch, non_ci_env: None
+) -> None:
     monkeypatch.delenv("POLICY_POLICIES_JSON", raising=False)
     monkeypatch.delenv("POLICY_POLICIES_JSON_FILE", raising=False)
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.delenv("CI", raising=False)
 
     assert PolicyEvaluator.from_environment().enabled is False
 
@@ -117,14 +118,13 @@ def test_policy_configuration_is_required_only_in_production(monkeypatch: pytest
 
 
 def test_policy_configuration_loads_from_secret_file(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, non_ci_env: None
 ) -> None:
     policy_file = tmp_path / "policy_policies.json"
     policy_file.write_text("[]")
     monkeypatch.delenv("POLICY_POLICIES_JSON", raising=False)
     monkeypatch.setenv("POLICY_POLICIES_JSON_FILE", str(policy_file))
     monkeypatch.setenv("ENVIRONMENT", "production")
-    monkeypatch.delenv("CI", raising=False)
 
     evaluator = PolicyEvaluator.from_environment()
     assert evaluator.enabled is True

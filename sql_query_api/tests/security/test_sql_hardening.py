@@ -30,6 +30,7 @@ from repositories.sql_validators.ast_analyzer import (
 )
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from tests.policy_stubs import permissive_policy_evaluator
 from services.tenant_database_resolver import TenantDatabaseConfig
 
 
@@ -412,7 +413,11 @@ class TestSingleEnforcementPoint:
             TenantDatabaseConfig("org-1", "analytics", "sqlite+aiosqlite:///:memory:"),
             service,
         )
-        gateway = GovernedQueryGateway(provider, DefaultSqlSafetyChecker())
+        gateway = GovernedQueryGateway(
+            provider,
+            DefaultSqlSafetyChecker(),
+            policy_evaluator=permissive_policy_evaluator(),
+        )
         return gateway, service
 
     @pytest.mark.asyncio

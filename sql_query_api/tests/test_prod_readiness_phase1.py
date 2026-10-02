@@ -10,6 +10,7 @@ from repositories.sql_query_repository import SqlQueryRepository
 from repositories.sql_validators.ast_analyzer import AstSqlAnalyzer
 from repositories.sql_validators.sql_safety_checker import DefaultSqlSafetyChecker
 from services.query_gateway import GovernedQueryGateway, GovernedQueryRequest
+from tests.policy_stubs import permissive_policy_evaluator
 from services.tenant_database_resolver import TenantDatabaseConfig
 
 
@@ -74,6 +75,7 @@ class TestQueryGatewayAuditSanitization:
             provider,
             DefaultSqlSafetyChecker(),
             audit=audit_mock,
+            policy_evaluator=permissive_policy_evaluator(),
         )
 
         sensitive_sql = "SELECT * FROM users WHERE email = 'sensitive_customer_pii@example.com'"

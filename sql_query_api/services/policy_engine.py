@@ -274,12 +274,12 @@ class PolicyEvaluator:
         BUNDLE_SERVICE_URL / scripts/build-opa-bundle.sh). This path remains
         only for ENVIRONMENT=dev throwaway runs when OPA_ENABLED=false.
         """
-        import os
         import warnings
 
-        from shared_secrets import is_environment_production, read_secret
+        from shared_secrets import is_ci, is_environment_production, read_secret
 
         _production = is_environment_production()
+        _ci = is_ci()
         raw = read_secret(
             "POLICY_POLICIES_JSON",
             required=False,
@@ -295,7 +295,7 @@ class PolicyEvaluator:
         if not raw:
             raw = read_secret(
                 "POLICY_POLICIES_JSON",
-                required=_production and not os.getenv("CI"),
+                required=_production and not _ci,
                 error_message=(
                     "Missing required POLICY_POLICIES_JSON environment variable or "
                     "POLICY_POLICIES_JSON_FILE secret for policy configuration. "
@@ -303,14 +303,22 @@ class PolicyEvaluator:
                 ),
             )
         if not raw:
-            # In production we require an explicit policy configuration; otherwise fall back to an empty evaluator.
-            if _production and not os.getenv("CI"):
+            # In production we require an explicit policy configuration.
+            if _production and not _ci:
                 raise RuntimeError(
                     "Missing required POLICY_POLICIES_JSON environment variable or "
                     "POLICY_POLICIES_JSON_FILE secret for policy configuration. "
                     "Preferred: enable OPA (OPA_ENABLED=true) and serve policies via bundle."
                 )
-            # Non-production (e.g., CI, local dev) – disable policy enforcement.
+            # Non-production (e.g., CI, local dev) with no policy document. This
+            # evaluator is ALLOW-ALL, so make the state loud rather than silent.
+            warnings.warn(
+                "No policy document configured: this evaluator will ALLOW every "
+                "request. Set POLICY_POLICIES_JSON, or enable OPA "
+                "(OPA_ENABLED=true) with a served bundle.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return cls(enabled=False)
         try:
             values = json.loads(raw)

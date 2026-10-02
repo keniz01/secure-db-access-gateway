@@ -73,15 +73,26 @@ class GovernedQueryGateway:
         provider: QueryServiceProvider | Callable[[], QueryServiceProvider],
         safety_checker: SqlSafetyChecker,
         audit: Callable[..., None] = log_audit_event,
-        policy_evaluator: Union[PolicyEvaluator, Any, None] = None,
         *,
+        policy_evaluator: Union[PolicyEvaluator, Any],
         tenant_concurrent_limit: int | None = None,
         tenant_queue_limit: int | None = None,
     ) -> None:
         self._provider = provider
         self._safety_checker = safety_checker
         self._audit = audit
-        self._policy_evaluator = policy_evaluator or PolicyEvaluator(enabled=False)
+        # Required, and never defaulted to an ALLOW-ALL evaluator. An omitted
+        # evaluator previously became PolicyEvaluator(enabled=False), whose
+        # evaluate() returns allowed=True for every request - a silent
+        # authorization bypass reachable by forgetting one constructor argument.
+        if policy_evaluator is None:
+            raise TypeError(
+                "GovernedQueryGateway requires an explicit policy_evaluator. "
+                "Pass OpaPolicyEvaluator(...) in production, or "
+                "PolicyEvaluator.from_environment() for local runs. There is no "
+                "default, because the permissive default failed open."
+            )
+        self._policy_evaluator = policy_evaluator
         # Per-tenant concurrency control
         self._tenant_concurrent_limit = tenant_concurrent_limit or int(os.getenv("TENANT_CONCURRENT_LIMIT", "5"))
         self._tenant_queue_limit = tenant_queue_limit or int(os.getenv("TENANT_QUEUE_LIMIT", "10"))
