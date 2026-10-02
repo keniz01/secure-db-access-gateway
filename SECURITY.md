@@ -74,7 +74,7 @@ CORS_ORIGINS="https://yourdomain.com,https://www.yourdomain.com"
 
 ### 3. HTTP Security Headers ✅
 
-#### Response Headers (authoritative at `nginx/nginx.conf:102`, mirrored in FastAPI for dev)
+#### Response Headers (authoritative at `nginx/nginx.conf:115`, mirrored in FastAPI for dev)
 - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing
 - **X-Frame-Options: DENY** - Prevents clickjacking (supplemented by `Content-Security-Policy: frame-ancestors 'none'`)
 - **Content-Security-Policy** - BFF: `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 ...; upgrade-insecure-requests`; API: `default-src 'none'; frame-ancestors 'none'` (`auth0_api/app/middleware/setup.py:68`, `sql_query_api/app_factory.py:82`)
@@ -431,6 +431,6 @@ For security issues, please report responsibly:
 
 ---
 
-**Last Updated:** September 2026  
-**Security Patch Version:** 1.3.0  
+**Last Updated:** September 2026
+**Security Patch Version:** 1.3.0
 **Status:** Development

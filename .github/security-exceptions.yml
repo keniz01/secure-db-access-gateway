@@ -34,37 +34,45 @@
 # gap) belong in THREAT_MODEL.md, not here. This file is only for controls that
 # exist but are configured not to block.
 #
-# Known limits of the check - it detects the three downgrade markers below and
-# nothing else:
+# SEC-EXC-001 is deleted: it covered a DAST job that had never worked. The
+# replacement entry (SEC-EXC-002) covers only the remaining *enforcement* gap
+# on a pipeline that does now boot, scan, publish reports and prove it crawled
+# the target.
+#
+# Known limits of the check - it detects these downgrade markers and nothing
+# else:
 #   * step-level `continue-on-error: true`
 #   * job-level `continue-on-error: true`
 #   * Grype `fail-build: false` / Trivy `exit-code: "0"`
+#   * ZAP `fail_action: false` (that action defaults to false, so omitting it is
+#     itself a silent downgrade)
 # It does NOT detect a downgrade expressed as `|| true`, an `if: always()`
 # wrapper, or a step that is simply deleted. Removing a control is still a
 # reviewable diff, but do not assume this register catches it.
 version: 1
 
 exceptions:
-  - id: SEC-EXC-001
-    control: zap-dast, zap-dast/Run OWASP ZAP Baseline Scan
+  - id: SEC-EXC-002
+    control: zap-dast/Run OWASP ZAP Baseline Scan
     scope: >
-      The `zap-dast` job in `.github/workflows/ci.yml`, including its
-      non-blocking `Run OWASP ZAP Baseline Scan` step.
+      DAST enforcement only. The job boots the stack, waits on the TLS edge,
+      runs the ZAP baseline scan, publishes JSON/MD/HTML reports and fails if it
+      did not crawl the target. What it does not yet do is fail the build when
+      the scan reports alerts.
     reason: >
-      The job has never succeeded and detects nothing today. The CI stack cannot
-      start unattended (mkcert CA install needs an OS trust store write and an
-      admin prompt; compose also requires secrets/pg_rotator_admin_pass.txt,
-      which bootstrap-dev.sh does not create), and the scan step was itself
-      `continue-on-error`, so the job enforced nothing even while failing. A
-      permanently red X would train reviewers to ignore the rest of CI.
-      Accepted as risk CI-5 in THREAT_MODEL.md section 2.9 on 2026-10-02.
-      Re-reviewed 2026-10-02; expiry set to force a real decision.
+      Enforcing and fixing the pipeline in one change would gamble on a runtime
+      path that has never executed. docker-compose.test.yml is referenced only
+      by this job, so three image builds, the nginx port merge, creds-rotator's
+      missing jq, and the full service_healthy chain are unproven in CI. The
+      target is also a self-signed one-day certificate, so ZAP's SSL Certificate
+      Error passive rule is expected to fire; insecureSkipVerify only stops the
+      spider aborting and does not suppress that alert. Pre-seeding it would be
+      guessing. Run once, triage from real data, then enforce.
     compensating_controls:
-      - "SAST: Semgrep, CodeQL, Bandit (all blocking)"
-      - "Secret scanning: gitleaks and TruffleHog (both blocking)"
-      - "Reviewed nginx TLS edge configuration and security headers"
-      - "Playwright browser E2E suite against the served web surface"
+      - "SAST: Semgrep, CodeQL and Bandit, all blocking"
+      - "Dependency and image scanning: blocking pip-audit, Grype, Trivy, npm audit"
+      - "The scan itself runs and its reports are published, so the results are reviewable even though they do not block"
     owner: Platform Security
-    tracking: "THREAT_MODEL.md 2.9 CI-5 (accepted 2026-10-02)"
-    expires: "2026-12-01"
+    tracking: "https://github.com/keniz01/secure-db-access-gateway/issues/194"
+    expires: "2026-10-16"
     status: accepted

@@ -10,7 +10,8 @@ This check closes that gap:
 
 1. Every non-blocking security control in `.github/workflows/` (job-level or
    step-level ``continue-on-error: true``, Grype ``fail-build: false``, Trivy
-   ``exit-code: "0"``) must map to an entry in the exception register.
+   ``exit-code: "0"``, ZAP ``fail_action`` false *or omitted*) must map to an
+   entry in the exception register.
 2. Every register entry must carry an id, scope, reason, owner, tracking
    reference, at least one compensating control and an ISO ``expires`` date.
 3. ``expires`` must be in the future and at most ``MAX_EXPIRY_DAYS`` away, so a
@@ -46,11 +47,19 @@ MAX_EXPIRY_DAYS = 180
 VALID_STATUSES = {"accepted", "revoked"}
 REASON_MIN_CHARS = 80
 
-# Grype/Trivy configure severity gating through action inputs rather than
-# continue-on-error, so those inputs are scanned as downgrade markers too.
+# Grype/Trivy/ZAP configure whether findings fail the build through action
+# inputs rather than continue-on-error, so those inputs are scanned as
+# downgrade markers too. Zap's `fail_action` defaults to false when omitted, so
+# a missing key is a downgrade as well and is handled separately below.
 NON_BLOCKING_INPUTS = (
     ("anchore/scan-action", "fail-build", "false"),
     ("aquasecurity/trivy-action", "exit-code", "0"),
+)
+# Matched as prefixes so the sibling zaproxy actions (action-full-scan,
+# action-api-scan) and the legacy zap-baseline-action cannot slip through.
+NON_BLOCKING_DEFAULT_PREFIXES = (
+    ("zaproxy/action-", "fail_action", False),
+    ("zaproxy/zap-baseline-action", "fail_action", False),
 )
 
 EXCEPTION_ID_RE = re.compile(r"^SEC-EXC-\d{3,}$")
@@ -114,6 +123,22 @@ def find_non_blocking_controls(
                         f"{job_name}/{label}",
                         f"{source.name}: step `{label}` in job `{job_name}` sets "
                         f"`{key}: {bad_value}`",
+                    )
+
+            for prefix, key, bad_default in NON_BLOCKING_DEFAULT_PREFIXES:
+                if prefix not in uses:
+                    continue
+                if key not in with_:
+                    record(
+                        f"{job_name}/{label}",
+                        f"{source.name}: step `{label}` in job `{job_name}` omits "
+                        f"`{key}`, which defaults to {bad_default}",
+                    )
+                elif str(with_[key]).lower() in ("false", "0", "no"):
+                    record(
+                        f"{job_name}/{label}",
+                        f"{source.name}: step `{label}` in job `{job_name}` sets "
+                        f"`{key}: {with_[key]}`",
                     )
     return found
 

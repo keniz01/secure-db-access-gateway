@@ -27,7 +27,7 @@ The project is structured as a three-part system:
  - **CSP violation reporting** endpoint
  - **Admin access review API** (tenant bindings, OPA policies, effective access)
  - **Data classification labels** on audit events (PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED)
- - **SAST pipeline** (Trivy, Semgrep, CodeQL). DAST via OWASP ZAP is wired up but non-blocking and currently detects nothing — see threat model CI-5
+ - **SAST + DAST pipeline** (Trivy, Semgrep, CodeQL, plus an OWASP ZAP baseline scan that boots the stack, scans the real TLS edge and publishes its reports). Trivy, Semgrep, CodeQL and pip-audit block the build. ZAP runs and reports but does not yet fail on alerts: that enforcement is tracked in [#194](https://github.com/keniz01/secure-db-access-gateway/issues/194) and registered as `SEC-EXC-002`, expiring 2026-10-16.
  - **SLSA provenance** for container images
  - **Dependabot** automated dependency updates with patch auto-merge
 
@@ -222,7 +222,7 @@ This application is designed around a read-only gateway with defense-in-depth:
 - **Authorization:** OPA bundles (`gateway.rego` `role_hierarchy admin->viewer`, `sod_constraints`, `action` `select` default, deny-precedence, fail-closed on unreachable) or deprecated `POLICY_POLICIES_JSON` fallback (dev only). Every operation resolves `(tenant_id, database_id)` server-side; `database_id="default"` must be explicit per org
 - **Network:** `frontend` (`nginx`, `web_app`, `auth0_api`) + `backend` (`sql_query_api`, `opa`, `redis`, `auth0_api`) segmentation, Redis `requirepass`, `otel-lgtm` `127.0.0.1` only, images pinned (`nginx:1.27`, `redis:7.4`, `opa:1.8.0`), `read_only`/`no-new-privileges`
 - **Edge:** `nginx` TLS Mozilla intermediate (`ECDHE`+`TLS1.3`, `session_tickets off`, `client_max_body_size 1m`), HSTS `preload`, `CSP` `frame-ancestors none`, `X-Content-Type-Options nosniff`, rate limits `60r/m` burst 20 / `5r/m` burst 3
-- **Supply chain:** scanner and build Actions SHA-pinned (`scan-action`, `sbom-action`, `trivy-action`, `download-artifact`); blocking `bandit`, `pip-audit` (both services, no suppressions - `ecdsa`/PYSEC-2026-1325 was removed by dropping the unused `python-jose`, not ignored), blocking Grype/Trivy/Syft with every non-blocking control registered in `.github/security-exceptions.yml`, builds and CI resolve from `uv.lock` via `uv export --locked`, `npm ci --ignore-scripts` + `audit --audit-level=moderate`
+- **Supply chain:** scanner and build Actions SHA-pinned (`scan-action`, `sbom-action`, `trivy-action`, `download-artifact`); blocking `bandit`, `pip-audit` (both services, no suppressions - `ecdsa`/PYSEC-2026-1325 was removed by dropping the unused `python-jose`, not ignored), blocking Grype/Trivy/Syft, with `.github/security-exceptions.yml` holding one short-lived entry (`SEC-EXC-002`) for ZAP DAST enforcement, so a control that cannot block has to be registered with an owner, a reason and an expiry first, builds and CI resolve from `uv.lock` via `uv export --locked`, `npm ci --ignore-scripts` + `audit --audit-level=moderate`
 - **Audit:** `log_audit_event` for `sql_query`/`policy_denied`/`auth_failed`/`schema_introspection` with `query_hash` (raw SQL only if `AUDIT_LOG_RAW_SQL=true`, off in prod), quarterly review via `docs/runbook-access-review.md`
 
 For full controls see [SECURITY.md](SECURITY.md) and [ARCHITECTURE.md](ARCHITECTURE.md).

@@ -1,0 +1,17 @@
+# ZAP baseline scan triage for the secure DB access gateway edge.
+#
+# Format is ZAP's own -c format: id<TAB>LEVEL<TAB>justification, one per line,
+# at least three tab-separated fields. A malformed line makes zap-baseline.py
+# exit 3, so keep it strictly tab-separated. Lines starting with # are ignored.
+#
+# Rules NOT listed here keep ZAP's default level of WARN, and `fail_action: true`
+# turns any WARN into a failed build. That is deliberate: only alerts we have
+# consciously decided about are listed, so anything new still blocks. Do not
+# bulk-ignore rule ids here; add a line only with a written justification.
+#
+# 10016 - Web Browser XSS Protection Not Enabled
+#   The X-XSS-Protection header is deliberately not set. It is deprecated and
+#   removed from modern browsers, and its audit filter has itself been an XSS
+#   vector; the Content-Security-Policy header on this edge is the control that
+#   replaces it. Recorded in SECURITY.md as an intentional omission.
+10016	IGNORE	X-XSS-Protection is intentionally not set; it is deprecated and superseded by the Content-Security-Policy header (see SECURITY.md).
