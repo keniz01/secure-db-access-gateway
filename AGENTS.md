@@ -49,6 +49,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - **The hook also chains the `pre-commit` framework.** `.githooks/pre-commit` occupies the same `.git/hooks/pre-commit` path the framework installs its own shim to, so the hook runs `pre-commit run` inside `sql_query_api/` first (ruff diff-aware check, `check-yaml`, `trailing-whitespace`, ...). Do NOT run `pre-commit install` in `sql_query_api/` — it overwrites this hook and disables the review gate.
 - `pre-commit` must be on `PATH` (e.g. `pipx install pre-commit`) or commits are blocked when `BLOCK=true`. The first commit warms the hook environments (~1-2 min, then cached).
 - Toggle to advisory with `BLOCK=false` (set in `.githooks/pre-commit` or exported for one commit); uninstall with `rm .git/hooks/pre-commit`.
+- **The gate is the most expensive step in this repo: budget for it.** A review commonly runs 10-25 min and often returns `REQUEST_CHANGES`, so one commit-per-fix loop can cost many times the change itself. Verify locally *before* committing (the reviewer cannot run `docker`, `grype`, `trivy`, `opa`, `pip-audit` or `npm`, so it will ask you to prove those), fix every `REQUIRED_FIXES` item, then commit **once**. Run the commit detached and poll the log rather than blocking a tool call on it. Full checklist in `.opencode/command/ship-this.md` step 4.
 
 ## Env & config gotchas
 
