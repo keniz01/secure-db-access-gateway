@@ -162,10 +162,17 @@ jobs:
             p/secrets
             p/python
             p/typescript
-          generate-sarif: "true"
+          # `generate-sarif` is not an input of this action (it warned
+          # "Unexpected input(s)"), so semgrep.sarif was never written and the
+          # upload step below failed on every run. Request SARIF the supported
+          # way instead: these are appended to the `semgrep ci` invocation.
+          args: "--sarif --sarif-output=semgrep.sarif"
       - name: Upload Semgrep results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        # The scan itself is the gate and still fails on findings. Only upload
+        # the report when one was actually produced, so a missing artifact can
+        # never fail an otherwise clean job.
+        if: always() && hashFiles('semgrep.sarif') != ''
         with:
           sarif_file: semgrep.sarif
           category: semgrep
