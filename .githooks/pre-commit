@@ -6,27 +6,77 @@
 #   cp .githooks/pre-commit .git/hooks/pre-commit
 #   chmod +x .git/hooks/pre-commit
 #
+# PREREQUISITES: this hook chains the `pre-commit` framework, so `pre-commit`
+# itself must be on PATH when BLOCK=true:
+#   pipx install pre-commit
+#
+# The first commit on a fresh machine installs the pre-commit hook environments
+# over the network (~1-2 min, cached in ~/.cache/pre-commit afterwards). Run
+#   (cd sql_query_api && pre-commit run --all-files)
+# once up front to warm the cache and surface the whole-repo baseline.
+#
+# Do NOT run `pre-commit install` inside sql_query_api/ — that would overwrite
+# this file in .git/hooks and disable the review gate entirely.
+#
 # Runs `opencode run --command code-review` (non-interactive) against the
-# staged diff, prints the findings, then requires a manual y/N before the
-# commit is allowed. In non-interactive contexts (CI, piped stdin) the review
-# still runs and its report is printed, but the y/N gate is skipped.
+# staged diff, prints the findings, and enforces the verdict: APPROVE passes
+# (plus a y/N prompt when run interactively), REQUEST_CHANGES blocks.
 #
-# REVIEW_MODEL overrides the model used for the review. Default is the free,
-# fast muse-spark model; set e.g.
-# REVIEW_MODEL=opencode/big-pickle to fall back to the stricter default.
+# It also chains the `pre-commit` framework hooks (ruff diff-aware check,
+# check-yaml, trailing-whitespace, ...). This hook occupies the same
+# .git/hooks/pre-commit path that the framework installs its own shim to, so
+# without this chaining none of the hooks in
+# sql_query_api/.pre-commit-config.yaml would ever run on commit.
 #
-# Toggle: BLOCK=false turns this into an advisory report that never blocks.
+# REVIEW_MODEL overrides the model used for the review. The default is
+# opencode/big-pickle, the last model verified to resolve; the previous
+# default (opencode/muse-spark-1.2-contributor-free) returned "Unexpected
+# server error" on every invocation, so the review silently never happened.
+#
+# When BLOCK=true (the default) a review that cannot run BLOCKS the commit
+# rather than being skipped: a gate that cannot evaluate must not pass.
+# BLOCK=false turns this into an advisory report that never blocks.
+#
 # Uninstall: rm .git/hooks/pre-commit
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
-BLOCK=false
+BLOCK="${BLOCK:-true}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
+REVIEW_MODEL="${REVIEW_MODEL:-opencode/big-pickle}"
+CONFIG_DIR="${CONFIG_DIR:-sql_query_api}"
 
 if git diff --cached --quiet; then
   echo "No staged changes; skipping code review gate."
   exit 0
+fi
+
+# --- Framework hooks --------------------------------------------------------
+# ruff (diff-aware) plus the standard hygiene hooks. Run before the review so
+# there is no point asking a model to approve code that already fails lint.
+if command -v pre-commit > /dev/null 2>&1; then
+  echo "── pre-commit hooks ──────────────────────────────────────────"
+  if [ -f "$CONFIG_DIR/.pre-commit-config.yaml" ]; then
+    (cd "$CONFIG_DIR" && pre-commit run --show-diff-on-failure) || {
+      echo "❌ pre-commit hooks failed; commit blocked."
+      exit 1
+    }
+  else
+    echo "pre-commit installed but $CONFIG_DIR/.pre-commit-config.yaml not found; skipping."
+  fi
+  echo ""
+else
+  echo "⚠️  'pre-commit' not installed — the ruff diff-aware check and the other"
+  echo "    hooks in $CONFIG_DIR/.pre-commit-config.yaml did NOT run."
+  echo "    Install with:  pipx install pre-commit"
+  echo "    Then configure: (cd $CONFIG_DIR && pre-commit install)"
+  echo ""
+  if [ "$BLOCK" = true ]; then
+    echo "❌ BLOCK=true and pre-commit is missing; commit blocked."
+    echo "    Set BLOCK=false to commit anyway."
+    exit 1
+  fi
 fi
 
 export NO_COLOR=1
@@ -36,17 +86,56 @@ echo "╔═══════════════════════�
 echo "║        🔍 Code Review (opencode)                  ║"
 echo "╚══════════════════════════════════════════════════╝"
 echo ""
-echo "Reviewing staged changes with opencode..."
+echo "Reviewing staged changes with opencode (model: $REVIEW_MODEL)..."
 
-if ! REVIEW_OUTPUT=$("$OPENCODE_BIN" run --command code-review -m "${REVIEW_MODEL:-opencode/muse-spark-1.2-contributor-free}" 2>&1); then
-  REVIEW_EXIT=$?
-  echo "⚠️  opencode review failed (exit $REVIEW_EXIT). Skipping automated review; manual gate still applies when run interactively."
-  REVIEW_OUTPUT=""
-fi
+# Capture the real exit status. `if ! cmd; then REVIEW_EXIT=$?` cannot work:
+# inside that branch $? is the status of the `!` negation, which is always 0,
+# so every failure used to be reported as "exit 0".
+REVIEW_EXIT=0
+REVIEW_OUTPUT=$("$OPENCODE_BIN" run --command code-review -m "$REVIEW_MODEL" 2>&1) || REVIEW_EXIT=$?
 
 echo ""
 echo "$REVIEW_OUTPUT"
 echo ""
+
+if [ "$REVIEW_EXIT" -ne 0 ]; then
+  echo "⚠️  opencode review FAILED (exit $REVIEW_EXIT, model $REVIEW_MODEL)."
+  echo "    No review verdict was produced."
+  if [ "$BLOCK" = true ]; then
+    echo "❌ Commit blocked: the review gate could not run."
+    echo "    Fix the model/network, set REVIEW_MODEL=<working model>, or BLOCK=false."
+    exit 1
+  fi
+  echo "    BLOCK=false, so proceeding without a review."
+  echo ""
+else
+  # Honour the verdict itself. Treating "the review ran" as "the review
+  # approved" meant a diff the reviewer asked to change still committed.
+  VERDICT=$(printf '%s\n' "$REVIEW_OUTPUT" \
+    | grep -E '^REVIEW_VERDICT:[[:space:]]*(APPROVE|REQUEST_CHANGES)' \
+    | tail -1 | sed 's/^REVIEW_VERDICT:[[:space:]]*//' || true)
+
+  if [ "$VERDICT" = APPROVE ]; then
+    echo "✅ Review verdict: APPROVE"
+  elif [ "$VERDICT" = REQUEST_CHANGES ]; then
+    echo "⚠️  Review verdict: REQUEST_CHANGES (see findings above)."
+    if [ "$BLOCK" = true ]; then
+      echo "❌ Commit blocked by the review gate."
+      echo "    Address the findings, or BLOCK=false to commit anyway."
+      exit 1
+    fi
+    echo "    BLOCK=false, so committing anyway."
+  else
+    echo "⚠️  Review produced no parseable verdict (expected 'REVIEW_VERDICT: APPROVE')."
+    if [ "$BLOCK" = true ]; then
+      echo "❌ Commit blocked: the gate could not evaluate the diff."
+      echo "    Re-run the review, or BLOCK=false to commit anyway."
+      exit 1
+    fi
+    echo "    BLOCK=false, so committing anyway."
+  fi
+  echo ""
+fi
 
 if [ "$BLOCK" = true ] && [ -t 0 ]; then
   read -r -p "Review complete. Approve this commit? [y/N] " response

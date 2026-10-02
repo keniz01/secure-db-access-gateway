@@ -1,8 +1,8 @@
 # Threat Model — Secure DB Access Gateway
 
-**Version:** 1.0  
-**Date:** 2026-09-26  
-**Methodology:** PASTA (high-level workflow) → STRIDE (per-component threat enumeration) → DREAD (scoring & prioritization)  
+**Version:** 1.0
+**Date:** 2026-09-26
+**Methodology:** PASTA (high-level workflow) → STRIDE (per-component threat enumeration) → DREAD (scoring & prioritization)
 **Scope:** All services in `docker-compose.yml` plus the nginx TLS edge and external dependencies (Auth0, PostgreSQL tenants, OpenRouter AI, OPA sidecar)
 
 ---
@@ -154,7 +154,7 @@
 | CI-1 | Malicious dependency injection | **T**, **E** | Compromised PyPI/npm package | `pip-audit` (Python), `npm audit` (Node); `uv.lock` pinned | No SLSA provenance verification; no sigstore verification |
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
 | CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR | No reproducible build verification; no SBOM generation |
-| CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit | `BLOCK=false` disables; hook can be uninstalled |
+| CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |
 
 ### 2.10 Infrastructure / Container Runtime
 

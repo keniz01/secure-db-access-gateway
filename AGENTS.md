@@ -36,13 +36,16 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 ## Ruff is diff-aware only
 
-- `sql_query_api/.pre-commit-config.yaml` uses a custom hook that lints only changed lines of staged files: `python .pre-commit-scripts/ruff-diff-check.py`.
+- `sql_query_api/.pre-commit-config.yaml` uses a custom hook that lints only changed lines of staged files: `python3 sql_query_api/.pre-commit-scripts/ruff-diff-check.py`. Paths are relative to the **git root** (pre-commit runs hooks from the repo top level), and the script resolves `ruff` from `PATH` with a fallback to `sql_query_api/.venv/bin/ruff`.
 - Full `ruff check .` reports 600+ pre-existing errors and is NOT part of CI. Don't try to make the whole repo ruff-clean; keep new and edited lines compliant.
 
 ## Commit review gate
 
-- A blocking pre-commit hook runs an opencode code-review before every commit (source: `.githooks/pre-commit`, installed to `.git/hooks/pre-commit`). It runs `opencode run --command code-review -m ${REVIEW_MODEL:-opencode/muse-spark-1.2-contributor-free}` (skill: `.opencode/skills/code-review/`, read-only agent: `.opencode/agent/code-reviewer.md`) against the staged diff and requires a y/N approval when run interactively; in non-interactive contexts the review runs, its report is printed, and the commit proceeds. Override the review model with `REVIEW_MODEL=` (e.g. `opencode/big-pickle`).
-- Toggle to advisory with `BLOCK=false` in `.githooks/pre-commit`; uninstall with `rm .git/hooks/pre-commit`.
+- A blocking pre-commit hook runs an opencode code-review before every commit (source: `.githooks/pre-commit`, installed to `.git/hooks/pre-commit`). It runs `opencode run --command code-review -m ${REVIEW_MODEL:-opencode/big-pickle}` (skill: `.opencode/skills/code-review/`, read-only agent: `.opencode/agent/code-reviewer.md`) against the staged diff. Override the review model with `REVIEW_MODEL=` if the default is unavailable.
+- **The review gate fails closed.** With `BLOCK=true` (the default) the commit is blocked when the review cannot run (bad model, network error, missing `opencode` binary), when the verdict is `REQUEST_CHANGES`, and when the verdict cannot be parsed. Interactively you also get a y/N prompt on `APPROVE`. Deliberate: a gate that cannot evaluate, or that evaluated and said no, must not pass.
+- **The hook also chains the `pre-commit` framework.** `.githooks/pre-commit` occupies the same `.git/hooks/pre-commit` path the framework installs its own shim to, so the hook runs `pre-commit run` inside `sql_query_api/` first (ruff diff-aware check, `check-yaml`, `trailing-whitespace`, ...). Do NOT run `pre-commit install` in `sql_query_api/` — it overwrites this hook and disables the review gate.
+- `pre-commit` must be on `PATH` (e.g. `pipx install pre-commit`) or commits are blocked when `BLOCK=true`. The first commit warms the hook environments (~1-2 min, then cached).
+- Toggle to advisory with `BLOCK=false` (set in `.githooks/pre-commit` or exported for one commit); uninstall with `rm .git/hooks/pre-commit`.
 
 ## Env & config gotchas
 
