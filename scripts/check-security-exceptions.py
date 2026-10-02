@@ -68,14 +68,31 @@ def load_register(register: Path) -> list[dict]:
     return exceptions
 
 
-def find_non_blocking_controls(workflow: dict, source: Path) -> dict[str, str]:
-    """Return {control_id: location} for every intentionally non-blocking control."""
+def find_non_blocking_controls(
+    workflow: dict, source: Path, ambiguous: list[str] | None = None
+) -> dict[str, str]:
+    """Return {control_id: location} for every intentionally non-blocking control.
+
+    Ids are derived from human step names, so two identically named steps in one
+    job would collapse into a single key and hide one of them from the register.
+    Such ids are recorded in ``ambiguous`` instead of being silently merged.
+    """
     found: dict[str, str] = {}
+
+    def record(control: str, location: str) -> None:
+        if control in found:
+            if ambiguous is not None:
+                ambiguous.append(
+                    f"control id `{control}` is ambiguous: {found[control]} and {location} "
+                    "cannot be distinguished; give the steps unique names"
+                )
+            return
+        found[control] = location
     for job_name, job in (workflow.get("jobs") or {}).items():
         if not isinstance(job, dict):
             continue
         if job.get("continue-on-error") is True:
-            found[job_name] = f"{source.name}: job `{job_name}`"
+            record(job_name, f"{source.name}: job `{job_name}`")
 
         for index, step in enumerate(job.get("steps") or []):
             if not isinstance(step, dict):
@@ -85,15 +102,18 @@ def find_non_blocking_controls(workflow: dict, source: Path) -> dict[str, str]:
             with_ = step.get("with") or {}
 
             if step.get("continue-on-error") is True:
-                found[f"{job_name}/{label}"] = f"{source.name}: step `{label}` in job `{job_name}`"
+                record(
+                    f"{job_name}/{label}",
+                    f"{source.name}: step `{label}` in job `{job_name}`",
+                )
                 continue
 
             for action, key, bad_value in NON_BLOCKING_INPUTS:
                 if action in uses and str(with_.get(key)) == bad_value:
-                    control = f"{job_name}/{label}"
-                    found[control] = (
+                    record(
+                        f"{job_name}/{label}",
                         f"{source.name}: step `{label}` in job `{job_name}` sets "
-                        f"`{key}: {bad_value}`"
+                        f"`{key}: {bad_value}`",
                     )
     return found
 
@@ -172,7 +192,9 @@ def main() -> int:
     register = args.register.resolve()
     workflow_dir = args.workflows.resolve()
 
-    today = dt.date.today()
+    # UTC, so the expiry window does not shift with the runner's timezone and
+    # a day-early or day-late expiry cannot flip the gate on some machines.
+    today = dt.datetime.now(dt.timezone.utc).date()
     errors: list[str] = []
 
     try:
@@ -183,17 +205,33 @@ def main() -> int:
         sys.exit(f"no workflows found in {workflow_dir}")
 
     non_blocking: dict[str, str] = {}
+    collisions: list[str] = []
     for path in workflows:
         try:
             workflow = yaml.safe_load(path.read_text()) or {}
         except yaml.YAMLError as exc:
             sys.exit(f"{path.name}: invalid YAML: {exc}")
-        for control, location in find_non_blocking_controls(workflow, path).items():
+        found = find_non_blocking_controls(workflow, path, collisions)
+        for control, location in found.items():
+            if control in non_blocking:
+                collisions.append(
+                    f"control id `{control}` is ambiguous: produced by both "
+                    f"{non_blocking[control]} and {location}"
+                )
             non_blocking[control] = location
+    errors.extend(sorted(set(collisions)))
 
     claimed_by: dict[str, str] = {}
+    seen_ids: dict[str, int] = {}
     for entry in load_register(register):
         entry_id = entry.get("id") if isinstance(entry, dict) else "?"
+        if isinstance(entry_id, str):
+            seen_ids[entry_id] = seen_ids.get(entry_id, 0) + 1
+            if seen_ids[entry_id] > 1:
+                errors.append(
+                    f"{entry_id}: duplicate exception id; ids must be unique so an "
+                    "entry cannot be edited in place without review"
+                )
         claimed = validate_entry(entry, today, errors)
         for control in claimed:
             if control in claimed_by:

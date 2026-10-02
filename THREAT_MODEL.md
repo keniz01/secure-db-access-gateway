@@ -261,7 +261,7 @@
 | Area | Action |
 |------|--------|
 | **Observability** | Add Prometheus alerts: `opa_evaluation_failures_total > 0`, `audit_log_write_failures > 0`, `sql_query_cost_threshold_exceeded` |
-| **Supply chain** | Generate SBOM (`syft`); verify provenance (`cosign verify-attestation`); pin GitHub Actions to SHA |
+| **Supply chain** | Verify provenance with `cosign verify-attestation` (SBOM generation and scanner Action SHA pinning are now in place); pin the remaining GitHub Actions to SHA |
 | **Credential hygiene** | Rotate `pg_rotator_admin_pass` quarterly; automate OpenRouter key rotation |
 | **Testing** | Add contract tests for OPA policy bundle; fuzz `clean_sql()` + `SqlSafetyChecker` (already have `test_sql_fuzzing.py`) |
 | **Incident response** | Document runbook for: OPA fail-closed activation, credential rotation emergency, audit log tampering detection |

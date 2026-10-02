@@ -14,6 +14,18 @@
 #   4. Registered exceptions must still correspond to a real non-blocking
 #      control, so the register cannot accumulate dead entries.
 #
+# Each entry needs these fields:
+#   id                     SEC-EXC-NNN, unique
+#   control                job id, or `job/Step Name`, that is non-blocking
+#   scope                  what exactly is not blocking
+#   reason                 the decision record (>= 80 characters)
+#   compensating_controls  what covers the gap meanwhile
+#   owner                  who accepted the risk
+#   tracking               where the remediation is tracked
+#   expires                ISO date; must be in the future, <= 180 days out
+#   status                 `accepted` (authorizes a downgrade) or `revoked`
+#                          (documents history only; authorizes nothing)
+#
 # Renewing an exception requires a deliberate decision record: extend the date
 # and note the re-review in `reason`, or make the control blocking and delete
 # the entry.
