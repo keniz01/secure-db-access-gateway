@@ -1,0 +1,70 @@
+# Security control exception register.
+#
+# Every intentionally non-blocking security control in `.github/workflows/` must
+# appear here with an owner, a reason, a tracking reference and an expiry date.
+# `scripts/check-security-exceptions.py` enforces that:
+#
+#   1. Each entry carries a reason, an owner, a tracking reference, at least one
+#      compensating control, and an ISO expiry date.
+#   2. `expires` is in the future and no more than MAX_EXPIRY_DAYS out, so
+#      "temporarily non-blocking" cannot quietly become permanent.
+#   3. Every non-blocking control found in the workflows maps to a registered,
+#      unexpired exception. A control can be downgraded only by registering the
+#      downgrade, never by editing a single `continue-on-error: true`.
+#   4. Registered exceptions must still correspond to a real non-blocking
+#      control, so the register cannot accumulate dead entries.
+#
+# Each entry needs these fields:
+#   id                     SEC-EXC-NNN, unique
+#   control                job id, or `job/Step Name`, that is non-blocking
+#   scope                  what exactly is not blocking
+#   reason                 the decision record (>= 80 characters)
+#   compensating_controls  what covers the gap meanwhile
+#   owner                  who accepted the risk
+#   tracking               where the remediation is tracked
+#   expires                ISO date; must be in the future, <= 180 days out
+#   status                 `accepted` (authorizes a downgrade) or `revoked`
+#                          (documents history only; authorizes nothing)
+#
+# Renewing an exception requires a deliberate decision record: extend the date
+# and note the re-review in `reason`, or make the control blocking and delete
+# the entry.
+#
+# Accepted risks that are NOT CI gate downgrades (for example an architectural
+# gap) belong in THREAT_MODEL.md, not here. This file is only for controls that
+# exist but are configured not to block.
+#
+# Known limits of the check - it detects the three downgrade markers below and
+# nothing else:
+#   * step-level `continue-on-error: true`
+#   * job-level `continue-on-error: true`
+#   * Grype `fail-build: false` / Trivy `exit-code: "0"`
+# It does NOT detect a downgrade expressed as `|| true`, an `if: always()`
+# wrapper, or a step that is simply deleted. Removing a control is still a
+# reviewable diff, but do not assume this register catches it.
+version: 1
+
+exceptions:
+  - id: SEC-EXC-001
+    control: zap-dast, zap-dast/Run OWASP ZAP Baseline Scan
+    scope: >
+      The `zap-dast` job in `.github/workflows/ci.yml`, including its
+      non-blocking `Run OWASP ZAP Baseline Scan` step.
+    reason: >
+      The job has never succeeded and detects nothing today. The CI stack cannot
+      start unattended (mkcert CA install needs an OS trust store write and an
+      admin prompt; compose also requires secrets/pg_rotator_admin_pass.txt,
+      which bootstrap-dev.sh does not create), and the scan step was itself
+      `continue-on-error`, so the job enforced nothing even while failing. A
+      permanently red X would train reviewers to ignore the rest of CI.
+      Accepted as risk CI-5 in THREAT_MODEL.md section 2.9 on 2026-10-02.
+      Re-reviewed 2026-10-02; expiry set to force a real decision.
+    compensating_controls:
+      - "SAST: Semgrep, CodeQL, Bandit (all blocking)"
+      - "Secret scanning: gitleaks and TruffleHog (both blocking)"
+      - "Reviewed nginx TLS edge configuration and security headers"
+      - "Playwright browser E2E suite against the served web surface"
+    owner: Platform Security
+    tracking: "THREAT_MODEL.md 2.9 CI-5 (accepted 2026-10-02)"
+    expires: "2026-12-01"
+    status: accepted

@@ -8,15 +8,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Build context is the repository root (see docker-compose.yml). Preserve the
-# repo layout so the compiled `../shared` path dependency resolves.
+# repo layout so the `../shared` path dependency is still resolvable.
 COPY shared /app/shared
 COPY sql_query_api/pyproject.toml sql_query_api/uv.lock /app/sql_query_api/
 
-RUN pip install --no-cache-dir uv && \
+# Resolve from uv.lock, NOT from pyproject.toml. `uv pip compile pyproject.toml`
+# re-resolves on every build, so the copied lock was decorative: builds were
+# unreproducible, the version nobody audited is not the version that ships, and
+# a lock bump could never be proven to change what is deployed.
+# --locked (not --frozen) makes the lock authoritative AND fails the build when
+# it is stale: under --frozen, a dependency added to pyproject.toml but not
+# relocked would be silently omitted from the export and then resolved unpinned
+# by the editable install, reopening exactly this hole with no error.
+RUN pip install --no-cache-dir "uv==0.12.22" && \
     uv venv /opt/venv && \
     cd /app/sql_query_api && \
-    uv pip compile pyproject.toml -o /tmp/requirements.txt && \
-    VIRTUAL_ENV=/opt/venv uv pip install --no-cache -r /tmp/requirements.txt
+    uv export --locked --no-dev --no-emit-project \
+        --no-emit-package shared-secrets \
+        -o /tmp/requirements.txt && \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache -r /tmp/requirements.txt && \
+    VIRTUAL_ENV=/opt/venv uv pip install --no-cache --no-deps /app/shared
 
 # Stage 2: Minimal runtime
 FROM python:3.12-slim AS runner
