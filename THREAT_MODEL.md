@@ -151,7 +151,7 @@
 
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
-| CI-1 | Malicious dependency injection | **T**, **E** | Compromised PyPI/npm package | `pip-audit` (Python), `npm audit` (Node); `uv.lock` pinned | No SLSA provenance verification; no sigstore verification |
+| CI-1 | Malicious dependency injection | **T**, **E** | Compromised PyPI/npm package | `pip-audit` (Python), `npm audit` (Node); `uv.lock` pinned; Docker image provenance is verified with `gh attestation verify` against the pushed digest | Provenance verification is scoped to GitHub’s attestation model; a consumer-side bundle validation step is still recommended for downstream distribution |
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
 | CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build on GitHub Actions (trusted runner); `docker.yml` pushes to GHCR; image SBOM + SLSA provenance attestations; CycloneDX SBOM published in CI | Build provenance is attested, not re-verified by a consumer; no signed bundle verification |
 | CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |

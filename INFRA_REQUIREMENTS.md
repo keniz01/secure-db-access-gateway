@@ -146,7 +146,7 @@
 **Required:**
 - **Dependabot/Renovate:** `.github/dependabot.yml` — weekly updates, auto-merge patches, group minor/major
 - **Container Scanning:** Trivy/Grype in GHCR on push; block critical vulns
-- **SLSA Provenance:** `slsa-framework/slsa-github-generator` in `.github/workflows/docker.yml`
+- **SLSA Provenance:** `docker/build-push-action` publishes `provenance: mode=max,version=v1` and `.github/workflows/docker.yml` verifies the image digest with `gh attestation verify`
 - **Patch SLA:** Critical 24h, High 7d, Medium 30d, Low 90d (documented)
 
 ---
