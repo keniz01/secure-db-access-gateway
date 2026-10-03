@@ -2,9 +2,11 @@
 # ─────────────────────────────────────────────────────────────
 # .githooks/pre-commit — blocking code review gate.
 #
-# INSTALL (local copy, since .git/ is not tracked):
-#   cp .githooks/pre-commit .git/hooks/pre-commit
-#   chmod +x .git/hooks/pre-commit
+# INSTALL (run once per clone):
+#   git config core.hooksPath .githooks
+#
+# This makes Git execute the version-controlled hook directly, so updates to
+# this file take effect immediately instead of leaving a stale .git/hooks copy.
 #
 # PREREQUISITES: this hook chains the `pre-commit` framework, so `pre-commit`
 # itself must be on PATH when BLOCK=true:
@@ -28,23 +30,23 @@
 # without this chaining none of the hooks in
 # sql_query_api/.pre-commit-config.yaml would ever run on commit.
 #
-# REVIEW_MODEL overrides the model used for the review. The default is
-# opencode/big-pickle, the last model verified to resolve; the previous
-# default (opencode/muse-spark-1.2-contributor-free) returned "Unexpected
-# server error" on every invocation, so the review silently never happened.
+# REVIEW_MODEL overrides the model used for the review. The default is a
+# responsive zero-cost model to keep the blocking gate independent of paid
+# provider balance. If it is unavailable or stalls, choose another model listed
+# by `opencode models opencode`.
 #
 # When BLOCK=true (the default) a review that cannot run BLOCKS the commit
 # rather than being skipped: a gate that cannot evaluate must not pass.
 # BLOCK=false turns this into an advisory report that never blocks.
 #
-# Uninstall: rm .git/hooks/pre-commit
+# Uninstall: git config --unset core.hooksPath
 # ─────────────────────────────────────────────────────────────
 
 set -euo pipefail
 
 BLOCK="${BLOCK:-true}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
-REVIEW_MODEL="${REVIEW_MODEL:-opencode/big-pickle}"
+REVIEW_MODEL="${REVIEW_MODEL:-opencode/nemotron-3.5-lightning-free}"
 CONFIG_DIR="${CONFIG_DIR:-sql_query_api}"
 
 if git diff --cached --quiet; then
@@ -112,8 +114,8 @@ else
   # Honour the verdict itself. Treating "the review ran" as "the review
   # approved" meant a diff the reviewer asked to change still committed.
   VERDICT=$(printf '%s\n' "$REVIEW_OUTPUT" \
-    | grep -E '^REVIEW_VERDICT:[[:space:]]*(APPROVE|REQUEST_CHANGES)' \
-    | tail -1 | sed 's/^REVIEW_VERDICT:[[:space:]]*//' || true)
+    | sed -nE 's/^[[:space:]]*\**[[:space:]]*REVIEW_VERDICT:[[:space:]]*(APPROVE|REQUEST_CHANGES)[[:space:]]*\**[[:space:]]*$/\1/p' \
+    | tail -1 || true)
 
   if [ "$VERDICT" = APPROVE ]; then
     echo "✅ Review verdict: APPROVE"

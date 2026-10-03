@@ -1,17 +1,17 @@
 ---
 name: code-review
-description: Review pending changes (staged or unstaged diff) for security, correctness, and repo conventions before a commit is landed. Use when reviewing a commit, staged changes, or a pull-request diff; also triggered by the pre-commit review gate.
+description: Instructions for reviewing pending changes (staged or unstaged diff) for security, correctness, and repo conventions before a commit is landed.
 ---
 
 # Code Review
 
-Review the pending changes and report findings. **Read-only:** never modify files, never stage/unstage, never commit. You may run read-only commands (`git diff`, `git status`, `git log`) and, where permitted, the project test/lint commands to verify behavior.
+Review the pending changes and report findings. **Read-only:** never modify files, never stage/unstage, never commit. You may run read-only commands and, where permitted, project test/lint commands to verify behavior. Run each shell command as one direct invocation from the repository root. Never prefix it with `cd`, chain commands, pipe/redirect output, or wrap it in another shell or script. If denied, do not broaden permissions or retry in a wrapper.
 
 ## Starting point
 
-- Run `git diff --cached` to see what is about to be committed; `git status` and `git log --oneline -5` for context.
+- Run these commands separately: `git status --short`, `git diff --cached --name-only`, `git diff --cached --unified=3`, and `git log -5 --oneline`. The first three are the authoritative scope and content of the staged changes.
 - If `git diff --cached` is empty: report that there is nothing to review and APPROVE.
-- Read the changed files plus enough surrounding context to judge the change.
+- Use a separate `git show :path/to/file` command to inspect a staged file's full content when the diff context is insufficient.
 - Check the repo's AGENTS.md for conventions before finalizing a verdict.
 
 ## Repository-specific checks (secure-db-access-gateway)
