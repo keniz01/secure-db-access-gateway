@@ -125,6 +125,6 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 - Production uses `docker-compose.prod.yml` override (ports 80/443 instead of 8080/8443, pre-built GHCR images).
 - `deploy.yml` triggers on `v*` tag push (builds release images) or `workflow_dispatch` (deploys existing tag for rollback).
-- `docker.yml` delegates image creation to `.github/workflows/docker-builder.yml`. The reusable workflow builds multi-arch (amd64/arm64) images to GHCR, then signs and verifies their digests in a separate job. Keep the builder isolated from caller-controlled inputs and update both call sites when changing it.
+- `docker.yml` and `deploy.yml` call `.github/workflows/docker-builder.yml` at the same reviewed immutable commit SHA. The reusable workflow builds multi-arch images by digest, signs and verifies them in a separate job, then promotes public tags. Update both SHA pins together after reviewing builder changes.
 
 Deeper context: `ARCHITECTURE.md`, `SECURITY.md`, `GEMINI.md` (AI/CLI guardrails), per-service `README.md`.

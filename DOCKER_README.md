@@ -126,8 +126,8 @@ docker compose up --build
 
 ### Infrastructure model
 
-- **Images never build on the host.** `.github/workflows/docker.yml` calls a
-  reusable builder, which pushes images by digest, signs and verifies each
+- **Images never build on the host.** `.github/workflows/docker.yml` and
+  `deploy.yml` call a SHA-pinned reusable builder, which pushes images by digest, signs and verifies each
   digest, then promotes public tags; the host only pulls verified tags.
 - **Secrets never enter CI.** `/etc/gateway/gateway.env` (or any
   `GATEWAY_ENV_FILE`) is provisioned on the host and injected via Compose

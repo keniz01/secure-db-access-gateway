@@ -28,7 +28,7 @@ The project is structured as a three-part system:
  - **Admin access review API** (tenant bindings, OPA policies, effective access)
  - **Data classification labels** on audit events (PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED)
  - **SAST + DAST pipeline** (Trivy, Semgrep, CodeQL, plus an OWASP ZAP baseline scan that boots the stack, scans the real TLS edge and publishes its reports). Trivy, Semgrep, CodeQL, pip-audit and ZAP all block the build: ZAP fails on any alert that is not listed, with a written justification, in [`.github/zap/baseline-rules.tsv`](.github/zap/baseline-rules.tsv). Of the six alerts the first real scan reported, one was fixed at the source (the `Cross-Origin-Resource-Policy: same-site` value in nginx and in both FastAPI apps, now `same-origin`) and the other five were suppressed with written reasons.
- - **Signed SLSA provenance** for container images, created and verified by a reusable workflow
+ - **Signed SLSA provenance** for container images, created and verified by a SHA-pinned reusable workflow
  - **Dependabot** automated dependency updates with patch auto-merge
 
 ## Current architecture
@@ -204,9 +204,10 @@ Images are built once in CI and pushed to GHCR; the host only pulls them and
 secrets never enter the pipeline. See `DOCKER_README.md` → *Production* for
 full details.
 
-- **Image builds**: `.github/workflows/docker.yml` calls the reusable
-  builder in `.github/workflows/docker-builder.yml`, which builds all three services on
-  every push to `main` (`edge`) and on `v*` tags (semver + `latest`).
+- **Image builds**: `.github/workflows/docker.yml` and `.github/workflows/deploy.yml`
+  call `.github/workflows/docker-builder.yml` at a reviewed immutable SHA. It
+  builds all three services by digest, verifies signed provenance, then promotes
+  tags on `main` (`edge` + SHA) and `v*` releases (versioned + `latest`).
 - **Deploys**: `.github/workflows/deploy.yml` SSHes to the host, checks out the
   deployed commit, `docker login`s with a read-scoped PAT, and runs
   `docker compose ... up -d --no-build --wait` — failing if any healthcheck

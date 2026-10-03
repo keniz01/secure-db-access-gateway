@@ -34,7 +34,8 @@ jobs:
   build-and-push:
     name: Build release images
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    uses: ./.github/workflows/docker-builder.yml
+    # Keep this SHA aligned with docker.yml; update both only after reviewing the builder.
+    uses: keniz01/secure-db-access-gateway/.github/workflows/docker-builder.yml@ca07550e7752ef033c6d945137df9a6cdfa2ce4e
     permissions:
       actions: read
       attestations: write

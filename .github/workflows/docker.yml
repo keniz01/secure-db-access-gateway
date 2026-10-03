@@ -18,7 +18,8 @@ permissions: {}
 jobs:
   build:
     name: Build and push images
-    uses: ./.github/workflows/docker-builder.yml
+    # Keep this SHA aligned with deploy.yml; update both only after reviewing the builder.
+    uses: keniz01/secure-db-access-gateway/.github/workflows/docker-builder.yml@ca07550e7752ef033c6d945137df9a6cdfa2ce4e
     with:
       tag: ${{ inputs.tag }}
     permissions:
