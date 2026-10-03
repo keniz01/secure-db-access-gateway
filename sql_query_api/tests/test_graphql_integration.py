@@ -625,3 +625,5 @@ class TestSecurityHeadersMiddleware:
         assert response.headers.get("Referrer-Policy") == "strict-origin-when-cross-origin"
         assert "camera=()" in response.headers.get("Permissions-Policy", "")
         assert response.headers.get("Cross-Origin-Opener-Policy") == "same-origin"
+        # same-site is not accepted by ZAP's SiteIsolationScanRule (90004).
+        assert response.headers.get("Cross-Origin-Resource-Policy") == "same-origin"

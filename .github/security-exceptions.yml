@@ -34,10 +34,12 @@
 # gap) belong in THREAT_MODEL.md, not here. This file is only for controls that
 # exist but are configured not to block.
 #
-# SEC-EXC-001 is deleted: it covered a DAST job that had never worked. The
-# replacement entry (SEC-EXC-002) covers only the remaining *enforcement* gap
-# on a pipeline that does now boot, scan, publish reports and prove it crawled
-# the target.
+# The register is currently empty: every security control in
+# `.github/workflows/` blocks. `SEC-EXC-001` is deleted - it covered a DAST job
+# that had never worked - and so is `SEC-EXC-002`, because the gap it recorded
+# is closed: `fail_action: true` now fails the build on ZAP alerts, and the six
+# alerts the scan reported were triaged in `.github/zap/baseline-rules.tsv`
+# (one fixed at the source, five suppressed with written reasons).
 #
 # Known limits of the check - it detects these downgrade markers and nothing
 # else:
@@ -51,28 +53,4 @@
 # reviewable diff, but do not assume this register catches it.
 version: 1
 
-exceptions:
-  - id: SEC-EXC-002
-    control: zap-dast/Run OWASP ZAP Baseline Scan
-    scope: >
-      DAST enforcement only. The job boots the stack, waits on the TLS edge,
-      runs the ZAP baseline scan, publishes JSON/MD/HTML reports and fails if it
-      did not crawl the target. What it does not yet do is fail the build when
-      the scan reports alerts.
-    reason: >
-      Enforcing and fixing the pipeline in one change would gamble on a runtime
-      path that has never executed. docker-compose.test.yml is referenced only
-      by this job, so three image builds, the nginx port merge, creds-rotator's
-      missing jq, and the full service_healthy chain are unproven in CI. The
-      target is also a self-signed one-day certificate, so ZAP's SSL Certificate
-      Error passive rule is expected to fire; insecureSkipVerify only stops the
-      spider aborting and does not suppress that alert. Pre-seeding it would be
-      guessing. Run once, triage from real data, then enforce.
-    compensating_controls:
-      - "SAST: Semgrep, CodeQL and Bandit, all blocking"
-      - "Dependency and image scanning: blocking pip-audit, Grype, Trivy, npm audit"
-      - "The scan itself runs and its reports are published, so the results are reviewable even though they do not block"
-    owner: Platform Security
-    tracking: "https://github.com/keniz01/secure-db-access-gateway/issues/194"
-    expires: "2026-10-16"
-    status: accepted
+exceptions: []

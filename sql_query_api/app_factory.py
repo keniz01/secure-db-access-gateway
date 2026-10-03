@@ -88,7 +88,9 @@ def setup_security_middleware(app: FastAPI) -> None:
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+        # same-origin, not same-site: same-site would let a sibling subdomain
+        # read the body, and nothing this API serves is meant for one.
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         return response
 

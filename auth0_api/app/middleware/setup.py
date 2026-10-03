@@ -55,7 +55,7 @@ def setup_cors_middleware(app: FastAPI):
         expose_headers=["X-Total-Count", "X-Correlation-ID", "X-Request-ID"],
         max_age=3600,
     )
-    
+
     # Security headers middleware — iron-clad per OWASP ASVS 14.4 + CSP Cheat Sheet
     # CSP is authoritative at nginx in prod, but FastAPI also emits it for direct dev (uvicorn) and tests.
     @app.middleware("http")
@@ -75,7 +75,7 @@ def setup_cors_middleware(app: FastAPI):
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
-        response.headers["Cross-Origin-Resource-Policy"] = "same-site"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
         return response
 

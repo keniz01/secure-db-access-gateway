@@ -90,6 +90,66 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Verify no served CSP allows unsafe script sources
+        run: |
+          set -euo pipefail
+          # .github/zap/baseline-rules.tsv ignores rule 10055, which covers every
+          # CSP sub-alert including `script-src unsafe-inline`. That suppression
+          # would equally hide a policy widened to 'unsafe-inline' or *, so it
+          # needs a control of its own: fail unless every served policy keeps
+          # script-src exactly 'self' or 'none'. Two guards keep it honest - each
+          # file must yield at least one 'script-src <value>' match, and an empty
+          # overall match fails as well - so a reformatted or renamed directive
+          # breaks the build instead of making the allowlist prove nothing.
+          # The file list is derived, not hand-maintained: a fourth served policy
+          # (new service, nginx include, vite config) changes the derived set and
+          # fails here, so it has to be reviewed rather than silently escaping
+          # the check. It is compared against expected_files, then every file in
+          # the derived set is what gets checked below.
+          # This lives in the exception-policy job rather than zap-dast so the
+          # backstop outlives a refactor or removal of the DAST stack.
+          expected_files="auth0_api/app/middleware/setup.py
+          nginx/nginx.conf
+          sql_query_api/app_factory.py"
+          found_files="$(git grep -l 'Content-Security-Policy' -- '*.py' '*.conf' \
+            | { grep -v '/tests/' || :; } | sort)"
+          if [ "$found_files" != "$expected_files" ]; then
+            echo "::error::the set of files emitting a CSP changed; review each new emitter, then update expected_files"
+            echo "--- expected ---"; printf '%s\n' "$expected_files"
+            echo "--- found ---"; printf '%s\n' "$found_files"
+            exit 1
+          fi
+          # read -a over a herestring rather than mapfile: the latter is bash 4+,
+          # and the shell here may be macOS's bash 3.2 when this is run locally.
+          csp_files=()
+          while IFS= read -r f; do
+            csp_files+=("$f")
+          done <<< "$found_files"
+          for f in "${csp_files[@]}"; do
+            if ! grep -qE "script-src [^\";]*" "$f"; then
+              echo "::error::$f yields no 'script-src <value>' match, so the allowlist below would not cover it"
+              exit 1
+            fi
+          done
+          directives="$(grep -ohE "script-src [^\";]*" "${csp_files[@]}" \
+            | sed -e "s/[[:space:]]*$//" | sort -u)" || true
+          if [ -z "$directives" ]; then
+            echo "::error::no line matched 'script-src <value>'; nothing was checked"
+            exit 1
+          fi
+          while IFS= read -r directive; do
+            case "$directive" in
+              "script-src 'self'"|"script-src 'none'")
+                echo "allowed: $directive"
+                ;;
+              *)
+                echo "::error::script-src must be exactly 'self' or 'none', found: $directive"
+                exit 1
+                ;;
+            esac
+          done <<< "$directives"
+
       - name: Set up Python
         uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
@@ -655,16 +715,47 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.test.yml logs --tail=60
           exit 1
 
+      - name: Assert the edge serves one cache and one resource-policy header
+        run: |
+          set -euo pipefail
+          # 10015 and 10049 are suppressed, so nothing else in the report would
+          # notice a second, cacheable Cache-Control travelling beside the
+          # server-level no-store - the failure mode proxy_hide_header exists
+          # to prevent, and one an upstream could reintroduce at any time. 90004
+          # is fixed at the source instead of suppressed, so assert that value
+          # here too. Both headers must appear exactly once on an SPA response
+          # and on an authenticated API response.
+          check_header() {
+            path="$1"; header="$2"; expected="$3"
+            headers="$(curl -sk --max-time 5 -D- -o /dev/null "https://localhost:8443${path}")"
+            count="$(printf '%s\n' "$headers" | grep -ic "^${header}:" || true)"
+            value="$(printf '%s\n' "$headers" | grep -i "^${header}:" | head -n 1 \
+              | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')"
+            if [ "$count" != "1" ] || [ "$value" != "$expected" ]; then
+              echo "::error::${path} ${header}: count=${count} value='${value}', expected exactly one '${expected}'"
+              printf '%s\n' "$headers"
+              return 1
+            fi
+            echo "OK ${path} ${header}: ${value}"
+          }
+          check_header "/" "Cache-Control" "no-store"
+          check_header "/" "Cross-Origin-Resource-Policy" "same-origin"
+          check_header "/api/login" "Cache-Control" "no-store"
+          check_header "/api/login" "Cross-Origin-Resource-Policy" "same-origin"
+
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@2b5fc7f98d837319798ab7f128ea50b7d40563b6 # v0.14.0
         with:
           target: "https://localhost:8443"
-          # NOT yet enforcing. DAST runs, reports and self-verifies, but
-          # enforcement is deferred one change cycle because the CI stack
-          # bring-up has never executed and the self-signed test certificate is
-          # expected to raise an SSL-certificate alert. Tracked in #194 and
-          # registered as SEC-EXC-002 (expires 2026-10-16).
-          fail_action: false
+          # Enforcing. The scan that produced this triage crawled 61 URLs and
+          # reported six alerts: five are suppressed with written justifications
+          # in the rules file below, and one (90004) is fixed at the source
+          # rather than suppressed. Everything not listed there keeps ZAP's
+          # default WARN, and the scan's exit code decides the job - 0 clean,
+          # 1 on FAIL, 2 on WARN, 3 on a scan error - so with this set the
+          # action fails the job on all three non-zero codes. An untriaged alert
+          # is a red build rather than a line in a report someone has to notice.
+          fail_action: true
           # Do not open or update a GitHub issue on every run; the action
           # publishes the reports as its own artifact instead.
           allow_issue_writing: false
@@ -673,15 +764,22 @@ jobs:
           # look for; v0.14.0 has no retention input, so retention is now the
           # repo/org default rather than something this job owns.
           artifact_name: "zap-baseline-report"
-          # Triaged suppressions, each with a written justification. Anything not
-          # listed keeps ZAP's default WARN, which fail_action turns into a build
-          # failure, so new alerts still block.
+          # Triaged suppressions, each with a written justification and each a
+          # base rule id: zap-baseline.py feeds these ids to int() when it builds
+          # the automation plan, so a sub-id such as 10055-6 would abort the scan
+          # before it starts. Anything not listed keeps ZAP's default WARN, and
+          # with fail_action above a WARN is exit 2 - a new alert blocks.
           rules_file_name: ".github/zap/baseline-rules.tsv"
           # The CI certificate is self-signed and ZAP cannot be given the CA
           # unattended, so TLS verification has to be skipped for the spider to
           # reach the target. `-a` (alpha passive rules) is deliberately NOT
           # used: those rules are unstable and would make a blocking gate fail
           # on churn.
+          # The certificate alert this was expected to raise never appeared: the
+          # scan this gate was triaged from (run 37078484362) reported no
+          # certificate or TLS finding at all, only the six rules in the rules
+          # file. That observation belongs here so the next reader does not have
+          # to re-derive whether this option cost us a finding.
           # The "Verify the scan actually crawled the target" step below is what
           # proves this option took effect. If it ever stops working, that step
           # fails instead of the job passing on an empty scan.

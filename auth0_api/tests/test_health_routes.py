@@ -7,6 +7,10 @@ async def test_liveness_endpoint(client):
     response = await client.get("/healthz")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    # 90004 (CORS misconfiguration) was fixed here: same-site is not an accepted
+    # value, so the edge dedupes to a single same-origin copy. Assert it at the
+    # app, which is what the nginx hide relies on.
+    assert response.headers["Cross-Origin-Resource-Policy"] == "same-origin"
 
 
 @pytest.mark.asyncio

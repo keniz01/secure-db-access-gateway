@@ -9,9 +9,67 @@
 # consciously decided about are listed, so anything new still blocks. Do not
 # bulk-ignore rule ids here; add a line only with a written justification.
 #
+# The action reads this file a second time to decide whether to pass -c at all.
+# Three facts about that reader, each checked against
+# @zaproxy/actions-common-scans as pinned by action-baseline v0.14.0 (^1.3.0):
+#   * `-c` is passed only when at least one line has a second field of exactly
+#     IGNORE, so a file with no IGNORE lines is not applied at all. That, and
+#     not a malformed line, is the silent-loss mode worth guarding against.
+#   * `#` lines are skipped by both readers, so this header is safe.
+#   * A non-comment line with fewer than three tab-separated fields is loud,
+#     not silent: zap-baseline.py's load_config raises ValueError and the job
+#     exits 3 (see the format note above), failing the build.
+#
+# Ids must be the base rule id, never a sub-id such as `10055-6`:
+# zap-baseline.py passes every id to int() when it builds the automation plan,
+# and a sub-id makes the scan exit non-zero before it starts.
+#
+# 10015 - Re-examine Cache-control Directives (Informational)
+#   Fires whenever caching directives are missing or inconsistent, so it cannot
+#   tell a regression apart from a clean `no-store`. The edge serves a single
+#   Cache-Control: no-store and hides the upstream copy in every proxy
+#   location, and ZAP's own remedy - `no-cache, no-store, must-revalidate` - is
+#   weaker than that. Nothing to change; it is a review prompt, not a defect.
+10015	IGNORE	Cache directives are set deliberately: the edge serves a single no-store, the upstream copy is hidden, and ZAP's suggested directives are weaker than that. Not a defect.
+#
 # 10016 - Web Browser XSS Protection Not Enabled
 #   The X-XSS-Protection header is deliberately not set. It is deprecated and
 #   removed from modern browsers, and its audit filter has itself been an XSS
 #   vector; the Content-Security-Policy header on this edge is the control that
 #   replaces it. Recorded in SECURITY.md as an intentional omission.
 10016	IGNORE	X-XSS-Protection is intentionally not set; it is deprecated and superseded by the Content-Security-Policy header (see SECURITY.md).
+#
+# 10049 - Content Cacheability (reported as Non-Storable Content, x6)
+#   The rule has exactly three outcomes - non-storable, storable but not
+#   cacheable, storable and cacheable - and it alerts on all three, so no
+#   Cache-Control value clears it. Non-storable is the intended result for the
+#   API and the SPA shell, which is what no-store at the edge produces.
+10049	IGNORE	Content Cacheability alerts on every possible cache state, so no header clears it; the state it reported (non-storable) is the intended one for this edge.
+#
+# 10055 - CSP (reported as style-src unsafe-inline, x3)
+#   Only the style-src sub-alert fired. Inline styles are an accepted risk,
+#   recorded as W-3 in THREAT_MODEL.md. script-src - the half that turns an
+#   injected tag into execution - is exactly 'self' or 'none' in all three
+#   served policies, and the "Verify no served CSP allows unsafe script sources"
+#   step in the zap-dast job fails the build if any of them widens, so that half
+#   is not left to this suppression.
+10055	IGNORE	Only style-src unsafe-inline fired, an accepted risk (THREAT_MODEL W-3); script-src stays exactly 'self' or 'none' and a CI assertion in the zap-dast job blocks any widening.
+#
+# 10109 - Modern Web Application (Informational)
+#   Detection that the target looks like a modern SPA, raised because links use
+#   _self. ZAP's own solution text says no changes are required.
+10109	IGNORE	Informational detection that the target is a modern SPA; ZAP states no changes are required.
+#
+# 10116 - ZAP is Out of Date (Medium)
+#   Describes the scanner build, not the target. The image is pinned by digest so
+#   upgrades happen as reviewed changes, and bumping that digest is independent
+#   of anything this application can change.
+10116	IGNORE	Describes the pinned scanner build rather than the target; the digest is bumped in a reviewed change, not by this application.
+#
+# 90004 - Insufficient Site Isolation Against Spectre Vulnerability
+#   Cross-Origin-Resource-Policy was `same-site`, which this rule rejects: it
+#   accepts only `same-origin` or `cross-origin`. Fixed at the source in
+#   nginx/nginx.conf, auth0_api/app/middleware/setup.py and
+#   sql_query_api/app_factory.py rather than suppressed. Deliberately absent from
+#   the lines above - if it fires again a security header has regressed and the
+#   build should go red.

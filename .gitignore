@@ -53,3 +53,4 @@ sql_query_api/bundle.tar.gz.manifest
 
 # Logs
 *.log
+nohup.out
