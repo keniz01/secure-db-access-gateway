@@ -24,6 +24,8 @@ on:
         required: false
         type: string
 
+permissions: {}
+
 concurrency:
   group: production-deploy
   cancel-in-progress: false
@@ -32,8 +34,13 @@ jobs:
   build-and-push:
     name: Build release images
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    uses: ./.github/workflows/docker.yml
-    secrets: inherit
+    uses: ./.github/workflows/docker-builder.yml
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
 
   deploy:
     name: Deploy to production host
@@ -46,9 +53,11 @@ jobs:
         (startsWith(github.ref, 'refs/tags/v') && needs.build-and-push.result == 'success')
         || github.event_name == 'workflow_dispatch'
       )
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Deploy via SSH
         env:

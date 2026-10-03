@@ -1,0 +1,236 @@
+name: Build and Push Images
+
+# Reusable build/sign workflow. Keep it separate from caller-controlled build
+# steps; protect caller and builder changes because both live in this repository.
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Explicit GHCR tag to push (release builds pass nothing)"
+        required: false
+        type: string
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_BASE: ${{ github.repository }}
+
+jobs:
+  plan:
+    name: Define image matrix
+    runs-on: ubuntu-latest
+    outputs:
+      services: ${{ steps.services.outputs.matrix }}
+    steps:
+      - name: Set image matrix
+        id: services
+        run: |
+          # One matrix feeds both build and attestation jobs so new images cannot
+          # be published without receiving the matching provenance check.
+          echo 'matrix=[{"name":"auth0-api","context":".","file":"auth0_api/Dockerfile"},{"name":"sql-query-api","context":".","file":"sql_query_api/Dockerfile"},{"name":"web-app","context":"./web-app","file":"./web-app/Dockerfile"}]' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and push image
+    needs: plan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.plan.outputs.services) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.service.context }}
+          file: ${{ matrix.service.file }}
+          platforms: linux/amd64,linux/arm64
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/${{ matrix.service.name }},push-by-digest=true,name-canonical=true,push=true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+          # max records build args in provenance; only public VITE URLs are passed here.
+          provenance: mode=max,version=v1
+          sbom: true
+          build-args: |
+            VITE_API_BASE_URL=${{ vars.VITE_API_BASE_URL || 'https://app.secure-db-access-gateway.org' }}
+            VITE_SQL_GRAPHQL_BASE_URL=${{ vars.VITE_SQL_GRAPHQL_BASE_URL || 'https://app.secure-db-access-gateway.org/api/graphql' }}
+
+      - name: Save image digest
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: printf '%s\n' "$IMAGE_DIGEST" > image-digest.txt
+
+      - name: Upload image digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-digest-${{ matrix.service.name }}
+          path: image-digest.txt
+          if-no-files-found: error
+          retention-days: 1
+
+  attest:
+    name: Attest and verify image
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.plan.outputs.services) }}
+
+    steps:
+      - name: Download image digest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image-digest-${{ matrix.service.name }}
+          path: image-digest
+
+      - name: Validate image digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(cat image-digest/image-digest.txt)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'value=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest image provenance
+        id: attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/${{ matrix.service.name }}
+          subject-digest: ${{ steps.digest.outputs.value }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Verify signed provenance
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/${{ matrix.service.name }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.value }}
+          ATTESTATION_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+          REPO: ${{ github.repository }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://${IMAGE}@${IMAGE_DIGEST}" \
+            --bundle "${ATTESTATION_BUNDLE}" \
+            --repo "${REPO}" \
+            --signer-workflow "${REPO}/.github/workflows/docker-builder.yml" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --source-ref "${SOURCE_REF}" \
+            --source-digest "${SOURCE_SHA}" \
+            --deny-self-hosted-runners
+
+  promote:
+    name: Promote verified image tags
+    needs: [plan, build, attest]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.plan.outputs.services) }}
+
+    steps:
+      - name: Download image digest
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: image-digest-${{ matrix.service.name }}
+          path: image-digest
+
+      - name: Validate image digest
+        id: digest
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(cat image-digest/image-digest.txt)"
+          [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]
+          printf 'value=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate release tags
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/${{ matrix.service.name }}
+          tags: |
+            type=raw,value=${{ inputs.tag }},enable=${{ inputs.tag != '' }}
+            type=raw,value=edge,enable=${{ github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=sha,prefix=sha-
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{version}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=semver,pattern=v{{major}}.{{minor}},enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+
+      - name: Promote verified digest to release tags
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_BASE }}/${{ matrix.service.name }}
+          IMAGE_DIGEST: ${{ steps.digest.outputs.value }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          promoted_count=0
+
+          while IFS= read -r tag; do
+            [[ -z "$tag" ]] && continue
+            [[ "$tag" == "${IMAGE}:"* ]]
+            docker buildx imagetools create --tag "$tag" "${IMAGE}@${IMAGE_DIGEST}"
+            promoted_digest="$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')"
+            [[ "$promoted_digest" == "$IMAGE_DIGEST" ]]
+            promoted_count=$((promoted_count + 1))
+          done <<< "$IMAGE_TAGS"
+
+          [[ "$promoted_count" -gt 0 ]]

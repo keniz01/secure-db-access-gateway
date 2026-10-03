@@ -126,8 +126,9 @@ docker compose up --build
 
 ### Infrastructure model
 
-- **Images never build on the host.** CI builds the three service images and
-  pushes them to GHCR (`.github/workflows/docker.yml`); the host only pulls.
+- **Images never build on the host.** `.github/workflows/docker.yml` calls a
+  reusable builder, which pushes images by digest, signs and verifies each
+  digest, then promotes public tags; the host only pulls verified tags.
 - **Secrets never enter CI.** `/etc/gateway/gateway.env` (or any
   `GATEWAY_ENV_FILE`) is provisioned on the host and injected via Compose
   `env_file`. The deploy workflow only references the *path*.

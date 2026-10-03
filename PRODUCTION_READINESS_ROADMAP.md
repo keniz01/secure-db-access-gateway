@@ -172,7 +172,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Require all backend tests, frontend build, lint, and security scans in PR checks (SQL tests + bandit + pip-audit, auth0 tests, web npm audit + lint/typecheck/build/e2e)
 - [x] Add deployment gate checks for production branch/tag (deploy workflow triggers on `v*` tags with image-tag rollback)
 - [x] Validate rollback steps and version pinning for all infrastructure and application dependencies (image-tag pinned rollback over SSH)
-- [ ] Carry-over: artifact provenance / signed release verification (not required for self-hosted)
+- [ ] Verify the first green signed-provenance image build and post-verification tag promotion in GitHub Actions
 - [ ] Acceptance: production deployment is versioned, traceable, and reversible
 
 ### 5.2 Security review and compliance sign-off — OPEN (M18 · #145)
@@ -207,7 +207,7 @@ Production readiness is achieved only when all open items below are complete and
 | 7 | DB-level least-privilege grants (gateway account) | Security | Yes | M18 · #148 | **RESOLVED** (script + docs) |
 | 8 | Correlation IDs across services | Ops | Yes | M18 · #147 | **RESOLVED** |
 | 9 | WAF, in-app lockout, graceful degradation | Security | No | M18 · #150/#151/#149 | **PARTIAL** (lockout + degradation done; WAF is infra) |
-| 10 | npm audit gate in CI (done); artifact provenance (waived: self-hosted registry) | CI/CD | No | M18 · #152 | Done / Waived |
+| 10 | npm audit gate in CI; signed container provenance verification | CI/CD | No | M18 · #152 | Implemented; first live build verification pending |
 | 11 | Circuit breaker / backpressure under DB overload | Ops | No | M18 · #149 | **RESOLVED** (per-tenant quotas) |
 | 12 | MCP server + agent identity + regression suite | Product | No | M14 · #62/#63/#66 | Open |
 | 13 | JIT access + approval workflow | Product | No | M15 · #67/#68 | Open |
@@ -252,7 +252,7 @@ Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#
 
 ### Tier 3 — Remaining carry-over hardening
 
-- Decide on artifact provenance for releases (5.1; waived: self-hosted registry).
+- Verify the first signed image build and post-attestation tag promotion in GitHub Actions.
 - WAF-class L7 filtering (2.3; documented in `INFRA_REQUIREMENTS.md`).
 - Distributed rate limiting (1.6; needs Redis-backed coordination).
 

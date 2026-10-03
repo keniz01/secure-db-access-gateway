@@ -141,12 +141,12 @@
 
 ## 10. Vulnerability Management & SLSA
 
-**Gap:** No automated dependency updates, no provenance.
+**Gap:** No automated dependency updates.
 
 **Required:**
 - **Dependabot/Renovate:** `.github/dependabot.yml` — weekly updates, auto-merge patches, group minor/major
 - **Container Scanning:** Trivy/Grype in GHCR on push; block critical vulns
-- **SLSA Provenance:** `docker/build-push-action` publishes `provenance: mode=max,version=v1` and `.github/workflows/docker.yml` verifies the image digest with `gh attestation verify`
+- **Container provenance:** `.github/workflows/docker.yml` calls `.github/workflows/docker-builder.yml`. The reusable workflow pushes images by digest from a permission-limited build job with BuildKit `mode=max` provenance (only public VITE URLs are passed as build args), then uses a separate runner to create a signed GitHub artifact attestation and verify that exact bundle against the image digest, repository, reusable-workflow identity, predicate, source ref, and source revision. A final job promotes public tags only after verification succeeds. Every action in the reusable builder is pinned to a released commit SHA.
 - **Patch SLA:** Critical 24h, High 7d, Medium 30d, Low 90d (documented)
 
 ---
@@ -241,7 +241,7 @@
 | 10 | Admin Access | IAM Identity Center + MFA | IAP + MFA | Teleport / Tailscale |
 | 11 | GitOps | CodeDeploy / ECS | Cloud Deploy / GKE | ArgoCD / Flux |
 | 12 | Vuln Mgmt | Inspector + ECR Scan | Artifact Analysis | Trivy + Dependabot |
-| 13 | SLSA Provenance | GitHub Actions + SLSA Builder | GitHub Actions + SLSA Builder | GitHub Actions + SLSA Builder |
+| 13 | SLSA Provenance | GitHub Actions artifact attestations | GitHub Actions artifact attestations | GitHub Actions artifact attestations + reusable workflow |
 | 14 | Encryption at Rest | KMS + EBS/RDS/S3 encryption | CMEK + Cloud KMS | LUKS + Vault Transit |
 | 15 | DLP | Macie + Custom | DLP API + Custom | Custom egress proxy |
 | 16 | CSP Reporting | CloudWatch Logs | Cloud Logging | Loki |
