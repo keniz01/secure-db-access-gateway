@@ -1,6 +1,6 @@
 # Production Readiness Roadmap
 
-This roadmap tracks the work required to move Secure DB Access Gateway from a functional prototype/build to a production-ready system. Status last verified **2026-09-23**.
+This roadmap tracks the work required to move Secure DB Access Gateway from a functional prototype/build to a production-ready system. Status last verified **2026-10-04**.
 
 ## Current status summary
 
@@ -8,12 +8,14 @@ The architecture, governed query pipeline, and core security controls are **impl
 
 Verified facts as of today:
 
-- **All backend tests pass**: SQL Query API `482 passed`, Auth0 API `116 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint/typecheck/build + Playwright e2e on every PR.
+- **All backend tests pass**: SQL Query API `637 passed`, Auth0 API `116 passed`; CI runs SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint/typecheck/build + Playwright e2e, plus trufflehog, CodeQL, hadolint, Semgrep, the `opa-policy` job, the security-exception policy job and the blocking `zap-dast` (OWASP ZAP) scan on every PR.
 - **SQL safety check is fixed and pinned**: `sqlglot>=30.0.0,<31` (pyproject.toml), strict AST read-only analysis with bypass tests (`pg_read_file`, `dblink_connect`, `pg_write_file`, aliases/derived expressions).
-- **Read-only is enforced at every layer**: `SET TRANSACTION READ ONLY` for PostgreSQL (`repositories/sql_query_repository.py:207`), SQLite forced to `mode=ro` (both in connection-string enforcement and startup validation in `dependencies/dependency_container.py:104`), and the governed pipeline applies safety/AST validation, tenant resolution, auto-LIMIT, masking, and audit.
+- **Read-only is enforced at every layer**: `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` for PostgreSQL (`repositories/sql_query_repository.py:265`), SQLite forced to `mode=ro` (connection-string enforcement and startup validation in `dependencies/dependency_container.py:171-179`), and the governed pipeline applies safety/AST validation, tenant resolution, auto-LIMIT, masking, and audit.
 - **Identity/tenant hardening shipped**: authenticated `Principal` is the sole identity source, `X-User-*`/`X-Org-Id`/`X-Tenant-Id` headers are cleared at the nginx edge and never trusted, tenant claim is required, cookie is HttpOnly/Secure/SameSite via env. Spoofing + cross-tenant regression suites pass.
 - **Production deployment path shipped (PR #141)**: `docker-compose.prod.yml` (nginx 443-only TLS edge — TLS 1.2/1.3, HSTS, edge rate limiting, HTTP→HTTPS redirect), `/healthz` + `/readyz` on both backends, Docker healthchecks with `service_healthy` startup gating, fail-fast when required config/secrets are missing, multi-arch GHCR image pipeline (`docker.yml`), and tagged auto-deploy with image-tag rollback (`deploy.yml`).
 - **Observability groundwork exists**: structured JSON audit stream (policy decisions, masking, tenant, query metadata, agent delegation), `/metrics` Prometheus endpoint on the SQL API (query count, rows, duration by org), and an otel-lgtm stack wired into compose.
+- **Tenant databases run in Compose (PR #197)**: PostgreSQL 16 + pgvector is a first-class compose service (`127.0.0.1:55432` loopback for host tools, `postgres:5432` in-network), with least-privilege DB resource controls and least-privilege grants.
+- **Exactly one copy of every security header (PR #198)**: the edge serves the authoritative header block (`nginx/nginx.conf:129`), `proxy_hide_header` hides the upstream copies, and CI asserts on every PR that the served CSP `script-src` is `'self'`/`'none'` and that the edge's value for all 17 mirrored header values equals the apps' own — the DAST scan (`zap-dast`) runs on the same PRs, fail-closed.
 
 Remaining gaps fall in two buckets:
 
@@ -56,7 +58,7 @@ Production readiness is achieved only when all open items below are complete and
 ### 1.1 Enforce stricter read-only database controls — DONE
 - [x] Verify every database connection enforces `SET TRANSACTION READ ONLY` for PostgreSQL
 - [x] Validate SQLite connections open in read-only mode (`?mode=ro`; enforced at connection-build and validated at startup)
-- [x] Confirm there is no path to mutation via direct SQL, GraphQL, or CLI execution (single governed pipeline; `explore.py` re-execs the governed path and requires a validated token)
+- [x] Confirm there is no path to mutation via direct SQL, GraphQL, or CLI execution (single governed pipeline; `explore.py` is a local operator CLI that re-execs inside `sql_query_api/.venv` and requires a validated token — it is NOT part of the governed gateway)
 - [x] Audit all DB access layers for bypasses or helper APIs that can execute non-SELECT statements
 - [x] Acceptance: code review + security review confirms no write path exists
 
@@ -70,7 +72,7 @@ Production readiness is achieved only when all open items below are complete and
 ### 1.3 Dependency and secret hygiene — DONE
 - [x] Run `pip-audit`/`npm audit` and remediate critical findings (pip-audit + bandit gated in CI for `sql_query_api`)
 - [x] Ensure no secrets are committed to the repository or generated files (gitleaks + shared-secrets scans run in CI)
-- [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no committed secret values, no encrypted files). One gitignored file remains by design: `secrets/pg_rotator_admin_pass.txt`, mounted into `creds-rotator` and created by no script.
+- [x] Move secret handling to environment/secret-manager best practice for every environment (`read_secret` loader + `*_FILE` injection; no committed secret values, no encrypted files). One gitignored file remains by design: `secrets/pg_rotator_admin_pass.txt`, mounted into `creds-rotator` — `scripts/bootstrap-dev.sh` creates it locally (mode 0600, never overwritten) and production provisions it independently.
 - [x] Add secret rotation procedure and emergency response guidance (`SECURITY.md`)
 - [x] npm audit is now a gating check in CI (Python side was already gated; frontend covered too)
 
@@ -81,7 +83,7 @@ Production readiness is achieved only when all open items below are complete and
 ### 2.1 Replace dev deployment assumptions with production deployment — DONE
 - [x] Add a production override for Docker Compose or move to managed deployment manifests (`docker-compose.prod.yml`)
 - [x] Configure TLS/HTTPS termination at the edge (`nginx/nginx.conf`: TLS 1.2/1.3, HSTS, HTTP→HTTPS redirect)
-- [x] Restrict public exposure to only required ports and endpoints (only `443` published; SPA served through the edge; backend ports unexposed)
+- [x] Restrict public exposure to only required ports and endpoints (prod publishes `80` + `443` only; SPA served through the edge; backend ports unexposed)
 - [x] Add explicit network segmentation and service isolation (edge isolates auth0_api vs sql_query_api vs web_app upstreams; identity headers stripped)
 - [x] Acceptance: deployment can be brought up in a production-like environment without unsafe defaults (verified against prod compose)
 
@@ -97,7 +99,7 @@ Production readiness is achieved only when all open items below are complete and
 - [x] Require TLS for all cross-service communications in production (termination at edge; internal traffic never exposed publicly)
 - [x] Add WAF/reverse-proxy hardening rules and request limits (edge `limit_req` zones for API and auth paths)
 - [x] Review and document NGINX exposure policy for admin and API endpoints (`nginx/nginx.conf` + `DOCKER_README.md`)
-- [ ] Carry-over: WAF-class filtering (mod_security / managed WAF) for L7 attacks — documented in `INFRA_REQUIREMENTS.md`
+- [ ] Carry-over: WAF-class filtering (mod_security / managed WAF) for L7 attacks — tracked in M18 · #150
 - [x] Acceptance: no insecure public endpoints remain in production config
 
 ---
@@ -147,7 +149,7 @@ Production readiness is achieved only when all open items below are complete and
 - [ ] Add alert thresholds for critical endpoints and infrastructure services (M18 · #76)
 - [x] Ensure correlation IDs and structured logs are emitted consistently across services (M18 · #147) — **RESOLVED**: Correlation ID propagation nginx → FastAPI → OPA → audit via `correlation_middleware.py` + `opa_policy_engine.py`
 
-### 4.2 Incident response and runbooks — IN PROGRESS (M18 · #142 → `RUNBOOKS.md`)
+### 4.2 Incident response and runbooks — RUNBOOKS DONE, DRILL VALIDATION OPEN (M18 · #142 → `RUNBOOKS.md`)
 - [x] Write runbooks for Auth0 outage, DB outage, API error spike, and reverse-proxy failure (drafted in `RUNBOOKS.md`, R1–R4; deploy/secret failure as R5)
 - [x] Define escalation paths and on-call ownership (SEV1–3 model + on-call → maintainers → vendor/security chain in `RUNBOOKS.md`)
 - [x] Document log collection, support troubleshooting steps, and service dependencies (`RUNBOOKS.md` service map + access/commands)
@@ -252,9 +254,10 @@ Tracked in **GitHub milestone 18 — Production Operations Readiness** (#142–#
 
 ### Tier 3 — Remaining carry-over hardening
 
-- Verify the first signed image build and post-attestation tag promotion in GitHub Actions.
-- WAF-class L7 filtering (2.3; documented in `INFRA_REQUIREMENTS.md`).
+- WAF-class L7 filtering (2.3; tracked in M18 · #150).
 - Distributed rate limiting (1.6; needs Redis-backed coordination).
+
+_(Signed-image-build verification is done — see Phase 5.1, run `37155345476`.)_
 
 ---
 

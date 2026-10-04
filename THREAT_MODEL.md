@@ -1,7 +1,7 @@
 # Threat Model — Secure DB Access Gateway
 
-**Version:** 1.1
-**Date:** 2026-10-02
+**Version:** 1.2
+**Date:** 2026-10-04
 **Methodology:** PASTA (high-level workflow) → STRIDE (per-component threat enumeration) → DREAD (scoring & prioritization)
 **Scope:** All services in `docker-compose.yml` plus the nginx TLS edge and external dependencies (Auth0, PostgreSQL tenants, OpenRouter AI, OPA sidecar)
 
@@ -67,7 +67,7 @@
 | N-1 | TLS downgrade / cert spoofing | **S**poofing, **T**ampering | Attacker presents invalid cert or strips TLS | mkcert dev certs; prod uses real CA; HSTS preload | None |
 | N-2 | Header injection / log forging | **T**ampering | Malicious `X-Correlation-ID`, `X-Forwarded-For` | Charset/length validation (`^[A-Za-z0-9._-]{1,128}$`); fallback to `$request_id` | None |
 | N-3 | Spoofed identity headers | **S**poofing | Client sends `X-User-*`, `X-Org-*`, `X-Tenant-*` | Stripped at nginx (`proxy_set_header X-User-Email ""` etc.) | None |
-| N-4 | Rate limit bypass | **D**oS | Distributed requests evade IP-based limits | `api_limit` 60r/m burst 20; `auth_limit` 5r/m burst 3 | No per-user/jwt granularity |
+| N-4 | Rate limit bypass | **D**oS | Distributed requests evade IP-based limits | `api_limit` 60r/m burst 20; `auth_limit` 5r/m burst 3 at nginx; app-layer principal/tenant/database budgets (`rate_limit_middleware.py`) for authenticated traffic | Edge limit is IP-keyed only — a distributed unauthenticated flood is bounded solely by `api_limit` |
 | N-5 | Request smuggling / desync | **T**ampering | Malformed `Content-Length`/`Transfer-Encoding` | `client_max_body_size 1m`; strict proxy buffering | None |
 | N-6 | Certificate key theft | **I**nformation disclosure | `web_tls_key.pem` read from container FS | Read-only root FS; `cap_drop ALL`; volume `ro` | None |
 
@@ -88,7 +88,7 @@
 
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
-| S-1 | SQL parser bypass (mutation) | **T**ampering, **E**levation | `INSERT`/`UPDATE`/`DELETE` sneaks past `clean_sql()` | `MustBeSelectRule`, `NoForbiddenKeywordsRule`, `AstSqlAnalyzer.is_strictly_read_only()`, sqlglot AST parse | `clean_sql()` may prepend `SELECT *` if FROM present — widens scan |
+| S-1 | SQL parser bypass (mutation) | **T**ampering, **E**levation | `INSERT`/`UPDATE`/`DELETE` sneaks past `clean_sql()` | `MustBeSelectRule`, `NoForbiddenKeywordsRule`, `AstSqlAnalyzer.is_strictly_read_only()`, sqlglot AST parse; `clean_sql()` never synthesizes SQL (invalid queries are rejected, not repaired) | None — the AST node-type allowlist is deliberately off, so depth/complexity rather than structure is what the cost/timeout limits bound |
 | S-2 | SQL injection via parameters | **T**ampering | Parameterized query bypass | `params` dict passed to asyncpg `execute()` — native parameterization | None |
 | S-3 | Tenant breakout (cross-org data access) | **I**, **E**levation | User queries another org's database | `TENANT_DATABASES_JSON` maps `org_id`+`database_id` → conn string; RBAC middleware extracts `org_id` from JWT claim `https://app.secure-db-access-gateway.org/tenant_id`; `TenantDatabaseResolver` enforces mapping | If JWT claim forged (see A-4) or `TENANT_DATABASES_JSON` misconfigured |
 | S-4 | OPA policy poisoning | **T**ampering, **E**levation | Attacker modifies OPA policies to allow unauthorized access | Policies mounted `ro` from `sql_query_api/opa/policies/`; bundle mode for prod; OPA sidecar `read_only: true` | If container escape (C-1) or CI/CD compromise (C-3) |
@@ -96,19 +96,18 @@
 | S-6 | GraphQL DoS (depth/alias) | **D**oS | Deeply nested queries / alias explosion | `QueryDepthLimiter(max_depth=6)`, `MaxAliasesLimiter(max_alias_count=100)` | No per-query cost limit at GraphQL layer (only at SQL layer) |
 | S-7 | Schema introspection leakage | **I**nformation disclosure | `get_table_schema` / `introspect_schema` reveals full schema | `effective_access()` filters by policy; `DisableIntrospection` in prod | Authenticated users still see allowed schema — acceptable |
 | S-8 | Result-set exfiltration (large data) | **I**, **D**oS | `SELECT * FROM large_table` returns GBs | `SQL_QUERY_MAX_ROW_LIMIT=5000`, `SQL_QUERY_MAX_RESULT_BYTES=5MB`, `SQL_QUERY_TIMEOUT_SECONDS=30s`, `SQL_QUERY_COST_THRESHOLD=16` | Cost estimator may underestimate; no streaming/chunked response |
-| S-9 | Audit log tampering | **T**ampering, **R**epudiation | Attacker modifies/deletes audit records | Structured JSON to stdout; OTel collector aggregates; no local deletion API | No cryptographic integrity (hash chaining / WORM storage) |
+| S-9 | Audit log tampering | **T**ampering, **R**epudiation | Attacker modifies/deletes audit records | Structured JSON to stdout; SHA256 hash chaining (`audit_hash`/`prev_audit_hash`) so in-place edits break the chain; OTel collector aggregates; no local deletion API | Chain state lives with the log sink — no WORM/remote immutable storage, so an attacker who controls the sink can still rewrite history (detectable only by verifying the chain) |
 | S-10 | `AUDIT_LOG_RAW_SQL=true` leaks queries | **I**nformation disclosure | Raw SQL (with PII) written to logs | Default `false`; only enabled by operator | If enabled in prod, sensitive data in logs |
-| S-11 | Credential exposure via `creds-rotator` | **I** | Rotated passwords written to shared volume | Volume `creds_data` mounted `ro` to SQL API; `cap_drop ALL` | Volume not encrypted at rest; `creds-rotator` runs as `postgres` user |
+| S-11 | Credential exposure via `creds-rotator` | **I** | Rotated passwords written to shared volume | Volume `creds_data` mounted `ro` to SQL API; `cap_drop ALL`; `read_only` rootfs | Volume not encrypted at rest; the `creds-rotator` container runs as root (no `user:` in compose, image is `postgres:16-alpine` without a `USER`) |
 | S-12 | `EXPOSE_DB_ERROR_DETAIL=1` leaks schema | **I** | Detailed PG error names/columns to client | Default `0` (generic messages) | If enabled, aids reconnaissance |
-| S-13 | `clean_sql()` SELECT * widening | **I**, **D**oS | Non-SELECT with FROM becomes `SELECT * FROM ...` | `MustBeSelectRule` rejects non-SELECT; but cleaner runs first | Cleaner prepends `SELECT *` before validator — rejected but logs noise |
-| S-14 | Missing `SET ROLE` enforcement | **E**levation | Connection uses superuser instead of readonly role | `SQL_READONLY_ROLE` env var; enforced at connection time in `sql_query_service.py` | Not validated at startup; if missing, falls back silently |
+| S-14 | Missing `SET ROLE` enforcement | **E**levation | Connection uses superuser instead of readonly role | `SQL_READONLY_ROLE` env var; production PostgreSQL tenants **fail fast at startup** without it (`sql_query_repository.py`); role name validated before `SET ROLE` | Under `CI` the fail-fast check is skipped |
 
 ### 2.4 Web App (`web-app/`)
 
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
 | W-1 | XSS via query results | **T**ampering, **E**levation | Malicious data in DB rendered in React | React auto-escapes; `ResultsTable`/`ChartRenderer` use safe renderers | `ParagraphRenderer`/`ListRenderer` use `dangerouslySetInnerHTML`? (check) |
-| W-2 | JWT in localStorage | **I** | Token stolen via XSS | **HttpOnly cookie only**; `localStorage` holds only `app_jwt_exists` flag | None |
+| W-2 | JWT in localStorage | **I** | Token stolen via XSS | **HttpOnly cookie only**; `localStorage` holds only the `app_jwt_exists` flag and non-sensitive `user` profile metadata (no token material) | None |
 | W-3 | CSP bypass | **T**ampering | Inline script / style injection | `Content-Security-Policy` at nginx + FastAPI dev mirror; `script-src 'self'`; edge/app value parity for every mirrored header asserted in CI | `'unsafe-inline'` for styles — acceptable |
 | W-4 | Clickjacking | **S**poofing | App framed in malicious site | `X-Frame-Options: DENY`; `frame-ancestors 'none'` | None |
 | W-5 | Mixed content / downgrade | **T**ampering | HTTP resources on HTTPS page | `upgrade-insecure-requests`; HSTS preload | None |
@@ -117,10 +116,10 @@
 
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
-| O-1 | Policy bundle tampering | **T**ampering, **E**levation | Modified bundle loaded from S3/GCS | Bundle signature verification (OPA native); `config.yaml` `verification.key` | Not enforced in dev (file mount); prod bundle mode documented but not validated in CI |
+| O-1 | Policy bundle tampering | **T**ampering, **E**levation | Modified bundle loaded from S3/GCS | Bundles built in CI by a reviewed immutable workflow; fetched over the internal Docker network; policies/data mounted `ro`; OPA sidecar `read_only` + `cap_drop ALL` | No bundle signature verification (`sql_query_api/opa/config.yaml` has no signing/authentication config) and none is enforced in CI |
 | O-2 | OPA sidecar compromise | **E**, **I** | Container escape / RCE in OPA | `read_only: true`; `cap_drop ALL`; `no-new-privileges`; non-root | None |
 | O-3 | Network eavesdrop on OPA API | **I** | HTTP (not HTTPS) between SQL API → OPA | Internal Docker network `gateway-backend` only | No mTLS; plaintext policy decisions on wire |
-| O-4 | Denial via OPA resource exhaustion | **D**oS | Complex Rego policies consume CPU/memory | OPA `max_errors=10`; timeouts; `query_timeout` | No per-request CPU/memory limits in compose |
+| O-4 | Denial via OPA resource exhaustion | **D**oS | Complex Rego policies consume CPU/memory | 5s HTTP client timeout on every decision (`OpaConfig.timeout`); fail-closed on timeout; hardened container (`read_only`, `cap_drop ALL`) | No CPU/memory limits on the OPA container in compose |
 
 ### 2.6 Redis Session Store (`redis/`)
 
@@ -143,7 +142,7 @@
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
 | P-1 | Superuser credential reuse | **E** | Same creds for app + admin | `creds-rotator` uses separate admin secret | Application uses rotated creds; but `POSTGRES_PASSWORD` is static superuser |
-| P-2 | Missing `SET ROLE` enforcement | **E** | Connection bypasses readonly role | `SQL_READONLY_ROLE` configured per tenant | Not validated; silent fallback |
+| P-2 | Missing `SET ROLE` enforcement | **E** | Connection bypasses readonly role | `SQL_READONLY_ROLE` configured per tenant; production refuses to start a PG tenant connection without it (`sql_query_repository.py`) | Under `CI` the fail-fast check is skipped |
 | P-3 | Direct DB access bypassing gateway | **E**, **I** | Network path to PostgreSQL from backend network | PostgreSQL is on the private `gateway-backend` network; host port is loopback-only (`127.0.0.1:55432`) | Compromised backend container can connect directly to PostgreSQL; database role remains read-only and schema-scoped |
 | P-4 | SQL injection in tenant DB | **T** | Malicious query executes | Read-only role; governed pipeline; parameterized queries | None |
 
@@ -155,7 +154,7 @@
 | CI-2 | Secret leakage in logs | **I** | `GITHUB_TOKEN`, env vars in CI logs | `gitleaks` secret scan; env vars not echoed | Secrets in `GATEWAY_ENV_FILE` not scanned if file not in repo |
 | CI-3 | Build compromise (poisoned image) | **T**, **E** | Attacker modifies Dockerfile / build args | Multi-arch build in a reviewed immutable reusable workflow; full BuildKit provenance (`mode=max`, only public build args) and image SBOM; separate signing job creates and verifies the exact signed bundle for the pushed digest, repository, signer workflow, predicate, source ref and source digest; public tags are promoted only after verification; active default-branch rules require PRs and all CI checks, block deletion/non-fast-forward updates, and resolve review threads; active `v*` tag rules restrict creation to repository admins and prohibit updates/deletion | Repository admins can still change workflows, rulesets, or protected refs through privileged settings; the immutable builder pin must be deliberately reviewed and updated |
 | CI-4 | Pre-commit bypass | **T** | Developer skips hooks | `opencode` code-review gate blocks commit; fails closed when the review cannot run | `BLOCK=false` disables; hook can be uninstalled; commits are blocked entirely if `pre-commit` is not on `PATH` |
-| CI-5 | Dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | `zap-dast` boots the real stack, waits on the TLS edge answering over HTTPS, runs a ZAP baseline scan, publishes JSON/MD/HTML reports, fails if it crawled nothing, and fails on any alert not suppressed with a written justification in `.github/zap/baseline-rules.tsv` (`fail_action: true`); the one header defect the scan found, `Cross-Origin-Resource-Policy: same-site`, is fixed in nginx, auth0_api and sql_query_api | Baseline is passive and only crawls the unauthenticated surface, so the GraphQL API, the governed SQL path and authenticated flows are not exercised dynamically. Five of the six alerts found in the first scan are suppressed rather than fixed (`10015`, `10049`, `10055`, `10109`, `10116`), and one suppression is broad: `10055` covers every CSP sub-alert, so a widened `style-src` would never reach the build. The dangerous half is covered elsewhere - CI asserts that every served `script-src` is exactly `'self'` or `'none'`, and that the edge's value for every mirrored header equals the apps' own (the edge hides the apps' copies, so a value edited in only one place would otherwise serve silently differently on direct runs) - and `90004` is deliberately left unsuppressed so a site-isolation regression blocks |
+| CI-5 | Dynamic application security testing | **T**, **I**, **E** | Runtime-only flaw (XSS, path traversal, authz bypass) in the served web surface | `zap-dast` boots the real stack, waits on the TLS edge answering over HTTPS, runs a ZAP baseline scan, publishes JSON/MD/HTML reports, fails if it crawled nothing, and fails on any alert not suppressed with a written justification in `.github/zap/baseline-rules.tsv` (`fail_action: true`); the one header defect the scan found, `Cross-Origin-Resource-Policy: same-site`, is fixed in nginx, auth0_api and sql_query_api | Baseline is passive and only crawls the unauthenticated surface, so the GraphQL API, the governed SQL path and authenticated flows are not exercised dynamically. Six of the seven alerts triaged so far are suppressed rather than fixed (`10015`, `10016`, `10049`, `10055`, `10109`, `10116`), and one suppression is broad: `10055` covers every CSP sub-alert, so a widened `style-src` would never reach the build. The dangerous half is covered elsewhere - CI asserts that every served `script-src` is exactly `'self'` or `'none'`, and that the edge's value for every mirrored header equals the apps' own (the edge hides the apps' copies, so a value edited in only one place would otherwise serve silently differently on direct runs) - and `90004` is deliberately left unsuppressed so a site-isolation regression blocks |
 
 ### 2.10 Infrastructure / Container Runtime
 
@@ -164,7 +163,7 @@
 | I-1 | Container escape | **E** | Breakout from SQL API / Auth0 / OPA | `read_only: true`; `cap_drop ALL`; `no-new-privileges`; non-root users | `NET_BIND_SERVICE` cap for nginx; backend network reaches PostgreSQL and external services |
 | I-2 | Network lateral movement | **E**, **I** | Compromised service attacks peers | Two networks: `frontend` (web+nginx) and `backend` (apis+redis+opa+pg); web cannot reach backend | Backend services can reach each other freely; no zero-trust mesh |
 | I-3 | Host kernel exploit | **E** | Container → host | Docker default seccomp; `no-new-privileges` | No gVisor/Kata; host kernel shared |
-| I-4 | Image vulnerability | **E** | Base image CVE | `nginx:1.27-alpine`, `redis:7.4-alpine`, `postgres:16-alpine`, `python:3.12-slim`; blocking `pip-audit`, `bandit`, blocking Grype and Trivy filesystem scans | No daily base image rebuild; filesystem scans do not cover the published image contents |
+| I-4 | Image vulnerability | **E** | Base image CVE | `nginx:1.27-alpine`, `redis:7.4-alpine`, `pgvector/pgvector:0.8.0-pg16` (digest-pinned), `python:3.12-slim`; blocking `pip-audit`, `bandit`, blocking Grype and Trivy filesystem scans | No daily base image rebuild; filesystem scans do not cover the published image contents |
 
 ### 2.11 External Dependencies
 
@@ -202,7 +201,6 @@
 | C-2 | Rotator admin cred theft | 8 | 3 | 4 | 6 | 3 | **4.8** | **Medium** |
 | P-3 | Direct DB access bypass | 8 | 4 | 5 | 6 | 4 | **5.4** | **Medium** |
 | N-4 | Rate limit bypass | 5 | 8 | 7 | 8 | 8 | **7.2** | **High** |
-| S-13 | `clean_sql()` SELECT * widening | 4 | 6 | 5 | 5 | 6 | **5.2** | **Medium** |
 | I-2 | Network lateral movement | 7 | 5 | 5 | 8 | 5 | **6.0** | **High** |
 | S-10 | `AUDIT_LOG_RAW_SQL` leak | 6 | 3 | 3 | 8 | 3 | **4.6** | **Medium** |
 | R-2 | Redis traffic sniffing | 5 | 4 | 4 | 6 | 4 | **4.6** | **Medium** |
@@ -225,18 +223,18 @@
 | JWT RS256 validation + trusted tenant claim | A-4, S-3 | `auth.py:validate_access_token`, `build_principal_from_claims` |
 | HttpOnly Secure cookies + CSRF tokens | A-2, W-2 | `session_store.py`, `auth_routes.py` |
 | `TENANT_DATABASES_JSON` enforced mapping | S-3 | `tenant_database_resolver.py` |
-| `SqlSafetyChecker` (AST + sqlglot + rules) | S-1, S-2, S-13 | `sql_safety_checker.py`, `sql_cleaner.py` |
+| `SqlSafetyChecker` (AST + sqlglot + rules) | S-1, S-2 | `sql_safety_checker.py`, `sql_cleaner.py` |
 | Governed pipeline (validate → policy → execute → mask) | S-1, S-3, S-4, S-8, S-12 | `query_gateway.py` |
-| OPA fail-closed evaluator | S-5 | `opa_policy_engine.py:167-191` |
-| GraphQL depth/alias limiters | S-6 | `sql_query_controller.py:71-86` |
-| `SET ROLE` readonly + cost/row/byte/time limits | S-8, S-14, P-2 | `sql_query_service.py`, `query_gateway.py` |
-| `effective_access()` filters schema/introspection | S-7 | `policy_engine.py`, `sql_query_controller.py:496-499, 529-530` |
-| Structured audit logging + correlation IDs | S-9, S-10 | `app_logger.py`, `query_gateway.py:100-114` |
+| OPA fail-closed evaluator | S-5 | `opa_policy_engine.py` (`evaluate()`) |
+| GraphQL depth/alias limiters | S-6 | `sql_query_controller.py:81-82` |
+| `SET ROLE` readonly + cost/row/byte/time limits | S-8, S-14, P-2 | `sql_query_repository.py`, `query_gateway.py` |
+| `effective_access()` filters schema/introspection | S-7 | `policy_engine.py`, `sql_query_controller.py:493, 527` |
+| Structured audit logging + correlation IDs | S-9, S-10 | `app_logger.py`, `query_gateway.py:191` |
 | Read-only root FS + dropped caps + no-new-privs | I-1, O-2, C-1 | `docker-compose.yml` (all services) |
-| Network segmentation (frontend/backend) | I-2, P-3 | `docker-compose.yml:263-274` |
+| Network segmentation (frontend/backend) | I-2, P-3 | `docker-compose.yml:303` |
 | `gitleaks` + `pip-audit` + `bandit` + `npm audit` | CI-1, CI-2, CI-3 | `.github/workflows/ci.yml` |
-| OPA bundle signing + verification | O-1, O-3 | `opa/config.yaml` (production) |
-| Credential rotation + ro volume mount | C-3, S-11 | `docker-compose.yml:185-214`, `rotate_creds.sh` |
+| OPA bundle fetch over internal network (no signing yet) | O-1, O-3 | `opa/config.yaml` (production) |
+| Credential rotation + ro volume mount | C-3, S-11 | `docker-compose.yml:220-251`, `rotate_creds.sh` |
 | `shared_secrets.read_secret()` (env → *_FILE → default) | A-1, X-2, S-11, C-2 | `shared/shared_secrets/secrets.py` |
 
 ---
@@ -247,12 +245,10 @@
 
 | Gap | Threat(s) | Recommended Action |
 |-----|-----------|---------------------|
-| No per-user/JWT rate limiting | N-4, S-6 | Add Redis-backed token-bucket keyed by `principal.user_id` in RBAC middleware |
-| No cryptographic audit log integrity | S-9 | Implement hash-chained audit log (append-only) or ship to WORM store (CloudWatch, Loki with retention) |
+| Edge rate limiting is IP-keyed only | N-4, S-6 | App-layer principal/tenant/database budgets exist; add Redis-backed IP-bucket sync for distributed floods at the edge |
+| Audit log has no immutable sink | S-9 | Hash chaining exists in-process; ship the chain to a WORM store (CloudWatch, Loki with retention) so the sink itself cannot be rewritten |
 | OPA bundle signing not enforced in CI | O-1 | Add `opa build --signing-key` verification in CI; fail if unsigned |
 | Redis no TLS / no maxmemory | R-1, R-2, R-3 | Enable TLS in compose; set `maxmemory 256mb` + `maxmemory-policy allkeys-lru` |
-| `SQL_READONLY_ROLE` not validated at startup | S-14, P-2 | Add startup check: `SET ROLE` succeeds or fail fast |
-| `clean_sql()` prepends `SELECT *` before validation | S-13 | Move cleaner after validator, or make validator reject pre-pended `SELECT *` |
 | No mTLS between backend services | O-3, I-2 | Add `istio`/`linkerd` or manual mTLS with `step-ca` for backend network |
 | Auth0 token binding absent | A-4 | Evaluate DPoP (RFC 9449) or mTLS sender-constrained tokens |
 
@@ -261,7 +257,7 @@
 | Area | Action |
 |------|--------|
 | **Observability** | Add Prometheus alerts: `opa_evaluation_failures_total > 0`, `audit_log_write_failures > 0`, `sql_query_cost_threshold_exceeded` |
-| **Supply chain** | Verify provenance with `cosign verify-attestation` (SBOM generation and scanner Action SHA pinning are now in place); pin the remaining GitHub Actions to SHA |
+| **Supply chain** | Provenance verification runs in CI with `gh attestation verify` (SBOM generation and scanner Action SHA pinning are in place); pin the remaining tag-pinned GitHub Actions (`codeql-action`, `hadolint-action`, `semgrep-action`, `upload-artifact`) to SHA |
 | **Credential hygiene** | Rotate `pg_rotator_admin_pass` quarterly; automate OpenRouter key rotation |
 | **Testing** | Add contract tests for OPA policy bundle; fuzz `clean_sql()` + `SqlSafetyChecker` (already have `test_sql_fuzzing.py`) |
 | **Incident response** | Document runbook for: OPA fail-closed activation, credential rotation emergency, audit log tampering detection |
@@ -290,9 +286,9 @@
 
 | Component | Public Attack Surface | Internal Attack Surface | Crown Jewels |
 |-----------|----------------------|------------------------|--------------|
-| Nginx | 80, 443 (HTTPS only) | Backend service IPs | TLS private key |
+| Nginx | 8080/8443 dev, 80/443 prod (HTTP→HTTPS redirect) | Backend service IPs | TLS private key |
 | Auth0 API | `/api/*` via nginx | Redis, SQL API, OpenRouter | Auth0 client secret, session tokens |
-| SQL Query API | `/graphql` via nginx | OPA, Redis (indirect), PostgreSQL, OpenRouter | Tenant DB credentials, OPA policies, audit logs |
+| SQL Query API | `/graphql` (reached as `/api/graphql` through the Auth0 API BFF) | OPA, Redis (indirect), PostgreSQL, OpenRouter | Tenant DB credentials, OPA policies, audit logs |
 | Web App | `/` via nginx (SPA) | Auth0 API, SQL API | None (static assets) |
 | OPA | None (internal only) | SQL API | Policy bundles |
 | Redis | None (internal only) | Auth0 API | Session tokens |
@@ -301,4 +297,4 @@
 
 ---
 
-*Generated using PASTA/STRIDE/DREAD methodology. This model reflects the architecture as of the codebase state on 2026-10-02.*
+*Generated using PASTA/STRIDE/DREAD methodology. This model reflects the architecture as of the codebase state on 2026-10-04.*

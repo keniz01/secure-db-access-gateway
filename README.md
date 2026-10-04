@@ -2,7 +2,7 @@
 
 Secure DB Access Gateway is a read-only database exploration platform that lets users safely inspect schemas and execute SELECT-only queries behind Auth0-based identity and organization-aware authorization.
 
-The project is structured as a three-part system:
+The project is structured as a four-part system:
 - `web-app/` — React + TypeScript UI for schema browsing, queries, and authentication
 - `sql_query_api/` — FastAPI + Strawberry GraphQL API for validated read-only SQL execution
 - `auth0_api/` — Auth0 session and user orchestration layer with org-aware claims and optional AI greeting support
@@ -18,7 +18,7 @@ The project is structured as a three-part system:
  - Server-side tenant database resolution via opaque `database_id` (no connection strings from client)
  - OPA bundle policy management (`sql_query_api/opa/policies/gateway.rego` + `data.json`, hot-reload via `scripts/build-opa-bundle.sh`, fail-closed on unreachable)
  - Docker Compose with `frontend`/`backend` network segmentation, Redis `requirepass`, pinned images, and hardened nginx TLS (Mozilla intermediate)
- - CI with SHA-pinned actions, `bandit`/`pip-audit` (both services) and `npm audit` supply-chain gates
+ - CI with SHA-pinned scanner/build actions, `bandit`/`pip-audit` (both services) and `npm audit` supply-chain gates
  - **Per-tenant overload quotas** (concurrent query + queue limits with `429` responses)
  - **Layered rate limiting** (IP, principal, tenant, database dimensions)
  - **Correlation ID propagation** (nginx → FastAPI → OPA → audit logs)
@@ -28,7 +28,7 @@ The project is structured as a three-part system:
  - **CSP violation reporting** endpoint
  - **Admin access review API** (tenant bindings, OPA policies, effective access)
  - **Data classification labels** on audit events (PUBLIC/INTERNAL/CONFIDENTIAL/RESTRICTED)
- - **SAST + DAST pipeline** (Trivy, Semgrep, CodeQL, plus an OWASP ZAP baseline scan that boots the stack, scans the real TLS edge and publishes its reports). Trivy, Semgrep, CodeQL, pip-audit and ZAP all block the build: ZAP fails on any alert that is not listed, with a written justification, in [`.github/zap/baseline-rules.tsv`](.github/zap/baseline-rules.tsv). Of the six alerts the first real scan reported, one was fixed at the source (the `Cross-Origin-Resource-Policy: same-site` value in nginx and in both FastAPI apps, now `same-origin`) and the other five were suppressed with written reasons.
+ - **SAST + DAST pipeline** (Trivy, Semgrep, CodeQL, plus an OWASP ZAP baseline scan that boots the stack, scans the real TLS edge and publishes its reports). Trivy, Semgrep, CodeQL, pip-audit and ZAP all block the build: ZAP fails on any alert that is not listed, with a written justification, in [`.github/zap/baseline-rules.tsv`](.github/zap/baseline-rules.tsv). Seven alerts have been triaged so far: one (`90004`, the `Cross-Origin-Resource-Policy: same-site` value in nginx and in both FastAPI apps) was fixed at the source (now `same-origin`), and the other six are suppressed with written reasons (including `10016`, `X-XSS-Protection`, deliberately omitted).
  - **Signed SLSA provenance** for container images, created and verified by a SHA-pinned reusable workflow
  - **Dependabot** automated dependency updates with patch auto-merge
 
@@ -51,7 +51,7 @@ The project is structured as a three-part system:
 ### Auth0 API
 - FastAPI service for auth flows and session management
 - Auth0 OAuth integration and JWT identity validation
-- Optional AI greeting support via Azure/OpenAI-compatible services
+- Optional AI greeting support via OpenRouter and Gemini
 - Org-aware user metadata handling
 
 ## Repository layout
@@ -90,7 +90,7 @@ secure-db-access-gateway/
 ├── docker-compose.yml
 ├── ARCHITECTURE.md
 ├── SECURITY.md
-├── GEMINI.md
+├── THREAT_MODEL.md
 ├── LICENSE
 ├── README.md
 └── explore.py
@@ -109,8 +109,8 @@ docker compose up --build
 ```
 
 This starts:
-- Auth0 API: http://localhost:8001
-- SQL Query API: http://localhost:8002
+- Auth0 API: internal only (reach it at https://localhost:8443/api/* — Compose does not publish 8001)
+- SQL Query API: internal only (auth0_api BFF; Compose does not publish 8002)
 - Nginx gateway (HTTPS, serves the web app + APIs): https://localhost:8443 (plaintext on :8080 redirects to HTTPS)
 - Redis: redis://redis:6379/0 (session store, mandatory in prod)
 - OPA: http://opa:8181 (expose only, policy evaluation)
@@ -258,7 +258,8 @@ npm run build
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — system design and component responsibilities
 - [SECURITY.md](SECURITY.md) — security controls and governance notes
-- [GEMINI.md](GEMINI.md) — AI/CLI guardrails and project context
+- [THREAT_MODEL.md](THREAT_MODEL.md) — threat scenarios, DREAD ratings and mitigations
+- [AGENTS.md](AGENTS.md) — agent-oriented commands, conventions and guardrails
 - [RUNBOOKS.md](RUNBOOKS.md) — incident response runbooks and escalation model
 - [BACKUP_DR.md](BACKUP_DR.md) — tenant database backup/restore procedures and DR objectives
 - [PRODUCTION_READINESS_ROADMAP.md](PRODUCTION_READINESS_ROADMAP.md) — gaps and next steps to production readiness

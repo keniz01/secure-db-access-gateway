@@ -79,7 +79,7 @@ CORS_ORIGINS="https://yourdomain.com,https://www.yourdomain.com"
 - **X-Frame-Options: DENY** - Prevents clickjacking (supplemented by `Content-Security-Policy: frame-ancestors 'none'`)
 - **Content-Security-Policy** - BFF (`auth0_api/app/middleware/setup.py:70`): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 ...; upgrade-insecure-requests`; API (`sql_query_api/app_factory.py:87`): `default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`; the edge serves the BFF policy (`nginx/nginx.conf:132`)
 - **Strict-Transport-Security: max-age=31536000; includeSubDomains; preload** - Enforces HTTPS (1 year, preload)
-- **Referrer-Policy: strict-origin-when-cross-origin**, **Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()**, **Cross-Origin-Opener-Policy: same-origin**, **Cross-Origin-Embedder-Policy: require-corp**, **Cross-Origin-Resource-Policy: same-origin**
+- **Referrer-Policy: strict-origin-when-cross-origin**, **Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)**, **Cross-Origin-Opener-Policy: same-origin**, **Cross-Origin-Embedder-Policy: require-corp**, **Cross-Origin-Resource-Policy: same-origin**
 
 **Implementation:**
 ```python
@@ -90,7 +90,7 @@ async def add_security_headers(request, call_next):
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; ..."
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
     return response
 ```
@@ -106,7 +106,7 @@ async def add_security_headers(request, call_next):
 - Empty query check: `if not sql`
 - Length limit: 10,000 characters max (prevents memory exhaustion)
 - Query type validation: Only `SELECT` statements allowed
-- Existing SQL safety checker: Prevents subqueries, CTEs, DDL, DML
+- SQL safety checker: Blocks DDL/DML and other state-altering keywords. Subqueries, CTEs and set operations are allowed — the AST node-type allowlist is deliberately disabled because it rejected legitimate analytical queries (`sql_safety_checker.py:85`); an optional table/column allowlist is available but off by default
 - **Strict SQL cleaning**: LLM-generated SQL is normalized (markdown fences, `SQL:` prefix, `ELECT`→`SELECT`) but **never repaired or synthesized** — invalid queries are rejected, not rewritten
 
 **Files Modified:**
@@ -220,7 +220,7 @@ logger.exception("Error executing SQL")
 raise Exception("Failed to execute SQL statement. Please verify your query syntax.")
 ```
 
-### 6. Request Security ✅
+### 7. Request Security ✅
 
 #### CSRF Protection
 - Add `X-Requested-With: XMLHttpRequest` header to all API requests
@@ -274,7 +274,7 @@ Bootstrap a local env file and fill it in manually:
 
 # Production: copy .env.example to the host and fill in real values.
 sudo install -m 600 -o deploy -g deploy gateway.env /etc/gateway/gateway.env
-docker compose --env-file /etc/gateway/gateway.env up -d --build
+docker compose --env-file /etc/gateway/gateway.env up -d --no-build --wait
 ```
 
 The env file supplies every value the services need — Auth0 credentials, the
@@ -384,10 +384,10 @@ gateway_statement_timeout`).
 grep -r "password\|secret\|token\|key" --include="*.py" --include="*.ts" --exclude-dir=node_modules
 
 # Validate CORS configuration
-curl -H "Origin: https://attacker.com" http://localhost:8001 -v
+curl -H "Origin: https://attacker.com" https://localhost:8443/api/health -v
 
 # Test security headers
-curl -I http://localhost:8001/api/health
+curl -I https://localhost:8443/api/health
 ```
 
 ## Deployment Security Checklist
@@ -406,8 +406,8 @@ curl -I http://localhost:8001/api/health
 - [ ] Layered rate limits configured (`RATE_LIMIT_IP_MAX`, `RATE_LIMIT_PRINCIPAL_MAX`, `RATE_LIMIT_TENANT_MAX`, `RATE_LIMIT_DATABASE_MAX`)
 - [ ] Correlation ID propagation verified (nginx → FastAPI → OPA → audit)
 - [ ] Audit hash chaining enabled (`AUDIT_LOG_RAW_SQL=false` default)
-- [ ] CI actions pinned to immutable SHAs (verify `.github/workflows/ci.yml`)
-- [ ] Tenant config validation script runs in CI (`validate_tenant_config.py`)
+- [ ] CI actions pinned to immutable SHAs (scanner/build actions are; `codeql-action`, `hadolint-action`, `semgrep-action` and `upload-artifact` are still tag-pinned)
+- [x] Blocking DAST job runs on every PR (`zap-dast` in `.github/workflows/ci.yml`): OWASP ZAP baseline scan boots the stack, scans `https://localhost:8443`, and fails on any alert not justified in `.github/zap/baseline-rules.tsv`
 
 ## Future Security Enhancements
 
@@ -420,7 +420,7 @@ curl -I http://localhost:8001/api/health
 7. **Penetration Testing** - Regular security audits
 8. **Security Monitoring** - Real-time threat detection
 
-Already implemented (not future): edge rate limiting (`nginx/nginx.conf:11 nginx: api_limit 60r/m burst 20, auth_limit 5r/m burst 3`), comprehensive audit logging (`sql_query_api/services/audit`), RBAC + ABAC policy engine, **per-tenant overload quotas**, **layered rate limiting**, **correlation ID propagation**, **audit hash chaining**, **strict SQL cleaning (no repair)**.
+Already implemented (not future): edge rate limiting (`nginx/nginx.conf:11` `api_limit` 60r/m burst 20, `nginx/nginx.conf:15` `auth_limit` 5r/m burst 3), comprehensive audit logging (`sql_query_api/config/app_logger.py`), RBAC + ABAC policy engine, **per-tenant overload quotas**, **layered rate limiting**, **correlation ID propagation**, **audit hash chaining**, **strict SQL cleaning (no repair)**.
 
 ## Security Contact
 
@@ -431,6 +431,6 @@ For security issues, please report responsibly:
 
 ---
 
-**Last Updated:** September 2026
+**Last Updated:** October 2026
 **Security Patch Version:** 1.3.0
 **Status:** Development

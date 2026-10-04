@@ -37,9 +37,9 @@
 # The register is currently empty: every security control in
 # `.github/workflows/` blocks. `SEC-EXC-001` is deleted - it covered a DAST job
 # that had never worked - and so is `SEC-EXC-002`, because the gap it recorded
-# is closed: `fail_action: true` now fails the build on ZAP alerts, and the six
-# alerts the scan reported were triaged in `.github/zap/baseline-rules.tsv`
-# (one fixed at the source, five suppressed with written reasons).
+# is closed: `fail_action: true` now fails the build on ZAP alerts, and the
+# seven alerts the scans reported were triaged in `.github/zap/baseline-rules.tsv`
+# (one fixed at the source, six suppressed with written reasons).
 #
 # Known limits of the check - it detects these downgrade markers and nothing
 # else:

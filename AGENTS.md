@@ -32,7 +32,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - Web app: `npm run lint` (eslint), `npm test` (typecheck only via `tsc -b` — there are NO unit tests), `npm run build`, `npm run test:e2e` (Playwright, auto-starts the Vite dev server; only real browser suite).
 - Shared secrets smoke test (CI only): `python -m pip install -e ./shared` then run inline assertions.
 - **OPA policy is validated in CI.** `sql_query_api/opa/policies/gateway.rego` is Rego v1 and is compiled, formatted, tested and bundled by the `opa-policy` job (`opa fmt --fail`, `opa check`, `opa test`, `opa build`) against the same OPA image the compose stack runs. Run `opa test sql_query_api/opa` after editing the policy. It had **no** validation at all until 2026-10-02, which is how it sat broken against OPA 1.8.0 while production ran `OPA_ENABLED=true`.
-- CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build, plus blocking Grype/Trivy/Syft and the security-exception-policy job. Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`; Grype, Trivy and Syft block.
+- CI (`.github/workflows/ci.yml`) = secret-scan (gitleaks) + trufflehog + codeql + hadolint + semgrep + shared-secrets smoke + runbook lint + SQL pytest + bandit + pip-audit, auth0 pytest, web npm audit + lint + typecheck + e2e + build, plus blocking Grype/Trivy/Syft, the security-exception-policy job, the `opa-policy` job, and the blocking `zap-dast` job (OWASP ZAP, fail-closed through `.github/zap/baseline-rules.tsv`). Security gates: bandit + pip-audit on `sql_query_api`; npm audit on `web-app`; Grype, Trivy, Syft and ZAP block.
 - **Dependency resolution is lock-authoritative.** Both Dockerfiles and both CI service jobs resolve with `uv export --locked`, so a stale `uv.lock` fails the build instead of silently falling back to unpinned resolution. Run `uv lock` in the service dir before building; `uv lock --check` is what CI effectively asserts.
 - **Non-blocking security controls are registered, not anonymous.** Any `continue-on-error: true`, Grype `fail-build: false`, Trivy `exit-code: "0"` or ZAP `fail_action` false/omitted must appear in `.github/security-exceptions.yml` with an owner, reason, tracking reference and an expiry no more than 180 days out. `scripts/check-security-exceptions.py` (run as the `security-exception-policy` CI job) fails on unregistered *and* on stale entries. **The register is empty**: `SEC-EXC-001` (a DAST job that could never run) and `SEC-EXC-002` (DAST enforcement) are both deleted, and no non-blocking security control is left to register. DAST triage lives in `.github/zap/baseline-rules.tsv` instead: `fail_action: true` fails the build on any alert not listed there with a written justification. See the header of that file for the check's known limits.
 - Web app Node version: 20. Python services: 3.12.
@@ -40,7 +40,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 ## Ruff is diff-aware only
 
 - `sql_query_api/.pre-commit-config.yaml` uses a custom hook that lints only changed lines of staged files: `python3 sql_query_api/.pre-commit-scripts/ruff-diff-check.py`. Paths are relative to the **git root** (pre-commit runs hooks from the repo top level), and the script resolves `ruff` from `PATH` with a fallback to `sql_query_api/.venv/bin/ruff`.
-- Full `ruff check .` reports 600+ pre-existing errors and is NOT part of CI. Don't try to make the whole repo ruff-clean; keep new and edited lines compliant.
+- Full `ruff check .` reports hundreds of pre-existing errors (547 from the repo root at last count) and is NOT part of CI. Don't try to make the whole repo ruff-clean; keep new and edited lines compliant.
 
 ## Commit review gate
 
@@ -106,8 +106,8 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 ### Open Policy Agent (OPA)
 
-- OPA sidecar (`openpolicyagent/opa:latest`) runs on port 8181 (`expose` only, not host-mapped) for centralized policy evaluation.
-- `OPA_ENABLED=false` by default in `docker-compose.yml:125` and `.env.example:154`; set `OPA_ENABLED=true` to enable.
+- OPA sidecar (`openpolicyagent/opa:1.8.0`) runs on port 8181 (`expose` only, not host-mapped) for centralized policy evaluation.
+- `OPA_ENABLED=false` by default in `docker-compose.yml:153` and `.env.example:158`; set `OPA_ENABLED=true` to enable.
 - OPA policy files are mounted from `sql_query_api/opa/policies/` and evaluated at `/v1/data/gateway/evaluate`.
 - When OPA is unreachable, the evaluator **fails closed** (denies all requests).
 - The `OpaPolicyEvaluator` class implements the same interface as `PolicyEvaluator` for seamless switching.
@@ -117,11 +117,31 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 ### What to never regress
 
 - `sql_query_api` is strictly SELECT-only through the governed pipeline.
-- Auth is httpOnly-cookie JWT; `localStorage` may hold only the `app_jwt_exists` flag.
+- Auth is httpOnly-cookie JWT; `localStorage` may hold only the `app_jwt_exists` flag and non-sensitive `user` profile metadata (id/email/name/role) — never a token.
 - Root `explore.py` is a local headless operator CLI that bypasses the multi-tenant gateway (it re-execs inside `sql_query_api/.venv` and requires a validated access token). It is NOT a governed access path.
 - `TENANT_DATABASES_JSON` is required at startup — no fallback.
 - `ENVIRONMENT=dev` is needed for local development; production defaults to strict enforcement.
 - OPA integration must fail closed: when `OPA_URL` is set but unreachable, all queries are denied.
+
+### Headless CLI (`explore.py`) usage
+
+The root `explore.py` is an intentionally separate local operator utility. It re-executes itself inside `sql_query_api/.venv`, and every query needs a validated OIDC/Auth0 access token (`CLI_ACCESS_TOKEN`/`CLI_ACCESS_TOKEN_FILE`, or `--access-token-file`); roles, tenant identity, issuer, audience and expiry all come from the validated token — never from local config. `./explore.py --help` is the source of truth for flags. Common invocations:
+
+```bash
+DATABASE_URL=... ./explore.py --table artist --format json --limit 10
+DATABASE_URL=... ./explore.py --sql "SELECT title, release_year FROM album" --format csv
+DATABASE_URL=... ./explore.py --generate-wiki docs/wiki   # writes schema docs to a dir of your choosing (output not committed)
+DATABASE_URL=... ./explore.py --table track --limit 10 --analyze   # anomaly/NULL/trend summary
+cat db_logs.log | ./explore.py --analyze                   # piped stdin
+```
+
+### AI/CLI guardrails (non-negotiable when writing code)
+
+- Driver-level read-only stays enforced: SQLite connections open with `?mode=ro` in URI mode; PostgreSQL sessions run `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` (and the gateway additionally runs under `SQL_READONLY_ROLE`).
+- Only `SELECT`/`WITH` may execute — always through `DefaultSqlSafetyChecker`/the governed pipeline. `INSERT`, `UPDATE`, `DELETE`, `DROP`, `CREATE`, `ALTER`, `COMMIT`, `ROLLBACK` are prohibited everywhere, including CLI and diagnostic paths.
+- Never expose raw database errors to clients; log server-side and return generic messages (see `EXPOSE_DB_ERROR_DETAIL`).
+- No hardcoded passwords/keys: credentials come only from env vars or `shared_secrets.read_secret` (`NAME`/`NAME_FILE`).
+- CLI layers stay non-interactive and machine-readable (stdin read without blocking; JSON/CSV output for automation).
 
 ### Deployment
 
@@ -129,4 +149,4 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 - `deploy.yml` triggers on `v*` tag push (builds release images) or `workflow_dispatch` (deploys existing tag for rollback).
 - `docker.yml` and `deploy.yml` call `.github/workflows/docker-builder.yml` at the same reviewed immutable commit SHA. The reusable workflow builds multi-arch images by digest, signs and verifies them in a separate job, then promotes public tags. Update both SHA pins together after reviewing builder changes.
 
-Deeper context: `ARCHITECTURE.md`, `SECURITY.md`, `GEMINI.md` (AI/CLI guardrails), per-service `README.md`.
+Deeper context: `ARCHITECTURE.md`, `SECURITY.md`, `THREAT_MODEL.md`, per-service `README.md`.

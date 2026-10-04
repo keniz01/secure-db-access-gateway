@@ -26,20 +26,20 @@ The Secure DB Access Gateway is designed with a microservices-inspired architect
 
 #### Token Management & Session State
 - **JWT Storage:** Tokens are issued and set by the Auth0 API as `httpOnly`, `Secure`, `SameSite` cookies (not exposed to JavaScript or stored as JWT strings in `localStorage`).
-- **localStorage Usage:** `localStorage` stores only a boolean flag (`app_jwt_exists`) to indicate token presence for frontend UI state management.
+- **localStorage Usage:** `localStorage` stores only the `app_jwt_exists` presence flag plus non-sensitive `user` profile metadata (id/email/name/role) — never a token.
 - **API Client:** `axios` configured with `withCredentials: true` and `X-Requested-With: XMLHttpRequest` headers to send `httpOnly` cookies automatically on requests.
 
 ---
 
 ### 2. Auth0 API (`auth0_api/`)
 
-- **Tech Stack:** Python 3.12+, FastAPI, Auth0 OAuth2, Azure OpenAI, Pydantic.
-- **Port:** `8001`
+- **Tech Stack:** Python 3.12+, FastAPI, Auth0 OAuth2, OpenRouter + Gemini (AI greetings), Pydantic.
+- **Port:** `8001` (internal; not published to the host — reached through the TLS edge)
 
 #### Core Responsibilities
 - Auth0 OAuth2 integration and token exchange.
 - Setting `httpOnly` session cookies on authentication.
-- Providing user profile and health endpoints (`/api/auth/me`, `/api/health`).
+- Providing user profile and health endpoints (`/api/user`, `/api/health`, `/healthz`, `/readyz`).
 - AI service integration for personalized user greeting generation.
 
 ---
@@ -50,8 +50,8 @@ The Secure DB Access Gateway is designed with a microservices-inspired architect
 - **Port:** `8002`
 
 #### Core Responsibilities
-- GraphQL query interface (`/graphql`).
-- One governed query gateway shared by GraphQL, AI/text-to-SQL, and the headless CLI.
+- GraphQL query interface (`/graphql`), exposed to browsers through the Auth0 API BFF at `/api/graphql`.
+- One governed query gateway shared by GraphQL and the AI text-to-SQL path (the root `explore.py` operator CLI runs separately and is NOT a governed access path).
 - Read-only SQL safety enforcement (`DefaultSqlSafetyChecker` preventing non-SELECT operations).
 - Automatic `LIMIT` clause injection and input validation.
 - Connection management enforcing read-only at the session level (`SET SESSION
@@ -91,7 +91,7 @@ Dashboard
     │
     ├─→ User submits SQL query
     │
-    ├─→ POST /graphql (SQL Query API)
+    ├─→ POST /api/graphql (Auth0 API BFF → SQL Query API `/graphql`)
     │   │
     │   ├─→ Validate SQL safety (SELECT-only check)
     │   ├─→ Apply automatic LIMIT
@@ -147,7 +147,7 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 
 **Configuration:**
 - `OPA_URL=http://opa:8181` — OPA sidecar endpoint
-- `OPA_ENABLED=false` by default in `docker-compose.yml:125` and `.env.example:154`; `docker-compose.prod.yml:42` sets `true`. Set `OPA_ENABLED=true` to delegate to OPA
+- `OPA_ENABLED=false` by default in `docker-compose.yml:153` and `.env.example:158`; `docker-compose.prod.yml:42` sets `true`. Set `OPA_ENABLED=true` to delegate to OPA
 - Prod bundle: `BUNDLE_SERVICE_URL=http://opa-bundle-server:8080` + `sql_query_api/opa/config.yaml` (`bundles.gateway.resource: bundle.tar.gz`, polling 10-20s)
 
 **Policy Evaluation:**
@@ -158,13 +158,13 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 
 **Rego Policies:**
 - Located in `sql_query_api/opa/policies/gateway.rego`, data in `sql_query_api/opa/data.json` (`{policies: [...]}`)
-- Dev: loaded from disk on OPA startup (file mount `docker-compose.yml:112`)
+- Dev: loaded from disk on OPA startup (file mount `docker-compose.yml:180`)
 - Prod: bundle `scripts/build-opa-bundle.sh` (`opa build -b sql_query_api/opa -o sql_query_api/bundle.tar.gz`) served via `opa-bundle-server` or S3/GCS/HTTP; hot-reload without restart
-- Validate: `opa fmt --fail`, `opa test ./sql_query_api/opa/policies`, `opa build` in CI
+- Validate: `opa fmt --fail`, `opa check`, `opa test`, `opa build` — run by the `opa-policy` CI job against the same `openpolicyagent/opa:1.8.0` image compose runs
 
 **Fallback (deprecated):**
-- When `OPA_ENABLED=false` or `OPA_URL` is not set, the in-process `PolicyEvaluator` (`services/policy_engine.py:259` `POLICY_POLICIES_JSON`) is used — dev/CI only, emits `DeprecationWarning`
-- The `OpaPolicyEvaluator` (`services/opa_policy_engine.py:52`) implements the same interface as `PolicyEvaluator` for seamless switching
+- When `OPA_ENABLED=false` or `OPA_URL` is not set, the in-process `PolicyEvaluator` (`services/policy_engine.py`, class `PolicyEvaluator`, reads `POLICY_POLICIES_JSON`) is used — dev/CI only, emits `DeprecationWarning`
+- The `OpaPolicyEvaluator` (`services/opa_policy_engine.py:139`) implements the same interface as `PolicyEvaluator` for seamless switching
 
 ---
 
@@ -174,17 +174,17 @@ The gateway supports centralized policy enforcement via Open Policy Agent (OPA):
 localhost:5173      → Web App (Vite dev server; http://localhost:5173 only, proxied via TLS edge)
 localhost:8080      → Nginx Gateway (HTTP → HTTPS redirect; /nginx-health plaintext)
 localhost:8443      → Nginx Gateway (TLS edge; serves SPA + /api/*, Mozilla intermediate, HSTS preload)
-localhost:8001      → Auth0 API (via nginx, not host-exposed in prod compose)
-localhost:8002      → SQL Query API (via auth0_api BFF, not host-exposed)
-opa:8181            → OPA Sidecar (expose only, not host-mapped; docker-compose.yml:108)
+localhost:8001      → Auth0 API (via nginx `/api` locations, not host-published)
+localhost:8002      → SQL Query API (via auth0_api BFF, not host-published)
+opa:8181            → OPA Sidecar (expose only, not host-mapped; docker-compose.yml:177)
 127.0.0.1:3000      → Grafana UI (otel-lgtm, 127.0.0.1-only in compose)
 localhost:4318      → OTLP HTTP receiver
 127.0.0.1:55432    → PostgreSQL 16 + pgvector (host tools; Compose service `postgres`)
 postgres:5432       → PostgreSQL on the backend network (SQL gateway and credential rotator)
-  + redis:6379      → Redis (session store, docker-compose.yml:7)
+  + redis:6379      → Redis (session store, docker-compose.yml:37)
 ```
 
-**Network segmentation** (`docker-compose.yml:172`):
+**Network segmentation** (`docker-compose.yml:303`):
 - `frontend` (`gateway-frontend`) — `nginx`, `web_app`, `auth0_api`, `otel-lgtm` (ports exposed)
 - `backend` (`gateway-backend`) — `sql_query_api`, `postgres`, `creds-rotator`, `opa`, `redis`, `auth0_api`, `otel-lgtm`
 - `auth0_api` bridges both so `web_app` cannot reach `sql_query_api:8002`/`opa:8181`/`redis:6379` even if compromised; `nginx` no longer depends on `sql_query_api` directly (`sql_query_api` is private to BFF).

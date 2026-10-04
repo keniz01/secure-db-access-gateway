@@ -923,8 +923,8 @@ jobs:
         uses: zaproxy/action-baseline@2b5fc7f98d837319798ab7f128ea50b7d40563b6 # v0.14.0
         with:
           target: "https://localhost:8443"
-          # Enforcing. The scan that produced this triage crawled 61 URLs and
-          # reported six alerts: five are suppressed with written justifications
+          # Enforcing. The baseline scans crawled 61 URLs and reported seven
+          # alerts in total: six are suppressed with written justifications
           # in the rules file below, and one (90004) is fixed at the source
           # rather than suppressed. Everything not listed there keeps ZAP's
           # default WARN, and the scan's exit code decides the job - 0 clean,

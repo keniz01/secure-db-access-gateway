@@ -1,16 +1,15 @@
-Use UV to to initialise a project and create virtual environment
-- uv init
-- uv venv .venv
+Use UV to initialise the environment and start the API
+- uv sync
 
 Start web app
-- uv uvicorn main:app --reload --log-level debug --port 8002
+- uv run uvicorn main:app --reload --log-level debug --port 8002
 
-Linux/MacOS
-- export DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432/mydb"
+Linux/MacOS (legacy single-DB path, dev only — production uses the tenant mappings below; Compose runs PostgreSQL on `postgres:5432`, host tools use `localhost:55432`)
+- export DATABASE_URL="postgresql+asyncpg://user:password@localhost:55432/mydb"
 
 Windows
-- setx DATABASE_URL "postgresql+asyncpg://user:password@localhost:5432/mydb"
-- $env:DATABASE_URL="postgresql+asyncpg://user:password@localhost:5432/mydb"
+- setx DATABASE_URL "postgresql+asyncpg://user:password@localhost:55432/mydb"
+- $env:DATABASE_URL="postgresql+asyncpg://user:password@localhost:55432/mydb"
 - Production uses opaque logical database identifiers and server-side mappings.
   Set `ENVIRONMENT=production` and provide `TENANT_DATABASES_JSON` or
   `TENANT_DATABASES_JSON_FILE` containing entries such as:
@@ -68,7 +67,8 @@ available to administrators through GraphQL and returns the decision without
 reading protected data.
 
 Deprecated fallback: `POLICY_POLICIES_JSON` / `POLICY_POLICIES_JSON_FILE` is still
-read by `services/policy_engine.py:259` when `OPA_ENABLED=false` (dev/CI only, emits
+read by `services/policy_engine.py` (class `PolicyEvaluator`, `POLICY_POLICIES_JSON`
+read at `:284`) when `OPA_ENABLED=false` (dev/CI only, emits
 `DeprecationWarning`). Prod sets `OPA_ENABLED=true` (`docker-compose.prod.yml`) and
 must not rely on the inline env var.
 
@@ -118,5 +118,5 @@ All are tunable psql variables (`-v gateway_statement_timeout=...`, etc.) and
 re-verified by the script's fail-closed verification block. The app-side pool is
 bounded per engine by `DB_POOL_SIZE` + `DB_MAX_OVERFLOW` (validated at startup,
 see `dependency_container.pool_settings_from_env`) and must fit under the role's
-connection limit. `scripts/probe-production.sh` (probe P5) fails any tenant with
+connection limit. `scripts/probe-production.sh` at the repo root (probe P5) fails any tenant with
 a disabled statement/lock/idle timeout or no connection limit.

@@ -8,8 +8,8 @@
 # Policies (bundle source of truth — Rego + data)
 cat sql_query_api/opa/policies/gateway.rego
 cat sql_query_api/opa/data.json | jq '.policies'  # generated bundle data; source is opa/policies + data.json
-# Verify bundle
-opa fmt --fail ./sql_query_api/opa/policies && opa test ./sql_query_api/opa/policies
+# Verify bundle (same commands the CI opa-policy job runs)
+opa fmt --fail ./sql_query_api/opa && opa check ./sql_query_api/opa && opa test ./sql_query_api/opa
 # OPA effective access per org (via simulate - admin only)
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
@@ -19,25 +19,25 @@ curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
 ## 2. Enumerate principals vs policies
 
 * Auth0 dashboard: export users + `roles` + `https://app.secure-db-access-gateway.org/tenant_id`.
-* For each `(org_id, database_id)` run `effective_access` (`sql_query_api/services/policy_engine.py:379` / OPA `gateway.rego:96` `effective_access`) to list `accessible_tables`/`allowed_columns`/`masked_columns`.
-* GraphQL `introspect_schema` `sql_query_api/routes/sql_query_controller.py:506` already filters by `EffectiveAccess`; verify no extra tables leak.
+* For each `(org_id, database_id)` run `effective_access` (`sql_query_api/services/policy_engine.py:398` / OPA `gateway.rego:117` `effective_access`) to list `accessible_tables`/`allowed_columns`/`masked_columns`.
+* GraphQL `introspect_schema` `sql_query_api/routes/sql_query_controller.py:510` already filters by `EffectiveAccess`; verify no extra tables leak.
 
 ## 3. SoD & hierarchy check
 
-* Current hierarchy: `admin -> viewer` `gateway.rego:30` `role_hierarchy`. `admin` implicitly has viewer tables.
-* SoD constraints: `gateway.rego:33` `sod_constraints` (empty = disabled). If you add `["editor","approver"]`, verify no principal holds both via `violates_sod`.
-* Middleware no longer hardcodes `ALLOWED_ROLES` `middlewares/rbac_middleware.py:11` - all auth'd principals reach OPA; OPA denies if no allow matches.
+* Current hierarchy: `admin -> viewer` `gateway.rego:31` `role_hierarchy`. `admin` implicitly has viewer tables.
+* SoD constraints: `gateway.rego:36` `sod_constraints` (empty = disabled). If you add `["editor","approver"]`, verify no principal holds both via `violates_sod`.
+* Middleware no longer hardcodes `ALLOWED_ROLES` (`middlewares/rbac_middleware.py`) - all auth'd principals reach OPA; OPA denies if no allow matches.
 
 ## 4. Audit evidence
 
-* `log_audit_event` types: `sql_query`, `simulate_policy_evaluated`, `auth_failed`, `schema_introspection` `sql_query_api/services/query_gateway.py:85`, `config/app_logger.py`.
-* Pull last quarter: `grafana/loki` filter `event="policy_denied" OR "auth_failed"`.
+* `log_audit_event` types: `sql_query`, `simulate_policy_evaluated`, `auth_failed`, `schema_introspection` `sql_query_api/services/query_gateway.py` (emits `sql_query`, `query_rejected_overload`, …) and `config/app_logger.py`.
+* Pull last quarter: Grafana → Explore → Loki (otel-lgtm UI at `http://localhost:3000`) filter `event="policy_denied" OR "auth_failed"`.
 * Confirm `AUDIT_LOG_RAW_SQL=false` in prod (no raw SQL in logs).
 
 ## 5. Approve / remediate
 
 * Approve: sign `docs/access-review-YYYY-QN.md` with reviewer, date, policy bundle revision (`scripts/build-opa-bundle.sh` revision).
-* Remediate: edit `sql_query_api/opa/policies/gateway.rego` or `sql_query_api/opa/data.json` (then `scripts/build-opa-bundle.sh $REV` to rebuild `bundle.tar.gz`), redeploy `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`.
+* Remediate: edit `sql_query_api/opa/policies/gateway.rego` or `sql_query_api/opa/data.json` (then `scripts/build-opa-bundle.sh $REV` to rebuild `bundle.tar.gz`), redeploy `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build --wait`.
 
 ## 6. Checklist
 

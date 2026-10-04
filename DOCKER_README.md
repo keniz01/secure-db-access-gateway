@@ -31,7 +31,7 @@ This will start:
 - **Nginx** (reverse proxy / TLS edge) on ports 8080 (HTTP→HTTPS redirect) and 8443 (HTTPS) – serves SPA and proxies `/api/*` to Auth0 API
 - Auth0 API on port 8001 (reachable via nginx at https://localhost:8443/api; BFF proxies `/api/graphql` to SQL Query API)
 - SQL Query API on port 8002 (internal, via auth0_api)
-- Web App on port 5173 (dev, via nginx; not host-exposed in prod `docker-compose.prod.yml:43`)
+- Web App on port 5173 (dev, via nginx; not host-exposed in prod `docker-compose.prod.yml:80`)
 - Redis on 6379 (expose, session store), OPA on 8181 (expose), otel-lgtm on 3000/4317/4318/9090
 - PostgreSQL 16 with pgvector on `127.0.0.1:55432` (host tools only; internal service name `postgres`)
 
@@ -83,7 +83,7 @@ stores session cookies with the `Secure` flag.
 
 ### Web App
 - **Build**: ./web-app
-- **Port**: 5173 (dev `docker-compose.yml:22` host-mapped; prod `docker-compose.prod.yml:43` has `ports: !override []` — served only via nginx :443)
+- **Port**: 5173 (dev `docker-compose.yml:293` host-mapped; prod `docker-compose.prod.yml:80` has `ports: !override []` — served only via nginx :443)
 - **Environment**: `VITE_API_BASE_URL=https://localhost:8443` (dev) / `https://app.secure-db-access-gateway.org` (prod)
 
 ### Redis
@@ -155,8 +155,9 @@ docker compose up --build
   `GATEWAY_ENV_FILE`) is provisioned on the host and injected via Compose
   `env_file`. The deploy workflow only references the *path*.
 - **Readiness gate.** `ENVIRONMENT=production` fails fast on missing secrets,
-  each service has a `healthcheck`, and Compose `up --wait` aborts the deploy
-  if any container does not become healthy within `--wait-timeout`.
+  every service except nginx and the credential rotator has a `healthcheck`,
+  and Compose `up --wait` aborts the deploy if a checked container does not
+  become healthy within `--wait-timeout`.
 - **Stable image tags.** Release images are tagged `vX.Y.Z` (semver), `latest`,
   and `sha-<commit>`. `edge` tracks the default branch. Rollback = re-pin an
   older tag.
@@ -257,7 +258,7 @@ The Docker setup creates a complete development environment with:
 - **Redis + OPA + otel-lgtm** sidecars
 - **Frontend** served with hot reload (dev) / via nginx (prod)
 - Env-file secret management
-- Health checks for all services
+- Health checks for every stateful service (nginx and creds-rotator have none)
 
 ### Request flow (Auth API)
 

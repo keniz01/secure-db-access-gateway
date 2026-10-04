@@ -1,18 +1,18 @@
 # Tenant Database Mapping — Future Migration (Item 2)
 
-> **Status:** Deferred. Item 1 (OPA bundles for `POLICY_POLICIES_JSON`) is implemented.
+> **Status:** Partially implemented. Item 1 (OPA bundles for `POLICY_POLICIES_JSON`) is implemented, and the tenant mapping now **prefers a mounted config file**: `TenantDatabaseResolver.from_environment()` reads `TENANT_DATABASES_CONFIG_FILE` (default `/config/tenant_databases.json`, mounted by Compose via `TENANT_DATABASES_CONFIG_SOURCE`, `docker-compose.yml:155,167`) before falling back to the legacy inline `TENANT_DATABASES_JSON` env var. Still open: the rotation runbook, a schema-validation script/CI check, and Phase B (registry) if tenant counts grow.
 > This doc records the plan for `TENANT_DATABASES_JSON` scalability.
 
 ## Problem
 
-`TENANT_DATABASES_JSON` / `TENANT_DATABASES_JSON_FILE` (`sql_query_api/services/tenant_database_resolver.py:105`) is **infra routing**, not authz:
+`TENANT_DATABASES_JSON` / `TENANT_DATABASES_JSON_FILE` (`sql_query_api/services/tenant_database_resolver.py:32`) is **infra routing**, not authz:
 
 ```python
 TenantDatabaseConfig(org_id, database_id, connection_string, data_schema, ...)
 ```
 
-* Inline `TENANT_DATABASES_JSON` `.env.example:64` is a single-line JSON blob. Unscalable: hits env-var size limits (~128k), requires app restart (`routes/sql_query_controller.py:121` loads once), no versioning/auditing, secrets + metadata co-mingled.
-* `*_FILE` already exists via `shared/shared_secrets/secrets.py:55` (`env var → *_FILE → default`) but still requires host file management.
+* Inline `TENANT_DATABASES_JSON` `.env.example:69` is a single-line JSON blob. Unscalable: hits env-var size limits (~128k), requires app restart (`routes/sql_query_controller.py:121` loads once), no versioning/auditing, secrets + metadata co-mingled. The mounted-file path (status above) removes most of this pain in Compose and prod.
+* `*_FILE` already exists via `shared/shared_secrets/secrets.py:97` (`env var → *_FILE → default`) but still requires host file management.
 
 Do **not** move connection strings into OPA/Cedar — PDP should not hold DB credentials.
 
@@ -38,7 +38,7 @@ Replace file with control-plane store:
 * `TenantDatabaseResolver` gains `from_db(cached)` with TTL (e.g. 60s) + `get_tenant_database_config` cache invalidation on webhook.
 * Keep `*_FILE` as bootstrap fallback for cold start.
 
-Connection pool: per-engine `DB_POOL_SIZE + DB_MAX_OVERFLOW` `ARCHITECTURE.md:210` must stay below role `CONNECTION LIMIT` (`scripts/setup_least_privilege_gateway_role.sql`).
+Connection pool: per-engine `DB_POOL_SIZE + DB_MAX_OVERFLOW` `ARCHITECTURE.md:212` must stay below role `CONNECTION LIMIT` (`sql_query_api/scripts/setup_least_privilege_gateway_role.sql`).
 
 ## Non-goals
 
@@ -47,8 +47,8 @@ Connection pool: per-engine `DB_POOL_SIZE + DB_MAX_OVERFLOW` `ARCHITECTURE.md:21
 
 ## Checklist when implementing
 
+- [x] Mount a tenant config file in Compose (file-preferred path implemented; see Status)
 - [ ] Update `.env.example` to mark `TENANT_DATABASES_JSON` deprecated, `*_FILE` required in prod
-- [ ] Add `docker-compose.yml` secret mount example (commented)
 - [ ] Add `scripts/validate-tenants.py` (JSON schema + connection_string format)
-- [ ] Document rotation runbook in `docs/wiki/`
+- [ ] Document rotation runbook in `RUNBOOKS.md`
 - [ ] Add CI check: `python -m json.tool /run/secrets/tenants.json` in `ci.yml` smoke test

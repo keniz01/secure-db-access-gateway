@@ -8,10 +8,10 @@ The Auth0 API provides secure authentication and user management for the SQL Que
 
 - **Auth0 Integration** - Enterprise-grade OAuth2 authentication
 - **Session Management** - Secure session handling with user context
-- **AI-Powered Greetings** - Dynamic dashboard messages using Azure OpenAI
+- **AI-Powered Greetings** - Dynamic dashboard messages via OpenRouter (OpenAI-compatible) and Google Gemini
 - **Modular Architecture** - Clean separation of concerns for easy maintenance
 - **Production Ready** - Comprehensive logging, error handling, and type safety
-- **Well Documented** - 8 detailed guides covering architecture to deployment
+- **Well Documented** - this README plus `../ARCHITECTURE.md`, `../SECURITY.md`, `../RUNBOOKS.md` and `../docs/OAUTH_COMPLIANCE.md`
 
 ## 📋 Quick Links
 
@@ -25,7 +25,7 @@ The Auth0 API provides secure authentication and user management for the SQL Que
 ### Prerequisites
 - Python 3.12+
 - Auth0 account with configured application
-- Azure OpenAI API access (for AI greeting feature)
+- OpenRouter and/or Gemini API access (optional, for the AI greeting feature)
 
 ### Setup (5 minutes)
 
@@ -41,12 +41,15 @@ cd auth0_api && uv sync && uv run uvicorn main:app --reload --port 8001
 #   ./scripts/bootstrap-dev.sh && docker compose up --build
 ```
 
-The API will be available at `http://localhost:8001` (direct) or `https://localhost:8443/api/*` via nginx.
+Run manually and it listens on `http://localhost:8001`. In Compose the port is
+**not published** — reach it through the TLS edge at `https://localhost:8443/api/*`.
 
 ## 📌 API Endpoints
 
 ### Authentication
-- `GET /api/health` - Health check
+- `GET /api/health` - Health check (behind the edge)
+- `GET /healthz` - Liveness (touches nothing)
+- `GET /readyz` - Readiness
 - `GET /api/login` - Initiate Auth0 login (Authorization Code + PKCE S256, static `OAUTH_REDIRECT_URI`)
 - `GET /api/auth` - OAuth callback handler (verifies PKCE verifier + nonce)
 - `POST /api/logout` - Clear session and logout (CSRF-protected; `GET /api/logout` returns 405)
@@ -54,6 +57,11 @@ The API will be available at `http://localhost:8001` (direct) or `https://localh
 ### User
 - `GET /api/user` - Get authenticated user information
 - `GET /api/dashboard` - Get dashboard with AI-generated greeting
+- `GET /api/admin/overview` - Admin overview (tenant bindings, OPA policies, effective access)
+- `POST /api/text-to-sql` - AI text-to-SQL helper (goes through the governed pipeline)
+
+### GraphQL BFF
+- `POST /api/graphql` - Proxies governed queries to `sql_query_api` with the server-side token (CSRF-protected)
 
 ## 🏗️ Project Structure
 
@@ -126,7 +134,6 @@ See `../.env.example` for full list.
 - **Configuration management** with environment variables
 
 ### Developer Friendly
-- **~1400 lines of documentation** across 8 guides
 - **Docstrings** on all classes and methods
 - **Code examples** for common tasks
 - **Clear patterns** for extending functionality
@@ -152,7 +159,7 @@ def test_ai_service():
     assert isinstance(result, str)
 ```
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for complete testing guide.
+Run the suite with `cd auth0_api && python -m pytest` (see `../AGENTS.md`).
 
 ## 🛡️ CSRF, Cookie & CORS Protection
 
@@ -199,7 +206,7 @@ origin to `CORS_ORIGINS` — it automatically becomes valid for Origin checks to
 
 - **Docker Compose** — `docker-compose.yml` (dev) and `docker-compose.prod.yml` (GHCR images, `REDIS_URL=redis://redis:6379/0`, TLS via nginx). See `../DOCKER_README.md`.
 - **Horizontal scaling** — stateless only with `REDIS_URL` (Redis mandatory in prod, `session_store.py` fail-closed); without Redis, in-memory store is single-process only.
-- **Health checks** — `/api/health`, `/readyz`, nginx `/nginx-health`.
+- **Health checks** — `/api/health`, `/healthz`, `/readyz`, nginx `/nginx-health`.
 
 ## 📊 Refactoring Highlights
 
@@ -207,12 +214,9 @@ This project was recently refactored from a monolithic 338-line file to a modula
 
 - ✅ **94% reduction** in main file size
 - ✅ **11 focused modules** with clear responsibilities
-- ✅ **8 comprehensive guides** for documentation
 - ✅ **100% functionality preserved** with backward compatibility
 - ✅ **Type safety** with Pydantic throughout
 - ✅ **Production-ready** code structure
-
-See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for details.
 
 ## 🔗 Dependencies
 
@@ -220,7 +224,7 @@ Key dependencies:
 - **FastAPI** - Modern web framework
 - **Authlib** - OAuth2 and Auth0 integration
 - **Pydantic** - Data validation and type hints
-- **OpenAI** - Azure OpenAI for AI greetings
+- **OpenAI-compatible client + Google GenAI** - OpenRouter (OpenAI SDK) and Gemini for AI greetings
 - **Uvicorn** - ASGI server
 
 Full list: See `pyproject.toml`
