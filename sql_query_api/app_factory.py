@@ -80,6 +80,10 @@ def setup_security_middleware(app: FastAPI) -> None:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         # API is bearer-only (no browser scripts), so CSP is locked down to 'none' + frame-ancestors
+        # nginx never proxies this service (GraphQL is reached through the
+        # auth0_api BFF), so this stricter policy is never hidden behind the
+        # edge's; it applies to direct and test access and is expected to differ
+        # from nginx/nginx.conf:132.
         response.headers["Content-Security-Policy"] = (
             "default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; "
             "frame-ancestors 'none'; form-action 'none'"

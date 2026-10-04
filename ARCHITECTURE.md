@@ -127,7 +127,7 @@ API Request (Web App)
 - **Strict Read-Only Enforcement:** Only `SELECT` statements are executed (governed pipeline `services/query_gateway.py`).
 - **Connection Flags:** `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` + `SET ROLE sql_readonly_role` (see `SECURITY.md` least-privilege).
 - **Query Safety:** AST validation (`sql_safety_checker.py`), parameterized queries via SQLAlchemy; auto-LIMIT, cost/timeout/byte guards.
-- **CORS & Headers:** whitelisted `CORS_ORIGINS` (shared with CSRF `csrf.py`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (frame-ancestors none), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-*`, `Strict-Transport-Security: preload` (nginx + FastAPI, authoritative at `nginx/nginx.conf:117`).
+- **CORS & Headers:** whitelisted `CORS_ORIGINS` (shared with CSRF `csrf.py`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (frame-ancestors none), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-*`, `Strict-Transport-Security: preload` (nginx + FastAPI, authoritative at `nginx/nginx.conf:129`).
 
 ### Policy Enforcement (OPA Integration)
 
