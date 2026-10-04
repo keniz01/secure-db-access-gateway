@@ -1,6 +1,6 @@
 # Web App — Secure DB Access Gateway UI
 
-React 19 + Vite + TypeScript SPA. Served through the nginx TLS edge (`https://localhost:8443`) in Docker; dev server runs on `http://localhost:5173` via Vite.
+React 19 + Vite + TypeScript SPA. Compose builds the production bundle and serves it as static files behind the nginx TLS edge (`https://localhost:8443`). The Vite dev server is available separately for hot reload.
 
 ## Auth model
 - Auth is httpOnly cookie JWT (BFF). Browser never stores raw JWT; `localStorage` holds only the `app_jwt_exists` flag and non-sensitive `user` profile metadata (id/email/name/role — no token; `src/services/auth-service.tsx:19-44`).
@@ -14,10 +14,10 @@ React 19 + Vite + TypeScript SPA. Served through the nginx TLS edge (`https://lo
 
 ```bash
 npm install
-npm run dev        # Vite on 5173 (proxied via nginx :8443 when using docker compose)
+npm run dev        # Vite on http://localhost:5173 for standalone development
 ```
 
-Docker (repo root): `docker compose up --build` (nginx, web_app, auth0_api, sql_query_api, postgres, creds-rotator, redis, opa, otel-lgtm)
+Docker (repo root): `docker compose up --build` (nginx, web_app, auth0_api, sql_query_api, postgres, creds-rotator, redis, opa, otel-lgtm). Open `https://localhost:8443`; the web app container serves only the compiled assets on the internal Compose network.
 
 ## Scripts (per AGENTS.md)
 
@@ -28,8 +28,8 @@ Docker (repo root): `docker compose up --build` (nginx, web_app, auth0_api, sql_
 
 ## Env
 
-- `VITE_API_BASE_URL` (default `https://localhost:8443` in `docker-compose.yml:288`, prod `https://app.secure-db-access-gateway.org` in `docker-compose.prod.yml:82`)
-- `VITE_SQL_GRAPHQL_BASE_URL` (default `https://localhost:8443/api/graphql`)
+- `VITE_API_BASE_URL` (baked into the bundle at image build time; defaults to `https://localhost:8443`)
+- `VITE_SQL_GRAPHQL_BASE_URL` (baked into the bundle at image build time; defaults to `https://localhost:8443/api/graphql`)
 
 ## Security notes
 - Do not store JWT in `localStorage`; use httpOnly cookie flow.

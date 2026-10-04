@@ -76,8 +76,5 @@ services:
 
   web_app:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/web-app:${IMAGE_TAG:-latest}
-    # The SPA is served through the nginx TLS edge; no host port for the dev server.
+    # The image serves the compiled SPA; only the nginx TLS edge is host-published.
     ports: !override []
-    environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-https://app.secure-db-access-gateway.org}
-      VITE_SQL_GRAPHQL_BASE_URL: ${VITE_SQL_GRAPHQL_BASE_URL:-https://app.secure-db-access-gateway.org/api/graphql}

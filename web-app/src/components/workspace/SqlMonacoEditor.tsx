@@ -1,9 +1,22 @@
 import { useRef, useCallback, useEffect } from 'react';
-import Editor, { type OnMount } from '@monaco-editor/react';
+import Editor, { loader, type OnMount } from '@monaco-editor/react';
+import EditorWorker from 'monaco-editor/editor/editor.worker?worker';
+import * as monaco from 'monaco-editor/editor/editor.api';
 import type { editor } from 'monaco-editor';
 import type { IDisposable } from 'monaco-editor';
+import 'monaco-editor/languages/definitions/sql/register';
 import type { SchemaTable } from '../dashboard/SchemaBrowser';
 import { createSqlCompletionProvider } from './SqlCompletionProvider';
+
+const monacoGlobal = globalThis as typeof globalThis & {
+  MonacoEnvironment?: { getWorker: () => Worker };
+};
+
+monacoGlobal.MonacoEnvironment = {
+  getWorker: () => new EditorWorker(),
+};
+
+loader.config({ monaco });
 
 interface SqlMonacoEditorProps {
   value: string;
