@@ -44,7 +44,10 @@ rotate_tenant() {
 
     # Generate new password (32 bytes, base64, URL-safe)
     local new_pass
-    new_pass=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-48)
+    if ! new_pass=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-48) || [[ -z "${new_pass}" ]]; then
+        log "ERROR: Failed to generate a non-empty password for ${tenant_id}/${role_name}"
+        return 1
+    fi
 
     # Export for psql
     export PGHOST="${host}"

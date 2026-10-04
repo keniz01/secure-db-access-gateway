@@ -163,9 +163,7 @@ services:
         condition: service_started
     volumes:
       - creds_data:/creds:ro
-      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - ${TENANT_DATABASES_CONFIG_SOURCE:-./config/tenant_databases.json}:/config/tenant_databases.json:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/readyz', timeout=3).read()"]
       interval: 10s
@@ -212,15 +210,15 @@ services:
     restart: unless-stopped
 
   creds-rotator:
-    image: postgres:16-alpine
-    command: ["/bin/sh", "/rotate_creds.sh", "--loop"]
+    image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/creds-rotator:${IMAGE_TAG:-local}
+    command: ["/bin/bash", "/rotate_creds.sh", "--loop"]
     environment:
       CONFIG_FILE: /config/tenant_databases.json
       CREDS_DIR: /creds
       ADMIN_PASSWORD_FILE: /run/secrets/pg_rotator_admin_pass
     volumes:
       - ./sql_query_api/scripts/rotate_creds.sh:/rotate_creds.sh:ro
-      - ./config/tenant_databases.json:/config/tenant_databases.json:ro
+      - ${TENANT_DATABASES_CONFIG_SOURCE:-./config/tenant_databases.json}:/config/tenant_databases.json:ro
       - creds_data:/creds
     networks:
       - backend
@@ -239,15 +237,16 @@ services:
     restart: unless-stopped
 
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:0.8.0-pg16@sha256:a132765ec351c65111b5b675928a3a0515a466a40f97277329db8b8209ad8bc9
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-analysis}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - backend
+    ports: !override []
     expose:
       - "5432"
     healthcheck:
@@ -260,6 +259,9 @@ services:
     cap_drop:
       - ALL
     cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
       - SETGID
       - SETUID
 
@@ -291,7 +293,7 @@ networks:
     name: gateway-backend
     driver: bridge
     # Note: not `internal: true` — sql_query_api needs egress to
-    # host.docker.internal:5432 (Postgres) and openrouter.ai, and OPA
+    # openrouter.ai, and OPA
     # needs egress for bundle fetches (S3/GCS). Isolation is via
     # network membership (web_app/frontend cannot reach backend) rather
     # than blocking all external egress.

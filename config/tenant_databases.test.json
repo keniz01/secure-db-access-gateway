@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "tenants": {
+    "dast-test": {
+      "databases": {
+        "default": {
+          "credential_mode": "rotated",
+          "role_name": "analytics",
+          "host": "postgres",
+          "port": 5432,
+          "db_name": "analysis",
+          "data_schema": "music",
+          "metadata_schema": "meta",
+          "rotation": {
+            "enabled": false,
+            "interval_seconds": 86400
+          }
+        }
+      }
+    }
+  },
+  "rotation": {
+    "admin_user": "rotator_admin",
+    "admin_password_file": "/run/secrets/pg_rotator_admin_pass"
+  }
+}
