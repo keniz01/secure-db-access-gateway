@@ -58,6 +58,8 @@ def setup_cors_middleware(app: FastAPI):
 
     # Security headers middleware — iron-clad per OWASP ASVS 14.4 + CSP Cheat Sheet
     # CSP is authoritative at nginx in prod, but FastAPI also emits it for direct dev (uvicorn) and tests.
+    # The nginx edge hides this copy (proxy_hide_header) in prod, so this string
+    # must stay byte-identical to nginx/nginx.conf:132 — ci.yml fails if they drift.
     @app.middleware("http")
     async def add_security_headers(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]

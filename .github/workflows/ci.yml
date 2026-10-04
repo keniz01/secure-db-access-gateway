@@ -123,24 +123,49 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
-      - name: Verify no served CSP allows unsafe script sources
+      - name: Set up Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
+        with:
+          python-version: "3.12"
+      - name: Install validator dependency
+        run: python -m pip install --disable-pip-version-check "pyyaml==6.0.3"
+
+      - name: Verify served CSP script-src and edge/app header parity
         run: |
           set -euo pipefail
-          # .github/zap/baseline-rules.tsv ignores rule 10055, which covers every
-          # CSP sub-alert including `script-src unsafe-inline`. That suppression
-          # would equally hide a policy widened to 'unsafe-inline' or *, so it
-          # needs a control of its own: fail unless every served policy keeps
-          # script-src exactly 'self' or 'none'. Two guards keep it honest - each
-          # file must yield at least one 'script-src <value>' match, and an empty
-          # overall match fails as well - so a reformatted or renamed directive
-          # breaks the build instead of making the allowlist prove nothing.
-          # The file list is derived, not hand-maintained: a fourth served policy
-          # (new service, nginx include, vite config) changes the derived set and
-          # fails here, so it has to be reviewed rather than silently escaping
-          # the check. It is compared against expected_files, then every file in
-          # the derived set is what gets checked below.
+          # Two guards on what the apps and the edge agree to serve.
+          #
+          # 1. script-src. .github/zap/baseline-rules.tsv ignores rule 10055, which
+          #    covers every CSP sub-alert including `script-src unsafe-inline`. That
+          #    suppression would equally hide a policy widened to 'unsafe-inline' or
+          #    *, so it needs a control of its own: fail unless every served policy
+          #    keeps script-src exactly 'self' or 'none'. Two guards keep it honest -
+          #    each file must yield at least one 'script-src <value>' match, and an
+          #    empty overall match fails as well - so a reformatted or renamed
+          #    directive breaks the build instead of making the allowlist prove
+          #    nothing. The file list is derived, not hand-maintained: a fourth
+          #    served policy (new service, nginx include, vite config) changes the
+          #    derived set and fails here, so it has to be reviewed rather than
+          #    silently escaping the check. It is compared against expected_files,
+          #    then every file in the derived set is what gets checked below.
+          # 2. parity. Every proxy location hides the upstream copy of the nine
+          #    mirrored headers, so a value changed in only one definition would
+          #    be invisible in production while still being served by direct dev
+          #    and test runs - compare nginx's add_header value against each
+          #    app's instead of trusting them to stay identical: all nine for
+          #    auth0_api, and all but its CSP for sql_query_api, whose stricter
+          #    default-src 'none' policy is the one it actually serves (nginx
+          #    never proxies that service; GraphQL is reached through the
+          #    auth0_api BFF) and is therefore expected to differ. Hiding itself
+          #    is checked behaviourally: the header assertion in zap-dast probes
+          #    all three proxy locations, so a dropped proxy_hide_header fails
+          #    there rather than resting on this value comparison. Cache-Control
+          #    is not mirrored by the apps, so the edge's no-store is the only
+          #    value that exists.
           # This lives in the exception-policy job rather than zap-dast so the
-          # backstop outlives a refactor or removal of the DAST stack.
+          # backstop outlives a refactor or removal of the DAST stack, and after
+          # Set up Python so it runs on the same pinned interpreter as the checks
+          # below it.
           expected_files="auth0_api/app/middleware/setup.py
           nginx/nginx.conf
           sql_query_api/app_factory.py"
@@ -181,13 +206,74 @@ jobs:
                 ;;
             esac
           done <<< "$directives"
+          python3 - <<'PYEOF'
+          import re
+          import sys
 
-      - name: Set up Python
-        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
-        with:
-          python-version: "3.12"
-      - name: Install validator dependency
-        run: python -m pip install --disable-pip-version-check "pyyaml==6.0.3"
+          MIRRORED = [
+              "Strict-Transport-Security",
+              "X-Content-Type-Options",
+              "X-Frame-Options",
+              "Content-Security-Policy",
+              "Referrer-Policy",
+              "Permissions-Policy",
+              "Cross-Origin-Opener-Policy",
+              "Cross-Origin-Embedder-Policy",
+              "Cross-Origin-Resource-Policy",
+          ]
+
+          def read(path):
+              with open(path, encoding="utf-8") as handle:
+                  return handle.read()
+
+          def value_of(source, name):
+              joined = re.search(r'response\.headers\["%s"\] = \((.*?)\n\s*\)' % re.escape(name), source, re.S)
+              if joined:
+                  return "".join(re.findall(r'"([^"]*)"', joined.group(1)))
+              single = re.search(r'response\.headers\["%s"\] = "([^"]*)"' % re.escape(name), source)
+              if single:
+                  return single.group(1)
+              return None
+
+          nginx = read("nginx/nginx.conf")
+          # Both FastAPI apps mirror the edge's set so they stay correct when
+          # reached directly (uvicorn in dev, tests), so both are held to the
+          # edge's values. sql_query_api's CSP is the one deliberate exception:
+          # nginx never proxies that service, so its stricter default-src 'none'
+          # policy is the one it actually serves, and only its other headers are
+          # expected to match.
+          APPS = [
+              ("auth0_api/app/middleware/setup.py", MIRRORED),
+              ("sql_query_api/app_factory.py", [h for h in MIRRORED if h != "Content-Security-Policy"]),
+          ]
+          sources = {path: read(path) for path, _ in APPS}
+          missing = []
+          drifted = []
+          checked = 0
+          for name in MIRRORED:
+              edge = re.search(r'add_header %s (?:"([^"]+)"|(\S+)) always;' % re.escape(name), nginx)
+              if edge:
+                  edge_value = edge.group(1) or edge.group(2)
+              else:
+                  missing.append("nginx/nginx.conf defines no add_header %s" % name)
+                  continue
+              for path, names in APPS:
+                  if name not in names:
+                      continue
+                  checked += 1
+                  app_value = value_of(sources[path], name)
+                  if app_value is None:
+                      missing.append("%s sets no %s" % (path, name))
+                  elif edge_value != app_value:
+                      drifted.append("%s: edge=%r, %s=%r" % (name, edge_value, path, app_value))
+          for problem in missing + drifted:
+              print("::error::%s" % problem)
+          if missing or drifted:
+              print("::error::the edge hides every mirrored header (proxy_hide_header), so only nginx's value reaches clients; the definitions must not drift apart")
+              sys.exit(1)
+          print("%d app/edge header values match across nginx/nginx.conf and %s" % (checked, ", ".join(path for path, _ in APPS)))
+          PYEOF
+
       - name: Validate security exception register
         run: python scripts/check-security-exceptions.py
       - name: Negative tests - the gate must reject every downgrade shape
@@ -748,33 +834,90 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.test.yml logs --tail=60
           exit 1
 
-      - name: Assert the edge serves one cache and one resource-policy header
+      - name: Assert the edge serves exactly one copy of every security header
         run: |
           set -euo pipefail
-          # 10015 and 10049 are suppressed, so nothing else in the report would
-          # notice a second, cacheable Cache-Control travelling beside the
-          # server-level no-store - the failure mode proxy_hide_header exists
-          # to prevent, and one an upstream could reintroduce at any time. 90004
-          # is fixed at the source instead of suppressed, so assert that value
-          # here too. Both headers must appear exactly once on an SPA response
-          # and on an authenticated API response.
-          check_header() {
-            path="$1"; header="$2"; expected="$3"
+          # Every header checked here is set at server level and mirrored by the
+          # apps for their direct dev/test runs, so before proxy_hide_header the
+          # edge served two copies of eight of them (measured on /api/login:
+          # CSP, HSTS, XCTO, XFO, Referrer-Policy, Permissions-Policy, COOP and
+          # COEP each doubled; CORP and Cache-Control were already hidden).
+          # ZAP cannot police that: 10015 and 10049 are suppressed, so nothing
+          # else would notice a second, cacheable Cache-Control appearing beside
+          # the server-level no-store - the failure proxy_hide_header exists to
+          # prevent, and one an upstream could reintroduce at any time - and
+          # 90004 is fixed at the source rather than suppressed, so its value is
+          # pinned here too.
+          # What this proves: exactly one copy of each of the ten headers, with
+          # every value pinned - CSP included, because the parity check only
+          # proves nginx matches auth0_api and the script-src allowlist only
+          # guards that one directive, so dropping frame-ancestors 'none' would
+          # otherwise pass every gate here.
+          # Three paths, one request each, covering all three proxy locations:
+          # / (location /, the SPA, no rate limit), /api/health (location /api,
+          # 60r/m burst 20 - the location that must not be skipped, since a
+          # proxy_hide_header dropped there would go unnoticed otherwise) and
+          # /api/login (the auth location, 5r/m burst 3 nodelay 429). One request
+          # per path keeps this step from draining the bursts, auth_limit above
+          # all, and ZAP scans immediately after it.
+          # The status guard rejects 429 and the edge's own 5xx, because those
+          # are nginx answering for itself - limit_req writes an HTML page of its
+          # own, carrying one copy of every server-level header - or failing to
+          # reach an upstream, so neither would exercise proxy_hide_header while
+          # still satisfying every count below. Anything else here is proxied and
+          # gets counted: 200 from the SPA and from /api/health, 302 from
+          # /api/login in dev, and in the DAST job 500 from that same route -
+          # AUTH0_DOMAIN=dast.ci.invalid is reserved and cannot resolve, authlib
+          # fetches the discovery document before it can build the redirect, and
+          # auth_routes.py turns that failure into a 500. The 500 is proxied all
+          # the same, so its headers are exactly the ones this step asserts.
+          check_path() {
+            local path="$1" headers status spec header expected count value
+            local specs=(
+              "Cache-Control|no-store"
+              "Cross-Origin-Resource-Policy|same-origin"
+              "X-Content-Type-Options|nosniff"
+              "X-Frame-Options|DENY"
+              "Cross-Origin-Opener-Policy|same-origin"
+              "Cross-Origin-Embedder-Policy|require-corp"
+              "Referrer-Policy|strict-origin-when-cross-origin"
+              "Strict-Transport-Security|max-age=31536000; includeSubDomains; preload"
+              "Permissions-Policy|camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
+              "Content-Security-Policy|default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 https://localhost:5173 https://openrouter.ai; img-src 'self' data:; font-src 'self' data:; upgrade-insecure-requests"
+            )
             headers="$(curl -sk --max-time 5 -D- -o /dev/null "https://localhost:8443${path}")"
-            count="$(printf '%s\n' "$headers" | grep -ic "^${header}:" || true)"
-            value="$(printf '%s\n' "$headers" | grep -i "^${header}:" | head -n 1 \
-              | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//')"
-            if [ "$count" != "1" ] || [ "$value" != "$expected" ]; then
-              echo "::error::${path} ${header}: count=${count} value='${value}', expected exactly one '${expected}'"
-              printf '%s\n' "$headers"
-              return 1
-            fi
-            echo "OK ${path} ${header}: ${value}"
+            status="$(printf '%s\n' "$headers" | sed -n '1s|^HTTP/[^ ]* \([0-9][0-9][0-9]\).*|\1|p' | tr -d '\r')"
+            case "$status" in
+              ""|429|502|503|504)
+                echo "::error::${path}: HTTP status '${status}' is the edge's own answer (limit_req, or an upstream it could not reach), not a proxied response; the headers counted on it would be nginx's without proxy_hide_header in play"
+                printf '%s\n' "$headers"
+                return 1 ;;
+            esac
+            # Both pipelines end in `|| true`: with pipefail an absent header
+            # would otherwise kill the script before the count check below could
+            # name it, failing the job with no annotation of what was missing.
+            for spec in "${specs[@]}"; do
+              header="${spec%%|*}"
+              expected="${spec#*|}"
+              count="$(printf '%s\n' "$headers" | grep -ic "^${header}:" || true)"
+              value="$(printf '%s\n' "$headers" | grep -i "^${header}:" | head -n 1 \
+                | sed -e 's/^[^:]*:[[:space:]]*//' -e 's/\r$//' || true)"
+              if [ "$count" != "1" ]; then
+                echo "::error::${path} ${header}: count=${count}, expected exactly one"
+                printf '%s\n' "$headers"
+                return 1
+              fi
+              if [ "$value" != "$expected" ]; then
+                echo "::error::${path} ${header}: value='${value}', expected '${expected}'"
+                printf '%s\n' "$headers"
+                return 1
+              fi
+              echo "OK ${path} ${header}: ${value}"
+            done
           }
-          check_header "/" "Cache-Control" "no-store"
-          check_header "/" "Cross-Origin-Resource-Policy" "same-origin"
-          check_header "/api/login" "Cache-Control" "no-store"
-          check_header "/api/login" "Cross-Origin-Resource-Policy" "same-origin"
+          for path in / /api/health /api/login; do
+            check_path "$path"
+          done
 
       - name: Run OWASP ZAP Baseline Scan
         uses: zaproxy/action-baseline@2b5fc7f98d837319798ab7f128ea50b7d40563b6 # v0.14.0

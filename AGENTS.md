@@ -75,7 +75,7 @@ Run checks from inside the service dir with its venv (e.g. `sql_query_api/.venv/
 
 - Rate limits: `api_limit` (60r/m burst 20), `auth_limit` (5r/m burst 3 for login/auth/logout). IP-based only; no per-user granularity.
 - `/nginx-health` on port 80 (plaintext) is the only open HTTP endpoint; it just returns `OK`.
-- HSTS (`preload`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (`frame-ancestors 'none'`), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Embedder/Resource-Policy` all enforced at `nginx/nginx.conf:117` and mirrored in FastAPI for dev.
+- HSTS (`preload`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy` (`frame-ancestors 'none'`), `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener/Embedder/Resource-Policy` all enforced at `nginx/nginx.conf:129` and mirrored in FastAPI for dev; the edge hides the upstream copies (`proxy_hide_header`) so exactly one value of each is served.
 - Correlation ID headers (`X-Correlation-ID`, `X-Request-ID`) are charset/length-validated at the nginx boundary; spoofable headers (`X-User-*`, `X-Org-*`, `X-Tenant-*`) are stripped by both nginx and RBAC middleware.
 
 ### DoS / resource exhaustion

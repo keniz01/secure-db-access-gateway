@@ -50,10 +50,10 @@
 #   Only the style-src sub-alert fired. Inline styles are an accepted risk,
 #   recorded as W-3 in THREAT_MODEL.md. script-src - the half that turns an
 #   injected tag into execution - is exactly 'self' or 'none' in all three
-#   served policies, and the "Verify no served CSP allows unsafe script sources"
-#   step in the zap-dast job fails the build if any of them widens, so that half
-#   is not left to this suppression.
-10055	IGNORE	Only style-src unsafe-inline fired, an accepted risk (THREAT_MODEL W-3); script-src stays exactly 'self' or 'none' and a CI assertion in the zap-dast job blocks any widening.
+#   served policies, and the "Verify served CSP script-src and edge/app header
+#   parity" step in the security-exception-policy job fails the build if any of
+#   them widens, so that half is not left to this suppression.
+10055	IGNORE	Only style-src unsafe-inline fired, an accepted risk (THREAT_MODEL W-3); script-src stays exactly 'self' or 'none' and a CI assertion in the security-exception-policy job blocks any widening.
 #
 # 10109 - Modern Web Application (Informational)
 #   Detection that the target looks like a modern SPA, raised because links use

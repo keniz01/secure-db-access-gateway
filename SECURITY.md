@@ -74,10 +74,10 @@ CORS_ORIGINS="https://yourdomain.com,https://www.yourdomain.com"
 
 ### 3. HTTP Security Headers ✅
 
-#### Response Headers (authoritative at `nginx/nginx.conf:117`, mirrored in FastAPI for dev)
+#### Response Headers (authoritative at `nginx/nginx.conf:129`, mirrored in FastAPI for dev; the edge hides the upstream copies so exactly one value of each is served)
 - **X-Content-Type-Options: nosniff** - Prevents MIME type sniffing
 - **X-Frame-Options: DENY** - Prevents clickjacking (supplemented by `Content-Security-Policy: frame-ancestors 'none'`)
-- **Content-Security-Policy** - BFF (`auth0_api/app/middleware/setup.py:68`): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 ...; upgrade-insecure-requests`; API (`sql_query_api/app_factory.py:83`): `default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`; the edge serves the BFF policy (`nginx/nginx.conf:120`)
+- **Content-Security-Policy** - BFF (`auth0_api/app/middleware/setup.py:70`): `default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 ...; upgrade-insecure-requests`; API (`sql_query_api/app_factory.py:87`): `default-src 'none'; script-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`; the edge serves the BFF policy (`nginx/nginx.conf:132`)
 - **Strict-Transport-Security: max-age=31536000; includeSubDomains; preload** - Enforces HTTPS (1 year, preload)
 - **Referrer-Policy: strict-origin-when-cross-origin**, **Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()**, **Cross-Origin-Opener-Policy: same-origin**, **Cross-Origin-Embedder-Policy: require-corp**, **Cross-Origin-Resource-Policy: same-origin**
 
