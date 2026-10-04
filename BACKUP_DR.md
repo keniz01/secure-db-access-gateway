@@ -11,9 +11,9 @@ data loss as SEV1. The drill below makes it a checked, repeatable procedure.
 What is backed up:
 
 - **Tenant databases** — every unique PostgreSQL target derived from the same
-  `TENANT_DATABASES_JSON`/`_FILE` config the gateway uses. This covers the data
-  and, because the gateway's audit logging writes into the governed tenant DBs,
-  the audit trail is included. Nothing extra to enable.
+  `TENANT_DATABASES_JSON`/`_FILE` config the gateway uses. Nothing extra to
+  enable. (Query audit events are *not* in these dumps: they are written to
+  the structured-log sink — stdout/OTel — not to the tenant databases.)
 - **Gateway code + edge config** — rebuilt from the git repo and `docker
   compose` files; the running images are pinned deployment tags (`git log` /
   `docker image ls` has the tag). No backup needed: regenerate from source.
@@ -45,7 +45,7 @@ GATEWAY_ENV_FILE=/etc/gateway/gateway.env BACKUP_DIR=/opt/secure-db-access-gatew
 - **Read replicas**: omit by default; `--include-replicas` backs up replicas
   when you want to offload dump load.
 - `--dry-run` prints the target plan without dumping — CI uses this to ensure
-  the script always matench the deployed config.
+  the script always matches the deployed config.
 - Any failure sets exit code 1 and opens an `incident:backup` issue.
 
 ### Scheduling

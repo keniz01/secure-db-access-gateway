@@ -29,7 +29,7 @@ document — the document is expected to drift with the system.
                              ▼
                         otel-lgtm (Grafana/Loki/Prometheus/Tempo Observability)
 ```
-*Note: `:5173` host-mapped only in dev (`docker-compose.yml`); prod (`docker-compose.prod.yml:43`) serves SPA solely via nginx `:443` (`ports: !override []`).*
+*Note: `:5173` host-mapped only in dev (`docker-compose.yml:293`); prod (`docker-compose.prod.yml:80`) serves SPA solely via nginx `:443` (`ports: !override []`).*
 
 - **External dependencies** (owned by third parties): Auth0 (identity),
   AI provider (OpenRouter/Gemini — used for the optional AI greeting and
