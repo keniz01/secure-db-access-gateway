@@ -1,6 +1,8 @@
 # Docker Setup
 
-This project supports running the entire application stack using Docker Compose, with PostgreSQL running locally.
+This project runs the application and its tenant PostgreSQL database in Docker
+Compose. PostgreSQL is available to host-side tools on loopback port `55432`
+and to backend containers at `postgres:5432`.
 
 ## Prerequisites
 
@@ -16,9 +18,9 @@ This project supports running the entire application stack using Docker Compose,
    # mkcert-signed TLS certificate into certs/ (requires brew install mkcert).
    ```
 2. **Fill in real values in `.env`** — Auth0 credentials, `APP_SECRET_KEY`
-   (generate with `openssl rand -hex 32`), AI keys, the tenant database
-   mapping and policy JSON (single line each). See the comments in
-   `.env.example`.
+   (generate with `openssl rand -hex 32`), AI keys, tenant mapping and policy
+   JSON (single line each). Re-run bootstrap after tenant mapping changes.
+   See `.env.example` for details.
 
 3. **Run the application stack**:
    ```bash
@@ -31,8 +33,25 @@ This will start:
 - SQL Query API on port 8002 (internal, via auth0_api)
 - Web App on port 5173 (dev, via nginx; not host-exposed in prod `docker-compose.prod.yml:43`)
 - Redis on 6379 (expose, session store), OPA on 8181 (expose), otel-lgtm on 3000/4317/4318/9090
+- PostgreSQL 16 with pgvector on `127.0.0.1:55432` (host tools only; internal service name `postgres`)
 
-**Note**: PostgreSQL is external via `host.docker.internal:5432` (see `.env.example` `DATABASE_URL` / `TENANT_DATABASES_JSON`), not a compose service.
+PostgreSQL uses a named Docker volume, PostgreSQL 16, and pgvector 0.8.0. The
+published host port is bound to `127.0.0.1` only; production Compose removes
+that port mapping. Host-side tools use `DATABASE_URL` at `localhost:55432`,
+while the tenant mapping mounted at `/config/tenant_databases.json` uses the
+Docker service hostname `postgres`.
+
+The local bootstrap creates `secrets/tenant_databases.local.json` from the
+tenant IDs and database IDs in `.env`, configures it for rotated, read-only
+`analytics` credentials, and points Compose at that ignored file. Shared
+deployments continue to use `config/tenant_databases.json` or an explicitly
+configured `TENANT_DATABASES_CONFIG_SOURCE`.
+
+The local migration archive includes only the `music` tables except
+`recording_artist`, plus `meta.schema_embeddings`. Since selected tables have
+foreign keys referencing the excluded table, only those two foreign keys are
+omitted; all other table constraints and data are restored. Migration backups
+are kept outside the repository with owner-only permissions.
 
 **TLS**: `scripts/bootstrap-dev.sh` generates a certificate signed by the
 mkcert local CA (`certs/web_tls_cert.pem` / `certs/web_tls_key.pem`). The first
@@ -58,7 +77,9 @@ stores session cookies with the `Secure` flag.
 ### SQL Query API
 - **Build**: context `.` / `sql_query_api/Dockerfile`
 - **Port**: 8002
-- **Secrets**: Tenant database mappings and access policies injected as environment variables (`TENANT_DATABASES_JSON`, `POLICY_POLICIES_JSON`) from `.env`
+- **Configuration**: Rotated tenant database mappings mounted from
+  `TENANT_DATABASES_CONFIG_SOURCE`; access policies are injected as
+  `POLICY_POLICIES_JSON` from `.env`
 
 ### Web App
 - **Build**: ./web-app
@@ -85,9 +106,10 @@ env file injected by Compose:
 - **Production**: `/etc/gateway/gateway.env` (provisioned manually, `chmod 600`)
 - Compose injects it into `auth0_api` and `sql_query_api` via `env_file`
   (override the path with `GATEWAY_ENV_FILE`)
-- Exception: `docker compose up` additionally needs the gitignored
-  `secrets/pg_rotator_admin_pass.txt`, which `creds-rotator` mounts
-  (`PG_ROTATOR_ADMIN_PASS_FILE` overrides the path). No script creates it.
+- `scripts/bootstrap-dev.sh` creates the gitignored
+  `secrets/pg_rotator_admin_pass.txt` if it is missing, with mode `0600`.
+  `PG_ROTATOR_ADMIN_PASS_FILE` overrides its path; existing secret files are
+  never overwritten.
 - Both services read values with the shared `read_secret` loader
   (`shared/shared_secrets`), which checks the env var first and then an
   optional `NAME_FILE` path for orchestrators that mount secrets as files
@@ -143,7 +165,8 @@ docker compose up --build
 
 1. Host basics:
    - Docker (Compose v2, or `docker-compose` plugin) and a deploy user in the
-     `docker` group. Postgres runs externally (as in dev).
+     `docker` group. The production Compose stack includes PostgreSQL; plan
+     database backups and volume recovery independently of application images.
    - A checkout of this repo at e.g. `/opt/secure-db-access-gateway` writable
      by the deploy user (the workflow `git fetch` + `git checkout` it).
    - TLS certs in `certs/` on the host: either run
@@ -230,7 +253,7 @@ docker compose up --build
 The Docker setup creates a complete development environment with:
 
 - **Nginx reverse proxy / TLS edge** – serves SPA and proxies `https://localhost:8443/api` to auth0_api; auth0_api BFF holds JWT server-side and proxies GraphQL to sql_query_api
-- **Backend APIs** with proper networking (PostgreSQL external via `host.docker.internal`)
+- **Backend APIs** with proper networking (PostgreSQL is on the private Compose backend network)
 - **Redis + OPA + otel-lgtm** sidecars
 - **Frontend** served with hot reload (dev) / via nginx (prod)
 - Env-file secret management

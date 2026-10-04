@@ -5,6 +5,7 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
+        exclude: ^docker-compose(\.test|\.prod)?\.yml$
       - id: check-json
       - id: check-added-large-files
         args: [--maxkb=1000]
@@ -29,3 +30,9 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+      - id: docker-compose-config
+        name: docker compose config
+        entry: bash -c 'docker compose config -q && docker compose -f docker-compose.yml -f docker-compose.test.yml config -q && docker compose -f docker-compose.yml -f docker-compose.prod.yml config -q'
+        language: system
+        files: ^docker-compose.*\.yml$
+        pass_filenames: false

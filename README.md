@@ -6,6 +6,7 @@ The project is structured as a three-part system:
 - `web-app/` — React + TypeScript UI for schema browsing, queries, and authentication
 - `sql_query_api/` — FastAPI + Strawberry GraphQL API for validated read-only SQL execution
 - `auth0_api/` — Auth0 session and user orchestration layer with org-aware claims and optional AI greeting support
+- `postgres` — PostgreSQL 16 + pgvector tenant database service in Docker Compose
 
 ## What’s included
 
@@ -114,6 +115,7 @@ This starts:
 - Redis: redis://redis:6379/0 (session store, mandatory in prod)
 - OPA: http://opa:8181 (expose only, policy evaluation)
 - OTEL/LGTM stack: http://localhost:3000
+- PostgreSQL 16 + pgvector: `localhost:55432` for host-side tools and `postgres:5432` inside Compose
 
 Browse the web app at **https://localhost:8443** — the SPA is served through the
 TLS edge so auth cookies (httpOnly + Secure) work end-to-end. The Vite dev
@@ -164,11 +166,13 @@ the path with `GATEWAY_ENV_FILE`), and the shared `read_secret` loader
 (`shared/shared_secrets`) reads the values, falling back to an optional
 `NAME_FILE` path for orchestrators that mount secrets as files.
 
-**One prerequisite the bootstrap does not cover**: `docker compose up` also
-needs `secrets/pg_rotator_admin_pass.txt`, a gitignored file that the
-`creds-rotator` service mounts (see `.env.example` for `PG_ROTATOR_ADMIN_PASS`
-and the `PG_ROTATOR_ADMIN_PASS_FILE` override). `scripts/bootstrap-dev.sh`
-does not create it, and `docker compose config` will not flag it as missing.
+The bootstrap creates `secrets/pg_rotator_admin_pass.txt` with owner-only
+permissions if it is missing. It also generates the ignored
+`secrets/tenant_databases.local.json` from `TENANT_DATABASES_JSON`, including
+the Docker host and rotated `analytics` role, then points Compose at that file.
+It never overwrites an existing rotator secret. Re-run it after changing tenant
+mappings. `TENANT_DATABASES_CONFIG_SOURCE` can be set explicitly for shared or
+production configurations.
 
 ```dotenv
 # .env (gitignored; real values) - see .env.example for full list
@@ -206,8 +210,9 @@ full details.
 
 - **Image builds**: `.github/workflows/docker.yml` and `.github/workflows/deploy.yml`
   call `.github/workflows/docker-builder.yml` at a reviewed immutable SHA. It
-  builds all three services by digest, verifies signed provenance, then promotes
-  tags on `main` (`edge` + SHA) and `v*` releases (versioned + `latest`).
+  builds all four images (including the credential rotator) by digest, verifies
+  signed provenance, then promotes tags on `main` (`edge` + SHA) and `v*`
+  releases (versioned + `latest`).
 - **Deploys**: `.github/workflows/deploy.yml` SSHes to the host, checks out the
   deployed commit, `docker login`s with a read-scoped PAT, and runs
   `docker compose ... up -d --no-build --wait` — failing if any healthcheck
@@ -222,7 +227,7 @@ This application is designed around a read-only gateway with defense-in-depth:
 - **SQL:** only `SELECT`/`WITH` accepted (`clean_sql` rejects non-SELECT, no `SELECT *` synthesis), DDL/DML blocked by `AstSqlAnalyzer`, per-query `statement_timeout`/`lock_timeout` + `SET ROLE gateway_readonly_user` at DB
 - **Identity:** Auth0 JWT `RS256` verified (`leeway=2s`, `scope` enforced), tenant claim `https://app.secure-db-access-gateway.org/tenant_id` required, `X-User/Org/Tenant` stripped at `nginx` + `RBACMiddleware` (auth-only, no hardcoded `ALLOWED_ROLES`)
 - **Authorization:** OPA bundles (`gateway.rego` `role_hierarchy admin->viewer`, `sod_constraints`, `action` `select` default, deny-precedence, fail-closed on unreachable) or deprecated `POLICY_POLICIES_JSON` fallback (dev only). Every operation resolves `(tenant_id, database_id)` server-side; `database_id="default"` must be explicit per org
-- **Network:** `frontend` (`nginx`, `web_app`, `auth0_api`) + `backend` (`sql_query_api`, `opa`, `redis`, `auth0_api`) segmentation, Redis `requirepass`, `otel-lgtm` `127.0.0.1` only, images pinned (`nginx:1.27`, `redis:7.4`, `opa:1.8.0`), `read_only`/`no-new-privileges`
+- **Network:** `frontend` (`nginx`, `web_app`, `auth0_api`) + `backend` (`sql_query_api`, `postgres`, `creds-rotator`, `opa`, `redis`, `auth0_api`) segmentation, PostgreSQL host port loopback-only, Redis `requirepass`, `otel-lgtm` `127.0.0.1` only, images pinned (`nginx:1.27`, `redis:7.4`, `opa:1.8.0`), `read_only`/`no-new-privileges`
 - **Edge:** `nginx` TLS Mozilla intermediate (`ECDHE`+`TLS1.3`, `session_tickets off`, `client_max_body_size 1m`), HSTS `preload`, `CSP` `frame-ancestors none`, `X-Content-Type-Options nosniff`, rate limits `60r/m` burst 20 / `5r/m` burst 3
 - **Supply chain:** scanner and build Actions SHA-pinned (`scan-action`, `sbom-action`, `trivy-action`, `download-artifact`); blocking `bandit`, `pip-audit` (both services, no suppressions - `ecdsa`/PYSEC-2026-1325 was removed by dropping the unused `python-jose`, not ignored), blocking Grype/Trivy/Syft, `.github/security-exceptions.yml` empty because every control blocks (its last entry, `SEC-EXC-002`, was deleted when ZAP DAST enforcement landed), so a control that cannot block has to be registered with an owner, a reason and an expiry first, builds and CI resolve from `uv.lock` via `uv export --locked`, `npm ci --ignore-scripts` + `audit --audit-level=moderate`
 - **Audit:** `log_audit_event` for `sql_query`/`policy_denied`/`auth_failed`/`schema_introspection` with `query_hash` (raw SQL only if `AUDIT_LOG_RAW_SQL=true`, off in prod), quarterly review via `docs/runbook-access-review.md`

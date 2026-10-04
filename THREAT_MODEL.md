@@ -144,7 +144,7 @@
 |----|--------|--------|-------------|-------------------|-----|
 | P-1 | Superuser credential reuse | **E** | Same creds for app + admin | `creds-rotator` uses separate admin secret | Application uses rotated creds; but `POSTGRES_PASSWORD` is static superuser |
 | P-2 | Missing `SET ROLE` enforcement | **E** | Connection bypasses readonly role | `SQL_READONLY_ROLE` configured per tenant | Not validated; silent fallback |
-| P-3 | Direct DB access bypassing gateway | **E**, **I** | Network path to PostgreSQL from backend network | Backend network `gateway-backend`; no external ports | `host.docker.internal:5432` egress allowed for SQL API — host DB reachable |
+| P-3 | Direct DB access bypassing gateway | **E**, **I** | Network path to PostgreSQL from backend network | PostgreSQL is on the private `gateway-backend` network; host port is loopback-only (`127.0.0.1:55432`) | Compromised backend container can connect directly to PostgreSQL; database role remains read-only and schema-scoped |
 | P-4 | SQL injection in tenant DB | **T** | Malicious query executes | Read-only role; governed pipeline; parameterized queries | None |
 
 ### 2.9 CI/CD & Supply Chain (`.github/workflows/`)
@@ -161,7 +161,7 @@
 
 | ID | Threat | STRIDE | Description | Existing Controls | Gap |
 |----|--------|--------|-------------|-------------------|-----|
-| I-1 | Container escape | **E** | Breakout from SQL API / Auth0 / OPA | `read_only: true`; `cap_drop ALL`; `no-new-privileges`; non-root users | `NET_BIND_SERVICE` cap for nginx; `host.docker.internal` egress |
+| I-1 | Container escape | **E** | Breakout from SQL API / Auth0 / OPA | `read_only: true`; `cap_drop ALL`; `no-new-privileges`; non-root users | `NET_BIND_SERVICE` cap for nginx; backend network reaches PostgreSQL and external services |
 | I-2 | Network lateral movement | **E**, **I** | Compromised service attacks peers | Two networks: `frontend` (web+nginx) and `backend` (apis+redis+opa+pg); web cannot reach backend | Backend services can reach each other freely; no zero-trust mesh |
 | I-3 | Host kernel exploit | **E** | Container → host | Docker default seccomp; `no-new-privileges` | No gVisor/Kata; host kernel shared |
 | I-4 | Image vulnerability | **E** | Base image CVE | `nginx:1.27-alpine`, `redis:7.4-alpine`, `postgres:16-alpine`, `python:3.12-slim`; blocking `pip-audit`, `bandit`, blocking Grype and Trivy filesystem scans | No daily base image rebuild; filesystem scans do not cover the published image contents |

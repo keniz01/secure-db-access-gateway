@@ -114,7 +114,7 @@ else
   # Honour the verdict itself. Treating "the review ran" as "the review
   # approved" meant a diff the reviewer asked to change still committed.
   VERDICT=$(printf '%s\n' "$REVIEW_OUTPUT" \
-    | sed -nE 's/^[[:space:]]*\**[[:space:]]*REVIEW_VERDICT:[[:space:]]*(APPROVE|REQUEST_CHANGES)[[:space:]]*\**[[:space:]]*$/\1/p' \
+    | sed -nE 's/^[[:space:]]*(#{1,6}[[:space:]]+)?[*_`]*[[:space:]]*REVIEW_VERDICT:[[:space:]]*[*_`]*[[:space:]]*(APPROVE|REQUEST_CHANGES)[[:space:]]*[*_`]*[[:space:]]*$/\2/p' \
     | tail -1 || true)
 
   if [ "$VERDICT" = APPROVE ]; then

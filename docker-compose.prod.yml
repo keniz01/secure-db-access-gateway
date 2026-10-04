@@ -42,6 +42,12 @@ services:
       OPA_ENABLED: "true"
       OPA_URL: http://opa:8181
 
+  postgres:
+    ports: !override []
+
+  creds-rotator:
+    image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/creds-rotator:${IMAGE_TAG:-latest}
+
   opa:
     # Prod: hot-reload via bundle with offline-boot fallback.
     # Keep policies/data.json mounts so OPA can start if bundle server

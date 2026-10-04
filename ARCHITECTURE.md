@@ -179,13 +179,14 @@ localhost:8002      → SQL Query API (via auth0_api BFF, not host-exposed)
 opa:8181            → OPA Sidecar (expose only, not host-mapped; docker-compose.yml:108)
 127.0.0.1:3000      → Grafana UI (otel-lgtm, 127.0.0.1-only in compose)
 localhost:4318      → OTLP HTTP receiver
-host.docker.internal:5432 → PostgreSQL (external, not a compose service; see .env.example DATABASE_URL)
+127.0.0.1:55432    → PostgreSQL 16 + pgvector (host tools; Compose service `postgres`)
+postgres:5432       → PostgreSQL on the backend network (SQL gateway and credential rotator)
   + redis:6379      → Redis (session store, docker-compose.yml:7)
 ```
 
 **Network segmentation** (`docker-compose.yml:172`):
 - `frontend` (`gateway-frontend`) — `nginx`, `web_app`, `auth0_api`, `otel-lgtm` (ports exposed)
-- `backend` (`gateway-backend`, `internal: true`) — `sql_query_api`, `opa`, `redis`, `auth0_api`, `otel-lgtm`
+- `backend` (`gateway-backend`) — `sql_query_api`, `postgres`, `creds-rotator`, `opa`, `redis`, `auth0_api`, `otel-lgtm`
 - `auth0_api` bridges both so `web_app` cannot reach `sql_query_api:8002`/`opa:8181`/`redis:6379` even if compromised; `nginx` no longer depends on `sql_query_api` directly (`sql_query_api` is private to BFF).
 
 Containerized deployment is defined in `docker-compose.yml` and documented in `DOCKER_README.md`.

@@ -186,8 +186,9 @@ $C logs --tail=100 web_app               # GraphQL client errors surfaced in the
 **Triage:**
 - Which tenant(s)? (Check `TENANT_DATABASES_JSON` mappings and the failing
   org IDs in logs.)
-- Is SQLite or Postgres affected? (SQLite is file/`mode=ro`; Postgres is an
-  external service `host.docker.internal` or remote connection string.)
+- Is SQLite or Postgres affected? (SQLite is file/`mode=ro`; the local Compose
+  PostgreSQL service is `postgres:5432`; separately hosted targets use their
+  configured host/connection string.)
 - Read-only failure or reachability? A DB that is up but unprivileged fails
   differently than an unreachable DB — check the exact error in logs.
 
@@ -199,8 +200,8 @@ $C logs --tail=100 web_app               # GraphQL client errors surfaced in the
   result cap, lock timeout) already shed load — do not raise them mid-incident.
 
 **Recovery:**
-- Restore DB connectivity (provider-side for Postgres; check
-  `host.docker.internal` / host firewall for local Postgres).
+- Restore DB connectivity (provider-side for remote Postgres; for the local
+  Compose database, check `postgres` health and the `postgres_data` volume).
 - If a DB is corrupted or lost, follow the **backup/restore procedure (R6 →
   `BACKUP_DR.md`)** and restore from the last verified dump — un-validated data
   loss is a SEV1; escalate to L2 immediately.

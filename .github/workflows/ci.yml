@@ -653,6 +653,10 @@ jobs:
           set_env AUTH0_CLIENT_SECRET "$(openssl rand -hex 24)"
           set_env AUTH0_AUDIENCE "https://dast.ci.invalid/api"
           set_env POSTGRES_PASSWORD "$(openssl rand -hex 16)"
+          # DAST does not issue tenant SQL queries; disable rotation in its
+          # dedicated config rather than booting the rotator against a
+          # throwaway database with no provisioned roles.
+          set_env TENANT_DATABASES_CONFIG_SOURCE "./config/tenant_databases.test.json"
           grep -q "^ENVIRONMENT=production" .env
 
       - name: Generate self-signed TLS certificate
@@ -681,6 +685,7 @@ jobs:
       - name: Create throwaway creds-rotator secret
         run: |
           set -euo pipefail
+          umask 077
           # compose refuses to start when this gitignored file is missing. Write
           # it to the runner temp dir and point the overlay at it, so nothing is
           # created inside the repository working tree.
@@ -690,12 +695,8 @@ jobs:
       - name: Start application stack for DAST
         run: |
           set -euo pipefail
-          # Deliberately no --wait: creds-rotator exits non-zero on every start
-          # (rotate_creds.sh needs jq, which postgres:16-alpine does not ship),
-          # and --wait would turn that pre-existing breakage into a gate that
-          # fails for reasons unrelated to DAST. The TLS-edge poll below is the
-          # real readiness gate, and compose already orders startup with
-          # depends_on: service_healthy.
+          # The TLS-edge poll below is the end-to-end readiness gate; Compose
+          # already orders database and observability dependencies by health.
           docker compose -f docker-compose.yml -f docker-compose.test.yml up -d
 
       - name: Wait for the TLS edge to serve traffic
