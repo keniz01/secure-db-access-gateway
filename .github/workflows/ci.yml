@@ -883,7 +883,7 @@ jobs:
               "Referrer-Policy|strict-origin-when-cross-origin"
               "Strict-Transport-Security|max-age=31536000; includeSubDomains; preload"
               "Permissions-Policy|camera=(), microphone=(), geolocation=(), payment=(), usb=(), fullscreen=(self)"
-              "Content-Security-Policy|default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 https://localhost:5173 https://openrouter.ai; img-src 'self' data:; font-src 'self' data:; upgrade-insecure-requests"
+              "Content-Security-Policy|default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; connect-src 'self' https://localhost:8443 https://localhost:5173 https://openrouter.ai; img-src 'self' data:; font-src 'self' data:; upgrade-insecure-requests"
             )
             headers="$(curl -sk --max-time 5 -D- -o /dev/null "https://localhost:8443${path}")"
             status="$(printf '%s\n' "$headers" | sed -n '1s|^HTTP/[^ ]* \([0-9][0-9][0-9]\).*|\1|p' | tr -d '\r')"

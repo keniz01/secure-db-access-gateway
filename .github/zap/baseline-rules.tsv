@@ -39,6 +39,13 @@
 #   replaces it. Recorded in SECURITY.md as an intentional omission.
 10016	IGNORE	X-XSS-Protection is intentionally not set; it is deprecated and superseded by the Content-Security-Policy header (see SECURITY.md).
 #
+# 10027 - Information Disclosure - Suspicious Comments (Informational)
+#   False positive in the minified SPA bundle: ZAP treats React's quoted SVG
+#   namespace URL (`http://www.w3.org/2000/svg`) as a comment, then matches the
+#   SQL editor's ordinary `SELECT` completion keyword later on the same line.
+#   Neither string is a source comment or discloses internal information.
+10027	IGNORE	ZAP mistakes the quoted React SVG namespace URL for a comment and matches the SQL editor's normal SELECT completion token later on the same minified line; neither is a comment or sensitive disclosure.
+#
 # 10049 - Content Cacheability (reported as Non-Storable Content, x6)
 #   The rule has exactly three outcomes - non-storable, storable but not
 #   cacheable, storable and cacheable - and it alerts on all three, so no

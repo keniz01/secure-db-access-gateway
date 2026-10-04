@@ -68,7 +68,7 @@ def setup_cors_middleware(app: FastAPI):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; "
             "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'; "
             "connect-src 'self' https://localhost:8443 https://localhost:5173 https://openrouter.ai; "
             "img-src 'self' data:; font-src 'self' data:; upgrade-insecure-requests"
