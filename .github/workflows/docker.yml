@@ -18,8 +18,11 @@ permissions: {}
 jobs:
   build:
     name: Build and push images
-    # Keep this SHA aligned with deploy.yml; update both only after reviewing the builder.
-    uses: keniz01/secure-db-access-gateway/.github/workflows/docker-builder.yml@927ac23d25f177477a6a5364cebaa2b504cfa37c
+    # Keep this SHA aligned with deploy.yml; update both only after reviewing
+    # the builder. It must stay reachable from a ref (an ancestor of main):
+    # GitHub resolves `uses:` by ref reachability, so a pin whose only branch
+    # was deleted after merge fails every run with "workflow was not found".
+    uses: keniz01/secure-db-access-gateway/.github/workflows/docker-builder.yml@d70cd0f2e6781831570c7d5877cd8cca4a178d6f
     with:
       tag: ${{ inputs.tag }}
     permissions:
