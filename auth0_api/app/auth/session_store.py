@@ -16,6 +16,8 @@ import secrets
 import time
 from typing import Any
 
+from shared_secrets import read_secret
+
 _REDIS_URL_ENV = "REDIS_URL"
 
 _sessions: dict[str, dict[str, Any]] = {}
@@ -47,7 +49,11 @@ def _get_redis() -> Any | None:
     try:
         import redis.asyncio as redis  # type: ignore[import-not-found]
 
-        _redis_client = redis.from_url(url, decode_responses=True)
+        options: dict[str, Any] = {"decode_responses": True}
+        password = read_secret("REDIS_PASSWORD")
+        if password:
+            options["password"] = password
+        _redis_client = redis.from_url(url, **options)
         _redis_url_cached = url
         return _redis_client
     except ImportError as exc:

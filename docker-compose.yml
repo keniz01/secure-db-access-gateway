@@ -118,6 +118,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: auth0-api
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     networks:
       - frontend
       - backend
@@ -227,6 +228,8 @@ services:
       CONFIG_FILE: /config/tenant_databases.json
       CREDS_DIR: /creds
       ADMIN_PASSWORD_FILE: /run/secrets/pg_rotator_admin_pass
+    group_add:
+      - "10001"
     volumes:
       - ./sql_query_api/scripts/rotate_creds.sh:/rotate_creds.sh:ro
       - ${TENANT_DATABASES_CONFIG_SOURCE:-./config/tenant_databases.json}:/config/tenant_databases.json:ro

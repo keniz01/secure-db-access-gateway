@@ -46,6 +46,10 @@ tenant IDs and database IDs in `.env`, configures it for rotated, read-only
 `analytics` credentials, and points Compose at that ignored file. Shared
 deployments continue to use `config/tenant_databases.json` or an explicitly
 configured `TENANT_DATABASES_CONFIG_SOURCE`.
+The credential rotator writes the shared-volume files with mode `0640` and
+group GID `10001`, and makes the directory group-searchable without granting
+group listing or world access. This allows the non-root SQL API (`appgroup`,
+GID `10001`) to read its credentials.
 
 The local migration archive includes only the `music` tables except
 `recording_artist`, plus `meta.schema_embeddings`. Since selected tables have

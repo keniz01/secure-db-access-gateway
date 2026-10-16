@@ -5,6 +5,7 @@
 # Writes rotated credentials to /creds volume for sql_query_api
 
 set -euo pipefail
+umask 077
 
 # Configuration
 CONFIG_FILE="${CONFIG_FILE:-/config/tenant_databases.json}"
@@ -28,6 +29,8 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
 fi
 
 mkdir -p "${CREDS_DIR}"
+chgrp 10001 "${CREDS_DIR}"
+chmod 710 "${CREDS_DIR}"
 
 log() {
     echo "[$(date -u +'%Y-%m-%dT%H:%M:%SZ')] $*"
@@ -60,7 +63,8 @@ rotate_tenant() {
     psql -d "${db_name}" -v ON_ERROR_STOP=1 -c \
         "ALTER ROLE ${role_name} PASSWORD '${new_pass}';"
 
-    # Write new credentials to shared volume (JSON format for resolver)
+    # Write credentials privately, then grant read access only to the SQL API
+    # appgroup (GID 10001 in sql_query_api/Dockerfile).
     local creds_file="${CREDS_DIR}/${tenant_id}_${role_name}.json"
     cat > "${creds_file}.tmp" <<EOF
 {
@@ -74,9 +78,10 @@ rotate_tenant() {
   "port": ${port}
 }
 EOF
+    chgrp 10001 "${creds_file}.tmp"
+    chmod 640 "${creds_file}.tmp"
     # Atomic write
     mv "${creds_file}.tmp" "${creds_file}"
-    chmod 600 "${creds_file}"
 
     log "Rotated ${tenant_id}/${role_name} -> written to ${creds_file}"
 }

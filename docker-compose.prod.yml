@@ -35,6 +35,7 @@ services:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/auth0-api:${IMAGE_TAG:-latest}
     environment:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
 
   sql_query_api:
     image: ${IMAGE_BASE:-ghcr.io/keniz01/secure-db-access-gateway}/sql-query-api:${IMAGE_TAG:-latest}
