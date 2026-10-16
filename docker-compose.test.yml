@@ -115,6 +115,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-lgtm:4318
       OTEL_SERVICE_NAME: auth0-api
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     networks:
       - frontend
       - backend
